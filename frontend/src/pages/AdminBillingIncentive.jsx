@@ -61,6 +61,18 @@ const monthLabel = (m) => (/^\d{4}-\d{2}$/.test(String(m || ''))
   ? new Date(`${m}-01T12:00:00`).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
   : '');
 
+/** '2026-09-10' → '10 Sep 2026'. */
+const dayLabel = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d || ''))
+  ? new Date(`${d}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  : '');
+
+/** 10 → '10th'. Written out because "the 2th" in a heading is unmissable. */
+const ordinal = (n) => {
+  const v = Number(n) || 0;
+  if (v % 100 >= 11 && v % 100 <= 13) return `${v}th`;
+  return `${v}${['th', 'st', 'nd', 'rd'][v % 10] || 'th'}`;
+};
+
 const fmtWhen = (d) => (d
   ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })
   : '');
@@ -193,6 +205,18 @@ export default function AdminBillingIncentive() {
   // picks another one.
   const shownMonth = month || data?.month || '';
 
+  // Counting may start partway through a month (BILLING_INCENTIVE_FROM with a
+  // day). That month is a PART month everywhere it appears, so it is labelled
+  // as one — "September 2026" over a total that begins on the 10th would be
+  // read as the whole month by everybody who saw it.
+  const startedOn = data?.startedOn || null;
+  const startMonth = startedOn ? startedOn.slice(0, 7) : '';
+  const isPartMonth = Boolean(startedOn) && shownMonth === startMonth;
+  const labelFor = (m) => {
+    const base = monthLabel(m) || m;
+    return startedOn && m === startMonth ? `${base} (from the ${ordinal(startedOn.slice(8, 10))})` : base;
+  };
+
   // Only the months the billing system actually has — a bare <input type="month">
   // would happily offer one it has never heard of and answer it with an empty
   // table. Newest first, and whatever is on screen is always in the list even if
@@ -293,7 +317,7 @@ export default function AdminBillingIncentive() {
             className="border rounded-lg px-3 py-2 text-sm"
             aria-label="Month"
           >
-            {monthOptions.map((m) => <option key={m} value={m}>{monthLabel(m) || m}</option>)}
+            {monthOptions.map((m) => <option key={m} value={m}>{labelFor(m)}</option>)}
           </select>
         )}
         {data?.can?.refresh && (
@@ -337,9 +361,9 @@ export default function AdminBillingIncentive() {
             <Stat label="People" value={count(totals.people)}
               hint={totals.earners ? `${count(totals.earners)} earned points` : 'nobody earned this month'} />
             <Stat label="Points this month" value={points(totals.points)} tone="text-green-700"
-              hint={monthLabel(shownMonth)} />
+              hint={labelFor(shownMonth)} />
             <Stat label="Units invoiced" value={count(totals.units)} tone="text-violet-700"
-              hint="this month" />
+              hint={isPartMonth ? 'in the days counted' : 'this month'} />
             <Stat label="Lifetime points" value={points(totals.lifetimePoints)}
               hint={`${points(totals.currentPoints)} still current`} />
           </div>
@@ -356,6 +380,28 @@ export default function AdminBillingIncentive() {
               {data.generatedAt ? <> Read {fmtWhen(data.generatedAt)}.</> : null}
             </span>
           </p>
+
+          {/* ---------------------------------------------------- part month -- */}
+          {/* Counting starts partway through this one. Said plainly and beside
+              the figures, because the band consequence below is not something a
+              reader could work out from the numbers on screen — and it is the
+              difference between a person's points looking low and being low. */}
+          {isPartMonth && (
+            <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              Billing points are counted from <strong>{dayLabel(startedOn)}</strong>, so this month
+              covers {dayLabel(data.range?.from) || dayLabel(startedOn)} to{' '}
+              {dayLabel(data.range?.to) || 'the end of the month'} only
+              {data.range?.daysWithData
+                ? <> — {count(data.range.daysWithData)} day{data.range.daysWithData === 1 ? '' : 's'} of
+                  invoices inside it</>
+                : null}. Anything invoiced earlier is not counted anywhere in the portal.
+              <div className="mt-1.5 text-xs text-blue-800">
+                The billing system measures a part month against a whole month&rsquo;s target, so
+                somebody who would have cleared a higher rate band over the full month may be paid
+                at the base band here. Later months are counted whole.
+              </div>
+            </div>
+          )}
 
           {/* --------------------------------------------------- months lost -- */}
           {failed.length > 0 && (
@@ -392,7 +438,7 @@ export default function AdminBillingIncentive() {
             {' + '}<strong>{points(recon.unplaced)}</strong> we could not place
             {' = '}<strong>{points(recon.ours + recon.unplaced)}</strong>, against the billing
             system&rsquo;s own <strong>{points(recon.theirs)}</strong> for{' '}
-            {monthLabel(shownMonth)}.{' '}
+            {labelFor(shownMonth)}.{' '}
             {recon.agrees ? (
               <span className="text-gray-500">The two agree.</span>
             ) : (
@@ -446,7 +492,7 @@ export default function AdminBillingIncentive() {
                     <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                       {search
                         ? 'Nobody in the billing system matches that search.'
-                        : `The billing system has nobody for ${monthLabel(shownMonth) || 'this month'}.`}
+                        : `The billing system has nobody for ${labelFor(shownMonth) || 'this month'}.`}
                     </td>
                   </tr>
                 )}

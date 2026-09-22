@@ -8,6 +8,10 @@ const {
   ACCEPTANCE_STATES,
   TASK_PRIORITY,
   DEFAULT_PRIORITY,
+  LEGACY_PRIORITY_MAP,
+  normalisePriority,
+  EXTENSION_STATUS,
+  EXTENSION_STATES,
   DEFAULT_TASK_POINTS,
   MAX_TASK_POINTS,
   FREQUENCY,
@@ -150,6 +154,25 @@ const assigneeSchema = new mongoose.Schema(
     acceptance: { type: String, enum: ACCEPTANCE_STATES, default: ACCEPTANCE.AWAITING },
     acceptedAt: Date,
     declinedAt: Date,
+
+    /**
+     * How far along THIS person says they are, 0-100. Added 2026-09-22.
+     *
+     * Declared, never inferred — see config/tasks.PROGRESS_MAX. It lives on the
+     * assignee row rather than the task because a task on three people has
+     * three answers, and averaging them into one stored figure on the task
+     * would make it impossible to say whose half was done.
+     */
+    progress: { type: Number, min: 0, max: 100, default: 0 },
+    progressAt: Date,
+
+    /**
+     * When they handed it in. The moment `completedLate` is decided — NOT the
+     * moment it is approved, which is somebody else's diary. A doer who
+     * submitted on the Friday must not become "Delayed" because their manager
+     * got to the review on the Monday.
+     */
+    submittedAt: Date,
     /** Why they said no. Required by the engine — a refusal with no reason
      *  cannot be acted on by the person who has to reassign it. */
     declineReason: { type: String, trim: true, maxlength: 500 },
@@ -171,40 +194,34 @@ const assigneeSchema = new mongoose.Schema(
 );
 
 /**
- * One piece of a task, small enough not to be a task of its own.
+ * "I will do it, but not by then."
  *
- * Added 2026-09-21 (second pass), at the user's request. Deliberately EMBEDDED
- * rather than child Task documents:
+ * Added 2026-09-22, at the user's request — the third answer a doer needs,
+ * after accept and decline. Append-only: the whole list stays on the task, so
+ * "this has been put off three times" is answerable from the row rather than
+ * from a feed somebody has to read.
  *
- *   - a task page stays ONE query, which is the property the whole module is
- *     built around;
- *   - a subtask has no deadline, no points, no reminders and no feed of its
- *     own, so a full Task would be a document with nine tenths of its fields
- *     empty;
- *   - "any assignee can do any subtask" is trivial when they hang off the
- *     parent and awkward when they are separate rows with their own assignees.
+ * It is NOT a status. The work carries on while the answer is awaited, which is
+ * the entire difference between asking for more time and downing tools.
  *
- * TWO KINDS, and the difference is one nullable field:
- *   assignee set    that person's piece. Only they (or the assigner) tick it.
- *   assignee null   ANYBODY on the parent task can tick it — the user's
- *                   "or any assinee can do any subtask".
- *
- * Somebody named on a subtask can SEE the parent task even if they are not on
- * it (services/taskAccess), or a subtask assigned to them would be invisible.
+ * `fromDate` is the deadline AT THE MOMENT OF ASKING, snapshot so the record
+ * still reads correctly after the date has moved — without it, a row three
+ * extensions deep cannot say what was actually being extended.
  */
-const subtaskSchema = new mongoose.Schema(
+const extensionSchema = new mongoose.Schema(
   {
-    title: { type: String, required: true, trim: true, maxlength: 300 },
-    // Null = open to everybody on the task.
-    assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    assigneeName: { type: String, trim: true },
-    done: { type: Boolean, default: false },
-    doneBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    doneByName: { type: String, trim: true },
-    doneAt: Date,
-    order: { type: Number, default: 0 },
-    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    addedByName: { type: String, trim: true },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    requestedByName: { type: String, trim: true },
+    requestedAt: { type: Date, default: Date.now },
+    fromDate: Date,
+    toDate: { type: Date, required: true },
+    /** Why. Required by the engine — "more time please" is not a case. */
+    reason: { type: String, trim: true, maxlength: 1000 },
+    status: { type: String, enum: EXTENSION_STATES, default: EXTENSION_STATUS.PENDING },
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decidedByName: { type: String, trim: true },
+    decidedAt: Date,
+    decisionNote: { type: String, trim: true, maxlength: 1000 },
   },
   { _id: true }
 );
@@ -223,6 +240,28 @@ const delegationSchema = new mongoose.Schema(
     to: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     toName: { type: String, trim: true },
     note: { type: String, trim: true, maxlength: 1000 },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: true }
+);
+
+/**
+ * One hop of a task being handed to the person it should have gone to.
+ *
+ * Append only, like `delegations`, and kept separate from it because the two
+ * mean opposite things about who is still answerable — see the `transfers`
+ * field below.
+ */
+const transferSchema = new mongoose.Schema(
+  {
+    from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    fromName: { type: String, trim: true },
+    to: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    toName: { type: String, trim: true },
+    /** Who pressed Transfer — not always the person it was taken off. */
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: { type: String, trim: true },
+    reason: { type: String, trim: true, maxlength: 1000 },
     at: { type: Date, default: Date.now },
   },
   { _id: true }
@@ -290,6 +329,29 @@ const taskSchema = new mongoose.Schema(
     // ===== People =====
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
     createdByName: { type: String, trim: true },
+
+    /**
+     * WHO SIGNS THE WORK OFF. Defaults to whoever set it.
+     *
+     * Added 2026-09-22 (fourth pass), and it exists for one sentence of the
+     * brief: *"for delegate who is doing delegate he should be the approvar for
+     * that chain"*.
+     *
+     * When a CEO hands a task to a manager and the manager delegates it on, the
+     * CEO should not be the one reading the junior's submission — they asked
+     * the manager for a report, not for a queue. So delegating MOVES the
+     * approval to the delegator, and each hop moves it again: whoever handed
+     * the work to you is the person you answer to.
+     *
+     * It is a field of its own rather than a rewrite of `createdBy`, because
+     * `createdBy` is also "who set this", which the delegator did not do and
+     * which the feed, the Delegated tab and the audit trail all still need to
+     * be true. Both count as an assigner for permissions
+     * (services/taskAccess.actorRoleOn); only this one is notified when
+     * something lands in the tray.
+     */
+    approver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+    approverName: { type: String, trim: true },
     // The primary assignee — assignees[0]. Maintained by this model, and the
     // field every legacy query, the calendar and the company wall still read.
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
@@ -315,10 +377,96 @@ const taskSchema = new mongoose.Schema(
     originalAssignees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
     // ===== Splitting it up =====
-    /** The pieces. See subtaskSchema — embedded, capped, one query. */
-    subtasks: { type: [subtaskSchema], default: [] },
+    /**
+     * THE TASK THIS IS A PIECE OF. Null on a task in its own right.
+     *
+     * REWORKED 2026-09-22. A piece used to be an embedded row on the parent
+     * (`subtasks[]`): a title, an optional owner and a tick. The brief this
+     * replaces asks a piece to do everything a task does —
+     *
+     *   *"manager can divide that task into multiple subtask and assign that to
+     *    their team member per subtask … they can do the point distribution to
+     *    those task … by default it will be divided equally"*
+     *
+     * — so a piece now carries its own points, deadline, priority, progress,
+     * acceptance, submission and feed, appears in its owner's own task list,
+     * and can itself be split. Every one of those is a field a Task already
+     * has; keeping pieces embedded would have meant growing the embedded row
+     * into a second, worse Task and duplicating the engine to drive it.
+     *
+     * The property that was traded away is "a task page is ONE query". It now
+     * costs two — the task, and its pieces. That is the whole cost, and it buys
+     * a piece being a real job somebody can be handed.
+     *
+     * The old array is GONE rather than deprecated: there were zero embedded
+     * subtasks in the live data when this landed, so there was nothing to keep
+     * it for. `GET /:id` still SERIALISES a `subtasks` array derived from the
+     * children, and the three old endpoints still work as adapters, so an
+     * Android build that has not been updated keeps running (see
+     * controllers/taskController).
+     */
+    parentTask: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', index: true },
+    /** Snapshots, so a piece can say "part of TSK-2026-00058" without a join. */
+    parentCode: { type: String, trim: true },
+    parentTitle: { type: String, trim: true },
+    /** 0 for a task, 1 for its pieces, 2 for theirs. Capped at MAX_SPLIT_DEPTH. */
+    depth: { type: Number, default: 0, min: 0 },
+
+    /**
+     * WHO MAY PICK THIS UP, on a piece nobody has been named for.
+     *
+     * The brief's *"or all subtask to some team member they can pick the
+     * task"*. A piece with no assignee is offered rather than given: everybody
+     * in this list sees it in their own list under "Open to pick up" and any
+     * one of them can claim it, which makes them its sole assignee.
+     *
+     * It is an explicit list rather than "anybody on the parent" — the parent
+     * is usually on one person (the manager doing the splitting), so "anybody
+     * on the parent" would offer the piece to nobody at all. It defaults to the
+     * splitter's own direct reports.
+     */
+    openTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true }],
+
+    /**
+     * The pieces, as counters. Maintained by services/taskEngine.recomputeParent
+     * on every change to a child, so a LIST row can say "3 of 5 done" without
+     * a second query per row — which at fifty rows a page is fifty queries.
+     */
+    childCount: { type: Number, default: 0 },
+    childDoneCount: { type: Number, default: 0 },
+    /**
+     * Σ of the live pieces' points. `points − distributedPoints` is what each
+     * person on THIS task earns — see the `points` field below.
+     */
+    distributedPoints: { type: Number, default: 0, min: 0 },
+
     /** The append-only trail of the task changing hands. */
     delegations: { type: [delegationSchema], default: [] },
+
+    /**
+     * THE TRAIL OF A TASK THAT WENT TO THE WRONG PERSON.
+     *
+     * Added 2026-09-22 (fourth pass): *"for Transfer if the task is assigned to
+     * wrong user then they can transfer to anyone and it will be fully
+     * transferred to the new user"*.
+     *
+     * A transfer is NOT a delegation and the difference is the whole reason
+     * both exist:
+     *
+     *   delegate   I still own the outcome. I stay in the loop, I become the
+     *              approver, and the trail says the work passed through me.
+     *   transfer   it was never mine. I drop out completely — out of
+     *              `assignees`, out of `originalAssignees`, out of the loop —
+     *              and the new person holds it as if it had been theirs from
+     *              the start.
+     *
+     * That second one is the ONE place `originalAssignees` is rewritten, and
+     * this array is why that is safe: the history is not lost, it simply stops
+     * generating notifications for somebody who never had the job. Leaving a
+     * mis-assigned person on every future update of a task that was never
+     * theirs is how people learn to ignore the bell.
+     */
+    transfers: { type: [transferSchema], default: [] },
 
     // ===== State =====
     status: {
@@ -327,7 +475,43 @@ const taskSchema = new mongoose.Schema(
       default: STATUS.PENDING,
       index: true,
     },
-    priority: { type: String, enum: TASK_PRIORITY, default: DEFAULT_PRIORITY, index: true },
+    priority: {
+      type: String,
+      // The legacy words are ACCEPTED on write and normalised by the hook, the
+      // same bargain `status` makes: a row an old client wrote is still a valid
+      // document, and 50 of the 59 live rows carried `Urgent` before the picker
+      // offered it.
+      enum: [...TASK_PRIORITY, ...Object.keys(LEGACY_PRIORITY_MAP)],
+      default: DEFAULT_PRIORITY,
+      index: true,
+    },
+
+    /**
+     * How far along, 0-100 — the roll-up of `assignees[].progress`, or of the
+     * PIECES when this task has any. Never typed directly on the task itself;
+     * see services/taskEngine.recomputeParent and the hook below.
+     */
+    progress: { type: Number, min: 0, max: 100, default: 0 },
+
+    /**
+     * MUST THE ASSIGNER SEE IT BEFORE IT COUNTS AS DONE? Default yes.
+     *
+     * The brief: *"when user submit any task then manager should have the
+     * option to approve that and on reject that submission the task will reopen
+     * again"*. On by default because that is what was asked for; a checkbox
+     * rather than a hard rule because plenty of work does not need a second
+     * pair of eyes, and forcing every "call the printer" through a review queue
+     * is how a review queue starts getting rubber-stamped.
+     *
+     * When it is on, a doer's Complete lands on SUBMITTED instead
+     * (config/tasks.effectiveTarget). It never applies to the person who SET
+     * the task, and never to a REQUEST.
+     */
+    requiresApproval: { type: Boolean, default: true },
+    /** When the last person handed it in. Cleared when it is sent back. */
+    submittedAt: Date,
+    /** How many times a submission has been sent back. Shown on the row. */
+    rejectionCount: { type: Number, default: 0 },
 
     /**
      * What this is worth, in points, to EACH person on it.
@@ -341,6 +525,23 @@ const taskSchema = new mongoose.Schema(
      *
      * A REQUEST always carries 0 — asking your manager for a file is not work
      * you have done (see the pre-validate hook).
+     *
+     * ── ONCE IT IS SPLIT, THIS FIGURE IS A POOL (2026-09-22) ─────────────────
+     *
+     * The brief: *"if manager is delegating any task as subtask to team member
+     * they can do the point distribution to those task, by default it will be
+     * divided equally"*. So splitting a task does not mint new points, it hands
+     * out the ones it already had:
+     *
+     *     each person on THIS task earns   points − distributedPoints
+     *     each person on a PIECE earns     that piece's own points
+     *
+     * A manager who splits 100 points three ways keeps nothing, which is the
+     * default and is honest — they did not do the work. A manager who hands out
+     * 60 keeps 40 for holding it together, and the form says so while they
+     * type. The server refuses a distribution larger than the pool, because
+     * points settle in rupees (services/taskPoints) and "subtasks" would
+     * otherwise be a way to mint money.
      */
     points: { type: Number, min: 0, max: MAX_TASK_POINTS, default: DEFAULT_TASK_POINTS },
 
@@ -351,6 +552,8 @@ const taskSchema = new mongoose.Schema(
     // so "this was extended twice" is answerable from the row.
     originalDueDate: Date,
     extensionCount: { type: Number, default: 0 },
+    /** Every time more time was asked for, and what was said. Append only. */
+    extensions: { type: [extensionSchema], default: [] },
     assignedAt: { type: Date, default: Date.now },
     startedAt: Date,
     completedAt: Date,
@@ -404,9 +607,11 @@ taskSchema.index({ createdBy: 1, status: 1, dueDate: 1 });    // "what I delegat
 taskSchema.index({ company: 1, kind: 1, status: 1, dueDate: 1 }); // every walled admin list
 taskSchema.index({ status: 1, dueDate: 1 });                  // the overdue sweep
 taskSchema.index({ loopUsers: 1, status: 1 });                // "tasks I am kept in loop on"
-// Somebody who owns a SUBTASK sees the parent even when they are not on it
-// (services/taskAccess.visibleFilter), so that lookup needs an index of its own.
-taskSchema.index({ 'subtasks.assignee': 1, status: 1 });
+// "the pieces of this task" — read on every parent's detail page, and by
+// recomputeParent after every single change to a child.
+taskSchema.index({ parentTask: 1, status: 1 });
+// A piece nobody has been named for, in the list of everybody it is offered to.
+taskSchema.index({ openTo: 1, status: 1 });
 // …and so does "what was originally mine", which is how a delegator keeps
 // finding the work they handed on.
 taskSchema.index({ originalAssignees: 1, status: 1 });
@@ -424,8 +629,25 @@ taskSchema.pre('validate', function normalise(next) {
     if (an) a.status = an;
   }
 
-  // A request is an ask, not work: it never carries points and never scores.
-  if (this.kind !== KIND_TASK) this.points = 0;
+  // The same bargain for priority: `High` written by any client, or sitting in
+  // a row nobody has migrated, comes out as `Urgent` (config/tasks, 2026-09-22).
+  const np = normalisePriority(this.priority);
+  this.priority = np || DEFAULT_PRIORITY;
+
+  // A request is an ask, not work: it never carries points and never scores —
+  // and nothing can be distributed out of nothing.
+  if (this.kind !== KIND_TASK) {
+    this.points = 0;
+    this.distributedPoints = 0;
+    // Nobody reviews an answer to a question. A request is answered, full stop.
+    this.requiresApproval = false;
+  }
+
+  // Never hand out more than there is. The engine checks this too and returns a
+  // sentence a person can act on; this is the backstop that means no code path
+  // anywhere can leave the pool overdrawn.
+  const pool = Number(this.points) || 0;
+  if ((this.distributedPoints || 0) > pool) this.distributedPoints = pool;
 
   // The primary assignee IS the first one on the list. Kept in step here
   // rather than at each call site, because every path that touches the array
@@ -438,6 +660,12 @@ taskSchema.pre('validate', function normalise(next) {
   }
 
   if (this.dueDate && !this.originalDueDate) this.originalDueDate = this.dueDate;
+
+  // Whoever set it signs it off, until somebody delegates it and takes that on.
+  if (!this.approver && this.createdBy) {
+    this.approver = this.createdBy;
+    this.approverName = this.createdByName;
+  }
 
   // Stamped ONCE, on the first save, and never rewritten — see the field's own
   // note. `isNew` rather than "is it empty", because a task whose original
@@ -469,6 +697,10 @@ taskSchema.pre('validate', function rollUpStatus(next) {
   );
   const pool = live.length ? live : people;
 
+  const started = (a) => a.status === STATUS.IN_PROGRESS
+    || a.status === STATUS.SUBMITTED
+    || a.status === STATUS.COMPLETED;
+
   if (pool.every((a) => a.status === STATUS.COMPLETED)) {
     this.status = STATUS.COMPLETED;
     // The task finished when its LAST person did.
@@ -477,7 +709,18 @@ taskSchema.pre('validate', function rollUpStatus(next) {
     // Late if ANYBODY was late. One person delivering on time does not make a
     // task that was waiting a week on somebody else punctual.
     this.completedLate = pool.some((a) => a.completedLate);
-  } else if (pool.some((a) => a.status === STATUS.IN_PROGRESS || a.status === STATUS.COMPLETED)) {
+  } else if (pool.every((a) => a.status === STATUS.SUBMITTED || a.status === STATUS.COMPLETED)) {
+    // EVERYBODY has handed in what they owe and at least one of them is waiting
+    // on a word. The task is on the reviewer's desk, not anybody's to-do list —
+    // which is precisely the distinction the fourth state was added to make.
+    // It takes EVERY row, not any: one person still typing means the task is
+    // still being worked on, however much of it is already in the tray.
+    this.status = STATUS.SUBMITTED;
+    this.completedAt = undefined;
+    this.completedLate = false;
+    const subs = pool.map((a) => a.submittedAt).filter(Boolean).map((d) => new Date(d).getTime());
+    if (subs.length) this.submittedAt = new Date(Math.max(...subs));
+  } else if (pool.some(started)) {
     this.status = STATUS.IN_PROGRESS;
     this.completedAt = undefined;
     this.completedLate = false;
@@ -489,6 +732,22 @@ taskSchema.pre('validate', function rollUpStatus(next) {
     this.status = STATUS.PENDING;
     this.completedAt = undefined;
     this.completedLate = false;
+  }
+
+  /**
+   * …and the progress bar, from the same pool.
+   *
+   * A task WITH PIECES is left alone here: its figure is the points-weighted
+   * mean of its children and only `services/taskEngine.recomputeParent` can see
+   * them. Overwriting it from the assignee rows — which on a fully-delegated
+   * task are one person sitting at 0 — would reset a 70%-done job to zero every
+   * time anything else on it was saved.
+   */
+  if (!this.childCount) {
+    const pct = (a) => (a.status === STATUS.COMPLETED || a.status === STATUS.SUBMITTED
+      ? 100
+      : Math.min(100, Math.max(0, Number(a.progress) || 0)));
+    this.progress = Math.round(pool.reduce((s, a) => s + pct(a), 0) / pool.length);
   }
   next();
 });
@@ -529,25 +788,45 @@ taskSchema.methods.assigneeFor = function assigneeFor(userId) {
 taskSchema.methods.audience = function audience() {
   const ids = new Set();
   if (this.createdBy) ids.add(String(this.createdBy._id || this.createdBy));
+  if (this.approver) ids.add(String(this.approver._id || this.approver));
   for (const a of this.assignees || []) ids.add(String(a.user?._id || a.user));
   for (const u of this.loopUsers || []) ids.add(String(u._id || u));
   for (const u of this.originalAssignees || []) ids.add(String(u._id || u));
-  for (const st of this.subtasks || []) {
-    if (st.assignee) ids.add(String(st.assignee._id || st.assignee));
-  }
   return [...ids].filter(Boolean);
 };
 
-/** Is this user on a subtask, without being on the task itself? */
-taskSchema.methods.ownsSubtask = function ownsSubtask(userId) {
-  const id = String(userId || '');
-  return (this.subtasks || []).some((st) => String(st.assignee?._id || st.assignee || '') === id);
+/**
+ * WHAT EACH PERSON ON THIS ROW ACTUALLY EARNS.
+ *
+ * The pool less whatever has been handed down to the pieces. Read by
+ * services/taskPoints at the moment of completion, by every dashboard, and by
+ * the split form so it can say how much is left to give away.
+ */
+taskSchema.methods.effectivePoints = function effectivePoints() {
+  return Math.max(0, (Number(this.points) || 0) - (Number(this.distributedPoints) || 0));
 };
 
-/** How many pieces are done, for a progress line. */
-taskSchema.methods.subtaskProgress = function subtaskProgress() {
-  const all = this.subtasks || [];
-  return { done: all.filter((st) => st.done).length, total: all.length };
+/** The request for more time that is still waiting on an answer, or null. */
+taskSchema.methods.pendingExtension = function pendingExtension() {
+  return (this.extensions || []).find((e) => e.status === EXTENSION_STATUS.PENDING) || null;
+};
+
+/** This person's own un-answered request for more time, or null. */
+taskSchema.methods.pendingExtensionBy = function pendingExtensionBy(userId) {
+  const id = String(userId || '');
+  return (this.extensions || []).find(
+    (e) => e.status === EXTENSION_STATUS.PENDING && String(e.requestedBy?._id || e.requestedBy) === id
+  ) || null;
+};
+
+/** Is this a piece of something bigger? */
+taskSchema.methods.isPiece = function isPiece() {
+  return Boolean(this.parentTask);
+};
+
+/** A piece nobody has been named for — anybody in `openTo` may claim it. */
+taskSchema.methods.isOpenPiece = function isOpenPiece() {
+  return Boolean(this.parentTask) && !(this.assignees || []).length;
 };
 
 taskSchema.methods.isTerminal = function terminal() {

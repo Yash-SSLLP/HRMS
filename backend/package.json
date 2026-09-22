@@ -29,10 +29,9 @@
     "audit:accounts": "node scripts/auditImportedAccounts.js",
     "cleanup:orphans": "node scripts/cleanupOrphans.js",
     "cleanup:orphans:apply": "node scripts/cleanupOrphans.js --apply",
-    "test:tasks": "node scripts/testTaskEngine.js",
-    "test:tasks:db": "node scripts/testTaskWorkflow.js",
-    "migrate:tasks": "node scripts/migrateTasksV2.js",
-    "migrate:tasks:apply": "node scripts/migrateTasksV2.js --apply",
+    "test:tasks:db": "node scripts/testTaskIntegration.js",
+    "migrate:tasks": "node scripts/migrateTasksV4.js",
+    "migrate:tasks:apply": "node scripts/migrateTasksV4.js --apply",
     "seed:task-templates": "node scripts/seedTaskTemplates.js"
   },
   "keywords": [

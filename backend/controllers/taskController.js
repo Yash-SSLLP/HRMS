@@ -37,6 +37,7 @@ const points = require('../services/taskPoints');
 const storage = require('../services/storage');
 
 const { pickableUserFilter } = require('../utils/peoplePicker');
+const { departedUserIdSet } = require('../utils/departed');
 const { viewerCompanyScope } = require('../utils/employeeScope');
 const {
   KIND_TASK, KIND_REQUEST, TASK_KINDS, STATUS, TASK_STATUS, TASK_PRIORITY,
@@ -44,6 +45,10 @@ const {
   REMINDER_CHANNELS, REMINDER_UNITS, REMINDER_WHENS, REMINDER_CHANNEL_LABELS,
   MAX_TASK_POINTS, evidenceKindFor, statusLabel, isOverdue, isTerminal,
   isDeclined, isAwaitingAcceptance, ACCEPTANCE_LABELS,
+  // 2026-09-22: the review state, the pieces, the colours and the sort.
+  normalisePriority, LEGACY_PRIORITY_MAP, PRIORITY_COLORS, DONE_COLOR, CANCELLED_COLOR,
+  accentFor, PRIORITY_RANK, BOARD_COLUMNS, SORTS, SORT_KEYS, DEFAULT_SORT,
+  PROGRESS_STEPS, MAX_SUBTASKS, EXTENSION_STATUS, clampProgress,
 } = require('../config/tasks');
 
 // ===== Small shared helpers =====
@@ -117,6 +122,7 @@ async function buildQuery(req, overrides = {}) {
   const {
     scope = 'all', range = 'all', from, to,
     category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late,
+    includeSubtasks, parentTask,
     // `overrides` lets a caller pin one parameter without faking a request
     // object. Spreading an Express `req` copies own properties only and quietly
     // loses `user`, which is how the dashboard first lost its company wall.
@@ -148,11 +154,37 @@ async function buildQuery(req, overrides = {}) {
   const freqs = listParam(frequency).filter((f) => FREQUENCIES.includes(f));
   if (freqs.length) and.push({ 'repeat.frequency': { $in: freqs } });
 
-  const prios = listParam(priority).filter((p) => TASK_PRIORITY.includes(p));
-  if (prios.length) and.push({ priority: { $in: prios } });
+  // Normalised, so a filter chip saying "Urgent" still matches the fifty rows
+  // that say `High` and have not been through the migration yet.
+  const prios = [...new Set(listParam(priority).map(normalisePriority).filter(Boolean))];
+  if (prios.length) {
+    const wanted = new Set(prios);
+    const legacy = Object.entries(LEGACY_PRIORITY_MAP)
+      .filter(([, v]) => wanted.has(v)).map(([k]) => k);
+    and.push({ priority: { $in: [...prios, ...legacy] } });
+  }
 
   const states = listParam(status).filter((s) => TASK_STATUS.includes(s));
   if (states.length) and.push({ status: { $in: states } });
+
+  /**
+   * THE PIECES, in or out.
+   *
+   * A piece is a Task like any other (models/Task.parentTask), so without this
+   * every list would show the parent AND its five pieces, and a manager who
+   * split one job into five would see six rows for one job.
+   *
+   * The default differs by tab on purpose. On MY TASKS a piece IS the work I
+   * have been given and hiding it would hide my whole day; everywhere else a
+   * piece is detail that belongs under the task it came from, which is where
+   * the detail page shows it. The client can flip it either way with
+   * `includeSubtasks`.
+   */
+  const pieces = includeSubtasks === undefined || includeSubtasks === null || includeSubtasks === ''
+    ? (scope === 'mine' || scope === 'requests')
+    : !(includeSubtasks === '0' || includeSubtasks === 'false' || includeSubtasks === false);
+  if (parentTask && oid(parentTask)) and.push({ parentTask: oid(parentTask) });
+  else if (!pieces) and.push({ parentTask: null });
 
   // Overdue is derived, so it is a query rather than a status: open, and past
   // its deadline. Asking for it alongside `status=COMPLETED` correctly returns
@@ -202,6 +234,8 @@ async function buildQuery(req, overrides = {}) {
 async function countersFor(filter) {
   const now = new Date();
   // "Open and past its deadline" — spelled once, used three times below.
+  // SUBMITTED is deliberately absent: handed in is not late, however long the
+  // tray takes. See config/tasks.isOverdue, which has to agree with this.
   const late = {
     $and: [
       { $in: ['$status', [STATUS.PENDING, STATUS.IN_PROGRESS]] },
@@ -220,6 +254,9 @@ async function countersFor(filter) {
         overdue: countIf(late),
         pending: countIf({ $and: [{ $eq: ['$status', STATUS.PENDING] }, { $not: late }] }),
         inProgress: countIf({ $and: [{ $eq: ['$status', STATUS.IN_PROGRESS] }, { $not: late }] }),
+        // The review tray. Its own box because it is the one queue a manager can
+        // clear by reading it, and folding it into In progress hides that.
+        inReview: countIf({ $eq: ['$status', STATUS.SUBMITTED] }),
         completed: countIf({ $eq: ['$status', STATUS.COMPLETED] }),
         cancelled: countIf({ $eq: ['$status', STATUS.CANCELLED] }),
         inTime: countIf({
@@ -237,6 +274,7 @@ async function countersFor(filter) {
     overdue: c.overdue || 0,
     pending: c.pending || 0,
     inProgress: c.inProgress || 0,
+    inReview: c.inReview || 0,
     completed: c.completed || 0,
     inTime: c.inTime || 0,
     delayed: c.delayed || 0,
@@ -248,19 +286,31 @@ async function countersFor(filter) {
 const LIST_FIELDS = 'code kind title category priority status points dueDate startDate '
   + 'completedAt completedLate createdBy createdByName assignedTo assignees loopUsers '
   + 'repeat voiceNote attachments links reminders updateCount stateNote createdAt linkedTask '
-  // A row has to show "2 of 5 done" and "not yet accepted" without a second
-  // query, so the pieces and the delegation trail come down with the list.
-  + 'subtasks delegations originalAssignees';
+  // A row has to show "not yet accepted" and "3 of 5 pieces done" without a
+  // second query, so the counters and the delegation trail come with the list.
+  + 'delegations originalAssignees assignedAt '
+  // 2026-09-22: the pieces, the progress bar, the review flag and the tint.
+  + 'parentTask parentCode parentTitle depth openTo childCount childDoneCount '
+  + 'distributedPoints progress requiresApproval submittedAt rejectionCount extensions '
+  // WHO SIGNS IT OFF, on the row. A board card in the Review column says
+  // "Review by <name>", and after a delegation that is the DELEGATOR, not the
+  // person who set it — so falling back to `createdByName` would confidently
+  // name the wrong person on exactly the tasks where it matters. And the
+  // transfer trail, so a row can say it changed hands.
+  + 'approver approverName transfers';
 
 /**
  * Decorate a lean row with the derived bits every client would compute anyway.
  *
- * Everything here is DERIVED, never stored — `overdue`, `declined` and the
- * subtask progress all change without anybody writing to the row, and a stored
- * copy would go stale the moment a clock ticked or somebody was added.
+ * Everything here is DERIVED, never stored — `overdue`, `declined`, the accent
+ * colour and the pieces' progress all change without anybody writing to the
+ * row, and a stored copy would go stale the moment a clock ticked or somebody
+ * was added.
  */
 function decorate(row) {
-  const subtasks = row.subtasks || [];
+  const pending = (row.extensions || []).find((e) => e.status === EXTENSION_STATUS.PENDING) || null;
+  const pool = Number(row.points) || 0;
+  const given = Number(row.distributedPoints) || 0;
   return {
     ...row,
     statusLabel: statusLabel(row.status, row.kind),
@@ -269,14 +319,148 @@ function decorate(row) {
     hasVoiceNote: Boolean(row.voiceNote?.storagePath),
     attachmentCount: (row.attachments || []).length,
     // Everybody still on it has said no — the task is owed and nobody is doing
-    // it, which is a different thing from any of the three statuses.
+    // it, which is a different thing from any of the four statuses.
     declined: isDeclined(row),
     // Somebody has not answered the handover yet.
     awaitingAcceptance: isAwaitingAcceptance(row),
-    subtaskCount: subtasks.length,
-    subtasksDone: subtasks.filter((st) => st.done).length,
     delegationCount: (row.delegations || []).length,
+
+    /**
+     * THE ONE COLOUR RULE, answered on the server (config/tasks.accentFor).
+     *
+     * The brief: *"if any task is pending then the whole task should be in the
+     * priority color, and if the task is completed then show that in Green"*.
+     * Sending the four hexes with the row rather than the key alone means the
+     * web list, the board card, the detail header and the app's card cannot
+     * drift into four slightly different reds.
+     */
+    accent: accentFor(row),
+    priority: normalisePriority(row.priority) || DEFAULT_PRIORITY,
+
+    // ===== The pieces =====
+    isPiece: Boolean(row.parentTask),
+    isOpenPiece: Boolean(row.parentTask) && !(row.assignees || []).length,
+    // Kept under their old names as well, because an Android build from before
+    // 2026-09-22 draws its progress line from exactly these two.
+    subtaskCount: Number(row.childCount) || 0,
+    subtasksDone: Number(row.childDoneCount) || 0,
+
+    // What EACH person on this row earns — the pool less what was handed down.
+    effectivePoints: Math.max(0, pool - given),
+
+    pendingExtension: pending ? {
+      _id: pending._id,
+      toDate: pending.toDate,
+      fromDate: pending.fromDate,
+      reason: pending.reason,
+      requestedBy: pending.requestedBy,
+      requestedByName: pending.requestedByName,
+      requestedAt: pending.requestedAt,
+    } : null,
+    // The whole list is rarely wanted on a row; the count is, so "extended
+    // twice, asking again" reads without opening anything.
+    extensionRequests: (row.extensions || []).length,
   };
+}
+
+// ===== Sorting =====
+
+/**
+ * Which order the list comes back in.
+ *
+ * Added 2026-09-22 — the brief asks for *"sorting these according to day
+ * assigned, pending days, points, priority"*. Before this the sort was hard
+ * coded to the deadline, which is the right default and the wrong only option:
+ * a task with no deadline sorted to the top of every list, and "what has been
+ * sitting the longest" could not be asked at all.
+ *
+ * `_id` always breaks the tie, so paging cannot repeat or skip a row when
+ * fifty tasks share a due date — which, on a portal where people set everything
+ * to 6pm, they do.
+ */
+function resolveSort(query = {}) {
+  const key = SORT_KEYS.includes(query.sort) ? query.sort : DEFAULT_SORT;
+  const spec = SORTS[key];
+  const dir = query.dir === 'asc' ? 'asc' : (query.dir === 'desc' ? 'desc' : null);
+  const sign = dir ? (dir === 'asc' ? 1 : -1) : spec.dir;
+  return {
+    key,
+    dir: sign === 1 ? 'asc' : 'desc',
+    sort: { [spec.field]: sign, _id: -1 },
+  };
+}
+
+/**
+ * One page of rows in the asked-for order.
+ *
+ * TWO PATHS, and the reason for the second is worth stating. Most sorts are a
+ * plain `find().sort()`. Two are not:
+ *
+ *   priority   'Low' < 'Medium' < 'Urgent' alphabetically, which is exactly
+ *              backwards, so the rank has to be computed before the sort. That
+ *              means an aggregation.
+ *   pending    "how long has this been sitting there" must put the OPEN work
+ *              first regardless of age — a task finished last year is not
+ *              pending for 400 days, it is not pending at all.
+ *
+ * Both fall back to the same projection and populate as the simple path, so a
+ * row is the same shape whichever way it arrived.
+ */
+async function sortedRows(filter, sort, key, skip, limit) {
+  if (key !== 'priority' && key !== 'pending') {
+    return Task.find(filter)
+      .select(LIST_FIELDS)
+      .populate('assignees.user', 'firstName lastName photo')
+      .populate('createdBy', 'firstName lastName photo')
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean();
+  }
+
+  const addFields = key === 'priority'
+    ? {
+      priorityRank: {
+        $switch: {
+          branches: [
+            // `High` is the pre-2026-09-22 spelling of Urgent and is still on
+            // most of the live rows — ranking it anywhere but first would sort
+            // the company's actual urgent work into the middle of the list.
+            { case: { $in: ['$priority', ['Urgent', 'High', 'Critical', 'Highest']] }, then: PRIORITY_RANK.Urgent },
+            { case: { $in: ['$priority', ['Low', 'Lowest']] }, then: PRIORITY_RANK.Low },
+          ],
+          default: PRIORITY_RANK.Medium,
+        },
+      },
+    }
+    : {
+      // Open work first (0), then everything settled (1); inside each, oldest
+      // first. `assignedAt` predates this rework on every row, so no backfill.
+      openFirst: { $cond: [{ $in: ['$status', [STATUS.COMPLETED, STATUS.CANCELLED]] }, 1, 0] },
+    };
+
+  const sortStage = key === 'priority'
+    ? { priorityRank: sort.priorityRank ?? 1, dueDate: 1, _id: -1 }
+    : { openFirst: 1, assignedAt: sort.assignedAt ?? 1, _id: -1 };
+
+  const ids = await Task.aggregate([
+    { $match: filter },
+    { $addFields: addFields },
+    { $sort: sortStage },
+    { $skip: skip },
+    { $limit: limit },
+    { $project: { _id: 1 } },
+  ]);
+
+  const order = new Map(ids.map((r, i) => [String(r._id), i]));
+  const rows = await Task.find({ _id: { $in: ids.map((r) => r._id) } })
+    .select(LIST_FIELDS)
+    .populate('assignees.user', 'firstName lastName photo')
+    .populate('createdBy', 'firstName lastName photo')
+    .lean();
+  // `$in` does not preserve the order the ids came in, so it is restored here
+  // rather than being left to whatever the index happened to return.
+  return rows.sort((a, b) => order.get(String(a._id)) - order.get(String(b._id)));
 }
 
 // ===== Reading =====
@@ -288,20 +472,10 @@ const listTasks = asyncHandler(async (req, res) => {
   const filter = await buildQuery(req);
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-
-  // Soonest deadline first, undated last — the order somebody would sort by
-  // hand. `_id` breaks ties so paging cannot repeat or skip a row.
-  const sort = { dueDate: 1, _id: -1 };
+  const { sort, key: sortKey, dir: sortDir } = resolveSort(req.query);
 
   const [rows, total, counters] = await Promise.all([
-    Task.find(filter)
-      .select(LIST_FIELDS)
-      .populate('assignees.user', 'firstName lastName photo')
-      .populate('createdBy', 'firstName lastName photo')
-      .sort(sort)
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean(),
+    sortedRows(filter, sort, sortKey, (page - 1) * limit, limit),
     Task.countDocuments(filter),
     countersFor(filter),
   ]);
@@ -315,14 +489,21 @@ const listTasks = asyncHandler(async (req, res) => {
     // in-memory work over at most 200 rows and no extra query, and the
     // alternative is the client re-deriving the rules, which is exactly the
     // split-brain this module was rebuilt to end.
-    tasks: rows.map((row) => ({
+    tasks: rows.map((row, i) => ({
       ...decorate(row),
+      // The serial number the brief asks for. It CONTINUES ACROSS PAGES — row
+      // 51 is "51", not "1" again — because a number that restarts is not a
+      // serial, it is a row index, and quoting "number 3" then becomes
+      // ambiguous the moment anybody turns a page.
+      serial: (page - 1) * limit + i + 1,
       can: access.capabilitiesFor(req.user, row),
     })),
     page,
     limit,
     total,
     pages: Math.ceil(total / limit) || 1,
+    sort: sortKey,
+    dir: sortDir,
     counters,
   });
 });
@@ -346,21 +527,132 @@ const getTask = asyncHandler(async (req, res) => {
     .populate('assignees.user', 'firstName lastName photo email')
     .populate('createdBy', 'firstName lastName photo')
     .populate('loopUsers', 'firstName lastName photo')
+    .populate('openTo', 'firstName lastName photo')
+    .populate('parentTask', 'code title status points distributedPoints progress')
     .populate('linkedTask', 'code title status');
   if (!task) bad(res, 'That task no longer exists.', 404);
-  access.assertCanSee(req.user, task);
 
-  const updates = await TaskUpdate.find({ task: task._id })
-    .populate('by', 'firstName lastName photo')
-    .sort({ createdAt: -1 })
-    .limit(200)
-    .lean();
+  /**
+   * A PIECE is visible to whoever can see the task it came from.
+   *
+   * A manager splits the CEO's task five ways; the CEO is on none of the five
+   * and is in nobody's `openTo`, but *"how is my task going"* has to be
+   * answerable. The parent's own visibility is the gate — see
+   * services/taskAccess.canSeeThroughParent — and it costs one extra read on
+   * exactly the requests that need it.
+   */
+  if (!access.canSee(req.user, task) && !(await access.canSeeThroughParent(req.user, task))) {
+    bad(res, 'That task is not yours to see.', 403);
+  }
+
+  const [updates, children] = await Promise.all([
+    TaskUpdate.find({ task: task._id })
+      .populate('by', 'firstName lastName photo')
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean(),
+    Task.find({ parentTask: task._id, archived: { $ne: true } })
+      .select(LIST_FIELDS)
+      .populate('assignees.user', 'firstName lastName photo')
+      .populate('createdBy', 'firstName lastName photo')
+      .sort({ createdAt: 1 })
+      .lean(),
+  ]);
+
+  const pieces = children.map((c, i) => ({
+    ...decorate(c),
+    serial: i + 1,
+    can: access.capabilitiesFor(req.user, c),
+  }));
 
   res.json({
-    task: decorate(task.toObject()),
+    task: {
+      ...decorate(task.toObject()),
+      /**
+       * THE OLD SHAPE, DERIVED (2026-09-22).
+       *
+       * An Android build from before the pieces became real tasks reads
+       * `task.subtasks` and renders `{ _id, title, assignee, assigneeName,
+       * done }`. Serving it from the children costs nothing and means an APK in
+       * somebody's pocket keeps working — which matters here, because this
+       * portal's app updates when its owner gets round to it, not when the
+       * server deploys. New clients read `children`.
+       */
+      subtasks: pieces.map((c) => ({
+        _id: c._id,
+        title: c.title,
+        assignee: c.assignees?.[0]?.user?._id || c.assignees?.[0]?.user || null,
+        assigneeName: c.assignees?.[0]?.name || '',
+        done: c.status === STATUS.COMPLETED,
+        doneAt: c.completedAt,
+        points: c.points,
+      })),
+    },
+    children: pieces,
     updates,
     can: access.capabilitiesFor(req.user, task),
   });
+});
+
+/** GET /api/tasks/:id/children — the pieces on their own, for a refresh. */
+const getChildren = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const parent = await Task.findById(req.params.id)
+    .select('createdBy assignees assignedTo loopUsers openTo originalAssignees company parentTask');
+  if (!parent) bad(res, 'That task no longer exists.', 404);
+  access.assertCanSee(req.user, parent);
+
+  const children = await Task.find({ parentTask: parent._id, archived: { $ne: true } })
+    .select(LIST_FIELDS)
+    .populate('assignees.user', 'firstName lastName photo')
+    .populate('createdBy', 'firstName lastName photo')
+    .sort({ createdAt: 1 })
+    .lean();
+
+  res.json({
+    children: children.map((c, i) => ({
+      ...decorate(c),
+      serial: i + 1,
+      can: access.capabilitiesFor(req.user, c),
+    })),
+  });
+});
+
+/**
+ * GET /api/tasks/board — the four columns, in one call.
+ *
+ * Takes every filter the list takes. It is FOUR capped queries rather than one
+ * big one and a client-side group, because a board must show the top of each
+ * column: a single 200-row page sorted by deadline can easily be 200 pending
+ * tasks and leave "In review" — the column somebody opened the board to clear —
+ * looking empty.
+ */
+const boardTasks = asyncHandler(async (req, res) => {
+  const base = await buildQuery(req);
+  const perColumn = Math.min(100, Math.max(5, parseInt(req.query.limitPerColumn, 10) || 50));
+  const { sort, key } = resolveSort(req.query);
+
+  const columns = await Promise.all(BOARD_COLUMNS.map(async (col) => {
+    const filter = { $and: [base, { status: col.key }] };
+    const [rows, count] = await Promise.all([
+      sortedRows(filter, sort, key, 0, perColumn),
+      Task.countDocuments(filter),
+    ]);
+    return {
+      key: col.key,
+      label: statusLabel(col.key, req.query.kind === KIND_REQUEST ? KIND_REQUEST : KIND_TASK) || col.label,
+      boardLabel: col.label,
+      count,
+      more: Math.max(0, count - rows.length),
+      tasks: rows.map((row, i) => ({
+        ...decorate(row),
+        serial: i + 1,
+        can: access.capabilitiesFor(req.user, row),
+      })),
+    };
+  }));
+
+  res.json({ columns, limitPerColumn: perColumn, counters: await countersFor(base) });
 });
 
 /** GET /api/tasks/:id/updates — the feed on its own, for paging it. */
@@ -584,8 +876,19 @@ const createTask = asyncHandler(async (req, res) => {
     assignees,
     loopUsers: [...new Set((body.loopUsers || []).map(String))]
       .filter(mongoose.Types.ObjectId.isValid),
-    priority: TASK_PRIORITY.includes(body.priority) ? body.priority : DEFAULT_PRIORITY,
+    priority: normalisePriority(body.priority) || DEFAULT_PRIORITY,
     points: kind === KIND_TASK ? pts : 0,
+    /**
+     * Does the assigner want to see it before it counts as done?
+     *
+     * ON unless they say otherwise (2026-09-22) — that is what the brief asks
+     * for, and it is the safer default: a task that goes through a review
+     * nobody needed costs one click, a task that quietly closed itself when it
+     * should have been checked costs a re-run of the work. A REQUEST is never
+     * reviewed and the model enforces that.
+     */
+    requiresApproval: !(body.requiresApproval === false
+      || body.requiresApproval === 'false' || body.requiresApproval === '0'),
     dueDate: recurring ? undefined : dueDate,
     startDate,
     repeat,
@@ -672,8 +975,18 @@ const updateTask = asyncHandler(async (req, res) => {
   }
   if (body.description !== undefined) task.description = String(body.description).trim();
   if (body.category !== undefined) task.category = String(body.category).trim();
-  if (body.priority !== undefined && TASK_PRIORITY.includes(body.priority)) {
-    if (body.priority !== task.priority) { task.priority = body.priority; changed.push('priority'); }
+  if (body.priority !== undefined) {
+    const p = normalisePriority(body.priority);
+    if (p && p !== task.priority) { task.priority = p; changed.push('priority'); }
+  }
+
+  if (body.requiresApproval !== undefined) {
+    const want = !(body.requiresApproval === false
+      || body.requiresApproval === 'false' || body.requiresApproval === '0');
+    if (want !== task.requiresApproval) {
+      task.requiresApproval = want;
+      changed.push(want ? 'review needed' : 'no review needed');
+    }
   }
 
   if (body.points !== undefined && task.kind === KIND_TASK) {
@@ -686,6 +999,13 @@ const updateTask = asyncHandler(async (req, res) => {
       // money. Refuse rather than quietly disagree.
       if ((task.assignees || []).some((a) => a.pointsAwardedAt)) {
         bad(res, 'Points cannot be changed once somebody has completed this task and been credited.');
+      }
+      // …and it can never be dropped below what has already been handed down to
+      // the pieces, or the people doing them would be owed points the task no
+      // longer carries. The remedy is to take a piece's points back first.
+      if (rounded < (task.distributedPoints || 0)) {
+        bad(res, `${task.distributedPoints} points are already shared out across this task's pieces. `
+          + 'Lower those first, or keep this at or above that figure.');
       }
       task.points = rounded;
       changed.push('points');
@@ -865,14 +1185,227 @@ const delegateTask = asyncHandler(async (req, res) => {
   });
 });
 
-// ===== Subtasks =====
+// ===== Submitting, approving, sending back =====
 
 /**
- * POST /api/tasks/:id/subtasks — split it up.
+ * POST /api/tasks/:id/submit — hand it in.
+ *
+ * Sugar over the engine's move, and it exists for the WORDING. "Submit" and
+ * "Complete" are the same underlying move with the review rule applied, but a
+ * client that had to send `{ to: 'COMPLETED' }` and then explain that it went
+ * somewhere else would be re-deriving the server's rule to word its own
+ * success message. This route says what it does.
+ */
+const submitTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  // THE SAME CALL SHAPE AS changeStatus, and it has to be: both helpers take
+  // the multer array, the task id and the actor. Handed `req` they threw
+  // "files.find is not a function" and every hand-in died as a 500 — with the
+  // recording the person had just made still in the request.
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  const files = uploaded.length ? await storeFiles(uploaded, req.params.id, req.user) : [];
+  const voiceNote = await storeVoiceNote(req.files, req.params.id, req.user, body.voiceDurationMs);
+  const { task, update, unchanged, coerced } = await engine.move({
+    taskId: req.params.id,
+    user: req.user,
+    to: STATUS.SUBMITTED,
+    note: body.note || '',
+    voiceNote,
+    files,
+    mentions: listParam(body.mentions).map(oid).filter(Boolean),
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    update,
+    unchanged: Boolean(unchanged),
+    coerced: Boolean(coerced),
+  });
+});
+
+/**
+ * POST /api/tasks/:id/approve — the assigner signs it off.
+ * POST /api/tasks/:id/reject  — …or sends it back, which reopens it.
+ *
+ * The brief: *"when user submit any task then manager should have the option to
+ * approve that and on reject that submission the task will reopen again and
+ * assign them again"*. Sending back lands on IN_PROGRESS with the same people
+ * still on it, which is what "assign them again" means in practice — throwing
+ * the assignees away and re-picking them would discard every remark, file and
+ * hour already on the row.
+ */
+const decideSubmission = (approve) => asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const note = String(body.note || '').trim();
+  if (!approve && !note) {
+    bad(res, 'Say what needs doing before sending this back — that is the whole point of sending it back.');
+  }
+  // See submitTask: the helpers take (files, taskId, user[, durationMs]).
+  const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
+  const files = uploaded.length ? await storeFiles(uploaded, req.params.id, req.user) : [];
+  const voiceNote = await storeVoiceNote(req.files, req.params.id, req.user, body.voiceDurationMs);
+  const { task, update, unchanged, awarded } = await engine.move({
+    taskId: req.params.id,
+    user: req.user,
+    to: approve ? STATUS.COMPLETED : STATUS.IN_PROGRESS,
+    note,
+    voiceNote,
+    files,
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    update,
+    unchanged: Boolean(unchanged),
+    // Both clients word the approval with the points ("Approved · 40 points
+    // credited") and read them from here; without this the figure was always 0
+    // and the line never appeared. Same shape as changeStatus's.
+    awarded: (awarded || []).map((a) => ({ points: a.points, credited: a.credited })),
+  });
+});
+
+const approveTask = decideSubmission(true);
+const rejectTask = decideSubmission(false);
+
+// ===== Progress =====
+
+/** PATCH /api/tasks/:id/progress — "I am this far along." */
+const setProgress = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  if (body.progress === undefined || body.progress === null || body.progress === '') {
+    bad(res, 'Say how far along you are.');
+  }
+  const { task, update, unchanged, progress } = await engine.setProgress({
+    taskId: req.params.id,
+    user: req.user,
+    progress: body.progress,
+    note: body.note || '',
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    update,
+    progress: progress ?? clampProgress(body.progress),
+    unchanged: Boolean(unchanged),
+  });
+});
+
+// ===== Asking for more time =====
+
+/** POST /api/tasks/:id/extension — `{ toDate, reason }`. */
+const askExtension = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task, extension } = await engine.requestExtension({
+    taskId: req.params.id,
+    user: req.user,
+    toDate: body.toDate || body.dueDate,
+    reason: body.reason || body.note || '',
+  });
+  res.status(201).json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    extension,
+  });
+});
+
+/** POST /api/tasks/:id/extension/:reqId — `{ approve, note }`. */
+const decideExtension = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task, extension, unchanged } = await engine.decideExtension({
+    taskId: req.params.id,
+    requestId: req.params.reqId,
+    user: req.user,
+    approve: body.approve === true || body.approve === 'true' || body.approve === '1',
+    note: body.note || '',
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    extension,
+    unchanged: Boolean(unchanged),
+  });
+});
+
+// ===== Pieces =====
+
+/**
+ * POST /api/tasks/:id/split — break it into pieces, each its own task.
+ *
+ * Body: `{ items: [{ title, description?, assignee?, openTo?, points?, dueDate?, priority? }] }`.
+ * Leave `points` off and the pool is shared equally — the brief's *"by default
+ * it will be divided equally"*. Leave `assignee` off and the piece is OFFERED
+ * to `openTo` (defaulting to the splitter's own direct reports) for somebody to
+ * pick up.
+ */
+const splitTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const items = Array.isArray(body.items) ? body.items : [body];
+  const { parent, children } = await engine.splitTask({
+    taskId: req.params.id,
+    user: req.user,
+    items,
+  });
+  res.status(201).json({
+    task: decorate(parent.toObject()),
+    can: access.capabilitiesFor(req.user, parent),
+    children: children.map((c, i) => ({
+      ...decorate(c.toObject()),
+      serial: i + 1,
+      can: access.capabilitiesFor(req.user, c),
+    })),
+  });
+});
+
+/**
+ * POST /api/tasks/:id/transfer — it went to the wrong person.
+ *
+ * Body `{ to, reason }`, both required. NOT the same as delegate: the person it
+ * comes off drops out of the task completely, including out of its
+ * notifications — see services/taskEngine.transferTask for why that is the one
+ * place `originalAssignees` is rewritten.
+ */
+const transferTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const body = parseBody(req);
+  const { task, transferredTo } = await engine.transferTask({
+    taskId: req.params.id,
+    user: req.user,
+    to: body.to || body.assignee,
+    reason: body.reason || body.note || '',
+  });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    transferredTo,
+  });
+});
+
+/** POST /api/tasks/:id/claim — take an open piece. */
+const claimTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const { task } = await engine.claimTask({ taskId: req.params.id, user: req.user });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+  });
+});
+
+// ===== The old subtask endpoints, kept working =====
+//
+// They drive child tasks now (services/taskEngine's adapters). An Android build
+// from before 2026-09-22 still calls all three, and an APK in somebody's pocket
+// does not update because the server deployed.
+
+/**
+ * POST /api/tasks/:id/subtasks — split it up. LEGACY; prefer `/split`.
  *
  * Body: `{ items: [{ title, assignee? }] }`, or `{ title, assignee? }` for one.
- * An item with no `assignee` is open to everybody on the task — the user's
- * "any assignee can do any subtask".
  */
 const addSubtasks = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
@@ -886,7 +1419,7 @@ const addSubtasks = asyncHandler(async (req, res) => {
   res.status(201).json({
     task: decorate(task.toObject()),
     can: access.capabilitiesFor(req.user, task),
-    added: added.length,
+    added,
   });
 });
 
@@ -1032,6 +1565,7 @@ const taskMeta = asyncHandler(async (req, res) => {
       .select('firstName lastName role photo')
       .sort({ firstName: 1 })
       .lean(),
+
     TaskCategory.find({ isActive: true, ...(req.user.company ? { $or: [{ company: req.user.company }, { company: null }] } : {}) })
       .select('name color')
       .sort({ name: 1 })
@@ -1044,17 +1578,57 @@ const taskMeta = asyncHandler(async (req, res) => {
   const assignable = new Set(await access.assignableUserIds(req, people.map((p) => p._id)));
   const canAsk = new Set(await access.requestableUserIds(req));
 
+  /**
+   * …AND WHERE EACH OF THEM STANDS (2026-09-22).
+   *
+   * The brief: *"for all dropdown like this only show the team member for
+   * manager and for CEO and MD show Manager who are under them but they can
+   * search other people to find that"*. So every picker opens on MY TEAM and
+   * widens to the whole company the moment somebody types.
+   *
+   * It is one annotation on a list the form already downloads, rather than a
+   * search endpoint the picker calls on every keystroke: this company is fifty
+   * people, the payload is already in flight, and a round trip per letter on a
+   * phone against Android's five-connections-per-host is the trap this module's
+   * own meta call was created to avoid.
+   *
+   * If the directory ever outgrows one payload, this becomes `GET
+   * /api/tasks/people?q=` with the same three fields and nothing else changes.
+   */
+  const { people: annotated, team, hasTeam } = await access.annotatePeople(req, people);
+  const departed = await departedUserIdSet(people.map((p) => p._id));
+
   res.json({
-    people: people.map((p) => ({
+    people: annotated.map((p) => ({
       _id: p._id,
       name: personName(p),
       role: p.role,
       photo: p.photo || null,
       canAssign: assignable.has(String(p._id)),
       canRequest: canAsk.has(String(p._id)),
+      // Where they stand: 'self' | 'direct' | 'indirect' | 'manager' | 'chain' | 'peer'.
+      relation: p.relation,
+      direction: p.direction,
+      depth: p.depth,
+      // Somebody working out their notice keeps their login but takes no new
+      // work — the portal-wide rule. Marked rather than dropped, so a task they
+      // are ALREADY on still renders their name (utils/peopleOptions).
+      departed: departed.has(String(p._id)),
     })),
+    team,
+    hasTeam,
     categories,
     priorities: TASK_PRIORITY,
+    // ONE palette, served rather than hard-coded in two clients — see
+    // config/tasks.PRIORITY_COLORS for why.
+    priorityColors: PRIORITY_COLORS,
+    doneColor: DONE_COLOR,
+    cancelledColor: CANCELLED_COLOR,
+    statuses: TASK_STATUS.map((s) => ({ key: s, label: statusLabel(s, KIND_TASK) })),
+    boardColumns: BOARD_COLUMNS.map((c) => ({ ...c, label: c.label })),
+    sorts: SORT_KEYS.map((k) => ({ key: k, label: SORTS[k].label })),
+    progressSteps: PROGRESS_STEPS,
+    maxPieces: MAX_SUBTASKS,
     frequencies: FREQUENCIES.map((f) => ({ key: f, label: FREQUENCY_LABELS[f] })),
     weekdays: WEEKDAYS,
     reminderChannels: REMINDER_CHANNELS.map((c) => ({ key: c, label: REMINDER_CHANNEL_LABELS[c] })),
@@ -1172,15 +1746,35 @@ const renameCategory = asyncHandler(async (req, res) => {
  * have not.
  */
 async function countMyOpenTasks(req) {
-  return Task.countDocuments({
-    archived: { $ne: true },
-    assignees: {
-      $elemMatch: {
-        user: req.user._id,
-        status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+  /**
+   * WHAT IS WAITING ON ME — which since 2026-09-22 is two different things.
+   *
+   * Work I have to do (mine, not yet handed in) AND work I have to look at
+   * (somebody handed in a task I set). A submission I have not read is exactly
+   * as blocking as a task I have not started, and it is the one queue nobody
+   * else can clear for me — so a badge that ignored it would tell a manager
+   * they were up to date while five people waited on their word.
+   *
+   * A row I have SUBMITTED is deliberately not counted for me: it is out of my
+   * hands, and counting it would leave a number I cannot make go down.
+   */
+  const [doing, reviewing] = await Promise.all([
+    Task.countDocuments({
+      archived: { $ne: true },
+      assignees: {
+        $elemMatch: {
+          user: req.user._id,
+          status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+        },
       },
-    },
-  });
+    }),
+    Task.countDocuments({
+      archived: { $ne: true },
+      createdBy: req.user._id,
+      status: STATUS.SUBMITTED,
+    }),
+  ]);
+  return doing + reviewing;
 }
 
 /**
@@ -1251,8 +1845,10 @@ const deleteCategory = asyncHandler(async (req, res) => {
 
 module.exports = {
   listTasks,
+  boardTasks,
   taskCounters,
   getTask,
+  getChildren,
   taskFeed,
   createTask,
   updateTask,
@@ -1261,6 +1857,17 @@ module.exports = {
   acceptTask,
   declineTask,
   delegateTask,
+  // 2026-09-22
+  submitTask,
+  approveTask,
+  rejectTask,
+  setProgress,
+  splitTask,
+  claimTask,
+  transferTask,
+  askExtension,
+  decideExtension,
+  // legacy adapters onto child tasks
   addSubtasks,
   setSubtask,
   removeSubtask,

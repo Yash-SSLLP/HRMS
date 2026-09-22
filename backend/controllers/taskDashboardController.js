@@ -85,6 +85,10 @@ function statsStage(now, {
     overdue: countIf(late),
     pending: countIf({ $and: [{ $eq: [statusField, STATUS.PENDING] }, { $not: late }] }),
     inProgress: countIf({ $and: [{ $eq: [statusField, STATUS.IN_PROGRESS] }, { $not: late }] }),
+    // Handed in, waiting on a word. Its own bucket for the same reason it is its
+    // own counter on the list: it is the one queue a manager can clear by
+    // reading it (2026-09-22).
+    inReview: countIf({ $eq: [statusField, STATUS.SUBMITTED] }),
     completed: countIf({ $eq: [statusField, STATUS.COMPLETED] }),
     inTime: countIf({
       $and: [{ $eq: [statusField, STATUS.COMPLETED] }, { $ne: [lateField, true] }],

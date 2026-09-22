@@ -64,7 +64,8 @@ const askedMonth = (query) => (/^\d{4}-\d{2}$/.test(String(query.month || '')) ?
  * the question anybody looking at one month immediately asks next.
  *
  * @route GET /api/incentives/billing?month=YYYY-MM&q=&refresh=true
- * @returns {{configured: boolean, month: string, months: string[], source: string,
+ * @returns {{configured: boolean, month: string, months: string[],
+ *   startedOn: string|null, range: object|null, source: string,
  *   generatedAt: string|null, people: Object[], unmatched: Object[],
  *   failed: Object[], totals: object, can: object}}
  */
@@ -80,6 +81,8 @@ const board = asyncHandler(async (req, res) => {
       configured: false,
       month,
       months: [],
+      startedOn: null,
+      range: null,
       source: '',
       generatedAt: null,
       people: [],
@@ -156,6 +159,12 @@ const board = asyncHandler(async (req, res) => {
     // Every month the billing system has, so the picker cannot offer one that
     // answers empty.
     months: billing.monthsUpTo(),
+    // The day counting starts, when it starts partway through a month — null in
+    // the ordinary case. The tab has to say so: a column headed "September" that
+    // actually holds the 10th onwards is the kind of number nobody checks.
+    startedOn: billing.firstDay(),
+    // The span THIS month really covers, when it is the part month.
+    range: monthData.month?.range || null,
     source: monthData.month?.source || '',
     generatedAt: monthData.month?.generatedAt || null,
     people: shown,

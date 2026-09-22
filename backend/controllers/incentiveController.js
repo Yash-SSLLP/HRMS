@@ -100,11 +100,12 @@ async function incentiveSettings() {
   return {
     rupeePerPoint: cfg.rupeePerPoint == null ? 1 : Number(cfg.rupeePerPoint),
     pointsPerSheet: cfg.pointsPerSheet == null ? 4 : Number(cfg.pointsPerSheet),
-    // What share of a team's points goes to the department members who did not
-    // roll with it. 30 is the figure the floor already works to (user decision
-    // 2026-09-11); it is a setting rather than a constant because it is the kind
-    // of number that gets renegotiated, and a day freezes its own copy.
-    nonRollingSharePct: cfg.nonRollingSharePct == null ? 30 : Number(cfg.nonRollingSharePct),
+    // What percentage comes off every team's gross before it is credited. 30 is
+    // the figure the floor works to; it stays a SETTING rather than a constant
+    // (user decision 2026-09-22) because it is exactly the kind of number that
+    // gets renegotiated, and a day freezes its own copy. Where the deduction
+    // goes is settled outside the portal — see models/IncentiveEntry.
+    deductionPct: cfg.deductionPct == null ? 30 : Number(cfg.deductionPct),
   };
 }
 
@@ -409,238 +410,6 @@ const dayBounds = (date) => [
   new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999),
 ];
 
-// The attendance states that mean somebody was actually at work. The model's own
-// vocabulary: Present / HalfDay / Absent are the worked states, and
-// WeeklyOff / Holiday / OnLeave are days nobody was expected in.
-const PRESENT_STATUSES = new Set(['Present', 'HalfDay']);
-
-/**
- * What Attendance says about each of these people on one day.
- *
- * This is where "only to those who are present that particular day" is answered
- * (user decision 2026-09-11) — but only as the DEFAULT. Whoever records the
- * group can overrule it, because a floor worker who was plainly there and whose
- * punch never registered should still be paid, and the incentive must not become
- * a second attendance dispute.
- * @param {string[]} employeeIds - EmployeeProfile ids
- * @param {Date} date - the working day
- * @returns {Promise<Map<string, {present: boolean, status: string|null}>>}
- */
-async function attendanceOnDay(employeeIds, date) {
-  const out = new Map();
-  if (!employeeIds.length || !date) return out;
-  const [start, end] = dayBounds(date);
-  const rows = await Attendance.find({
-    employee: { $in: employeeIds },
-    date: { $gte: start, $lte: end },
-  }).select('employee status checkIn').lean();
-  for (const r of rows) {
-    // A punch with no status still means somebody turned up; a status with no
-    // punch (HR marked them present) counts just the same.
-    const present = PRESENT_STATUSES.has(r.status) || !!r.checkIn;
-    out.set(String(r.employee), { present, status: r.status || null });
-  }
-  return out;
-}
-
-/**
- * What presence to start a person at, given what Attendance had to say.
- *
- * NO RECORD AT ALL MEANS PRESENT, and that is the deliberate half of this:
- * silence is not evidence of absence. A floor worker whose punch never
- * registered has no row here, and starting them at "absent" would quietly
- * underpay exactly the people this share exists for — while the manager who
- * ticked them in plainly meant to include them. A record that SAYS they were out
- * is respected; the row carries `attendance: null` either way, so a no-record
- * default is visible on screen rather than mysterious.
- * @param {{present: boolean, status: string|null}|undefined} att
- * @returns {boolean}
- */
-const presenceDefault = (att) => (att && att.status ? att.present : true);
-
-/**
- * Everybody on a ROLLING team that day — the people a non-rolling group may not
- * contain, because they are already being paid a rolling share.
- *
- * EVERY team that day, this one included: a group is not allowed to hold its own
- * team's rollers, and it is not allowed to hold the team next door's either. The
- * same person MAY appear in several non-rolling groups on one day, which is how
- * somebody who was in all day ends up with a share of each team that rolled.
- * @param {Date} date
- * @returns {Promise<Set<string>>} employee ids
- */
-async function rollingOnDay(date) {
-  const [start, end] = dayBounds(date);
-  const rows = await IncentiveEntry.find({ date: { $gte: start, $lte: end } })
-    .select('picker members').lean();
-  const out = new Set();
-  for (const e of rows) {
-    if (e.picker?.employee) out.add(String(e.picker.employee));
-    for (const m of e.members || []) if (m?.employee) out.add(String(m.employee));
-  }
-  return out;
-}
-
-/**
- * Build the non-rolling group from submitted rows.
- *
- * Each row is `{ employee, present }`. Presence is taken from the request when
- * it says anything at all and from Attendance otherwise, and the attendance
- * status of the day is snapshotted either way so an override reads as one.
- * @param {Object[]} people - the caller's pickable people
- * @param {Array<{employee: string, present?: boolean}>} rows
- * @param {Date} date
- * @param {Set<string>} rollers - employee ids already on a rolling team that day
- * @param {string} department - the incentive's department; nobody else qualifies
- * @returns {Promise<Object[]>} nonRolling member snapshots
- * @throws {Error} with `.status` set when somebody is not eligible
- */
-async function buildNonRolling(people, rows, date, rollers, department) {
-  const list = Array.isArray(rows) ? rows : [];
-  if (!list.length) return [];
-  const byId = new Map(people.map((p) => [String(p._id), p]));
-  const seen = new Set();
-  const wanted = [];
-  for (const raw of list) {
-    const id = String(raw?.employee || raw || '').trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const profile = byId.get(id);
-    if (!profile) {
-      const err = new Error('Somebody in the non-rolling group is not selectable — they may have left, or belong to another company');
-      err.status = 400;
-      throw err;
-    }
-    // Already paid a rolling share. Refused rather than silently dropped: the
-    // recorder chose them, and a group that quietly loses a name is worse than
-    // one that says why.
-    if (rollers.has(id)) {
-      const err = new Error(`${fullName(profile)} is on a rolling team that day and already earns from it — they cannot also take a non-rolling share.`);
-      err.status = 400;
-      throw err;
-    }
-    // The incentive's own department, and only it (user decision 2026-09-11).
-    // An outsider may stand IN for a rolling team, but the cut belongs to the
-    // department the work is done in.
-    if (department && String(profile.department || '').trim().toLowerCase() !== department.toLowerCase()) {
-      const err = new Error(`${fullName(profile)} is not in ${department} — the non-rolling share is only for that department.`);
-      err.status = 400;
-      throw err;
-    }
-    wanted.push({ id, profile, present: raw?.present });
-  }
-
-  const attendance = await attendanceOnDay(wanted.map((w) => w.id), date);
-  return wanted.map((w) => {
-    const att = attendance.get(w.id);
-    return {
-      ...snapshot(w.profile),
-      // The request wins when it says anything; attendance fills the silence
-      // (and a total silence means present — see presenceDefault).
-      present: typeof w.present === 'boolean' ? w.present : presenceDefault(att),
-      attendance: att ? att.status : null,
-    };
-  });
-}
-
-/**
- * Set (or re-apply) the DAY's non-rolling group.
- *
- * ONE group per day, not one per team (user decision 2026-09-11). Three teams
- * rolling on a Tuesday do not each nominate their own hangers-on: the floor
- * has one set of people who kept it running, and they share in the whole day.
- *
- * It is stored by writing the SAME list onto every entry of the day. That is
- * deliberate and load-bearing: each entry keeps computing its own cut from its
- * own points and its own frozen percentage, so every roll-up, export and
- * payment total goes on working unchanged — and because the same person is now
- * on all of the day's entries, their day total is a share of each team's cut,
- * which adds up to their share of the day's whole pot. Three teams earning 40,
- * 40 and 20 at 30% hand over 12 + 12 + 6 = 30, which is 30% of 100.
- *
- * `rows` omitted means "re-apply what the day already has" — which is how a
- * team created later in the day inherits the group, and how somebody who has
- * since joined a rolling team is dropped from it (they are paid as a roller
- * now, and nobody may take both shares).
- *
- * @param {import('express').Request} req
- * @param {Date} date - the day, at local noon
- * @param {Array<{employee: string, present?: boolean}>} [rows] - the chosen group
- * @returns {Promise<{entries: Object[], group: Object[], dropped: Object[]}>}
- * @throws {Error} with `.status` when no team rolled that day, or somebody is not eligible
- */
-async function applyDayGroup(req, date, rows) {
-  const [start, end] = dayBounds(date);
-  const entries = await IncentiveEntry.find({
-    date: { $gte: start, $lte: end },
-    ...entryScopeFilter(req),
-  });
-  if (!entries.length) {
-    const err = new Error('No team rolled on that day, so there are no points to share yet. Record the day first.');
-    err.status = 400;
-    throw err;
-  }
-
-  const people = await pickablePeople(req);
-  // Anybody ALREADY in the group stays selectable even if they have since left
-  // — correcting a presence tick must not silently drop somebody who was
-  // genuinely there. Same rule the entry editor follows.
-  const byId = new Map(people.map((p) => [String(p._id), p]));
-  for (const entry of entries) {
-    for (const m of entry.nonRolling || []) {
-      const key = String(m.employee);
-      if (!byId.has(key)) {
-        const stand = {
-          _id: m.employee,
-          employeeCode: m.employeeCode,
-          department: m.department,
-          company: entry.company,
-          user: { firstName: m.name, lastName: '', isActive: true },
-        };
-        byId.set(key, stand);
-        people.push(stand);
-      }
-    }
-  }
-
-  // What to apply: the request's list, or what the day already holds.
-  const existing = entries.find((e) => (e.nonRolling || []).length);
-  const wanted = rows !== undefined
-    ? rows
-    : (existing?.nonRolling || []).map((m) => ({ employee: String(m.employee), present: m.present !== false }));
-
-  // Everyone rolling that day is out of the group by definition. When the
-  // caller sent a list, buildNonRolling REFUSES a roller (they chose them, and
-  // a name that quietly vanishes is worse than an explanation). When we are
-  // re-applying the day's own list, a new team has just claimed somebody who
-  // was in it — there is nobody to explain it to, so they are dropped and
-  // reported back to the caller.
-  const rollers = await rollingOnDay(date);
-  const dropped = [];
-  const list = rows !== undefined
-    ? wanted
-    : wanted.filter((m) => {
-      if (!rollers.has(String(m.employee))) return true;
-      const was = (existing.nonRolling || []).find((x) => String(x.employee) === String(m.employee));
-      dropped.push({ name: was?.name || '', employeeCode: was?.employeeCode || '' });
-      return false;
-    });
-
-  const group = await buildNonRolling(people, list, date, rollers, boysDepartment(people));
-
-  const actorName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
-  for (const entry of entries) {
-    // A fresh copy per entry: they are separate sub-documents, and sharing one
-    // array between mongoose parents is how an edit to one silently moves the
-    // others.
-    entry.nonRolling = group.map((m) => ({ ...m }));
-    entry.updatedBy = req.user._id;
-    entry.updatedByName = actorName;
-    await entry.save();
-  }
-  return { entries, group, dropped };
-}
-
 /**
  * Which of these people are already on ANOTHER team that day.
  *
@@ -662,14 +431,10 @@ async function clashingPeople(date, employeeIds, exceptEntryId) {
     $or: [
       { 'picker.employee': { $in: employeeIds } },
       { 'members.employee': { $in: employeeIds } },
-      // A non-roller is EARNING that day too, just on the other share. Putting
-      // them on a rolling team as well pays them twice over, so it raises the
-      // same warning being on two rolling teams does.
-      { 'nonRolling.employee': { $in: employeeIds } },
     ],
   };
   if (exceptEntryId) filter._id = { $ne: exceptEntryId };
-  const others = await IncentiveEntry.find(filter).select('teamName picker members nonRolling').lean();
+  const others = await IncentiveEntry.find(filter).select('teamName picker members').lean();
   const wanted = new Set(employeeIds.map(String));
   const out = [];
   for (const e of others) {
@@ -677,11 +442,6 @@ async function clashingPeople(date, employeeIds, exceptEntryId) {
     for (const p of [e.picker, ...(e.members || [])]) {
       if (p && wanted.has(String(p.employee))) {
         out.push({ name: p.name || '', employeeCode: p.employeeCode || '', teamName });
-      }
-    }
-    for (const p of e.nonRolling || []) {
-      if (p && wanted.has(String(p.employee))) {
-        out.push({ name: p.name || '', employeeCode: p.employeeCode || '', teamName: `${teamName} (non-rolling)` });
       }
     }
   }
@@ -770,10 +530,10 @@ const listPeople = asyncHandler(async (req, res) => {
     department: boysDepartment(people),
     rupeePerPoint: settings.rupeePerPoint,
     pointsPerSheet: settings.pointsPerSheet,
-    // What a new day will hand to the people who did not roll on it. Sent with
-    // the picker payload so the form can show the split before anything is
-    // saved, the same way pointsPerSheet drives the live preview.
-    nonRollingSharePct: settings.nonRollingSharePct,
+    // What comes off a new day's gross. Sent with the picker payload so the
+    // form can show the net before anything is saved, the same way
+    // pointsPerSheet drives the live preview.
+    deductionPct: settings.deductionPct,
     // WHICH ROLE the caller holds here, and which employee they are. The clients
     // draw from this rather than deciding for themselves, so what is on screen
     // cannot drift from what the server will accept — a picker gets no manager
@@ -871,7 +631,6 @@ const summary = asyncHandler(async (req, res) => {
           _at: e.date,
           days: 0,
           pickerDays: 0,
-          nonRollingDays: 0,
           sheets: 0,
           teamPoints: 0,
           creditPoints: 0,
@@ -889,12 +648,9 @@ const summary = asyncHandler(async (req, res) => {
       }
       row.days += 1;
       if (p.isPicker) row.pickerDays += 1;
-      // A non-roller did not roll: the sheets are not theirs, and their day is
-      // counted apart so the two ways of earning stay legible in the roll-up.
-      if (p.isNonRolling) row.nonRollingDays += 1;
-      else row.sheets += e.sheets || 0;
-      // Each payee carries their OWN share — a rolling share and a non-rolling
-      // share are different numbers on the same entry (models/IncentiveEntry).
+      row.sheets += e.sheets || 0;
+      // The share comes off the payee rather than the entry — see payees() on
+      // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
     }
   }
@@ -913,7 +669,6 @@ const summary = asyncHandler(async (req, res) => {
         _at: c.date,
         days: 0,
         pickerDays: 0,
-        nonRollingDays: 0,
         sheets: 0,
         teamPoints: 0,
         creditPoints: 0,
@@ -1050,30 +805,14 @@ const createEntry = asyncHandler(async (req, res) => {
   const settings = await incentiveSettings();
   const actorName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
 
-  // The non-rolling group — everyone else in the department taking a cut of what
-  // this team earns. MANAGER ONLY (user decision 2026-09-11): a picker puts
-  // their own team together, and deciding who else gets paid out of it is not
-  // that job. Usually left empty here and filled in with the sheet count.
-  if (!isManager && Array.isArray(req.body.nonRolling) && req.body.nonRolling.length) {
-    // Refused, not quietly dropped — the same shape the sheet-count rule above
-    // takes. A group that silently vanished would read as saved.
-    res.status(403);
-    throw new Error('Only the manager decides who shares this team’s points.');
-  }
-  // The group is the DAY's, not this team's, so it is applied AFTER the entry
-  // exists (below) — by which time this team's people count as rollers and are
-  // out of it automatically.
-  const nonRolling = [];
-
   const entry = await IncentiveEntry.create({
     date,
     teamName: String(req.body.teamName || '').trim(),
     company,
     picker,
     members,
-    nonRolling,
     // Frozen on the day, exactly as the two figures below are — see the model.
-    nonRollingSharePct: settings.nonRollingSharePct,
+    deductionPct: settings.deductionPct,
     // Blank is allowed and expected: the team is put together in the morning and
     // the figure arrives that evening.
     sheets: sheets === undefined ? null : sheets,
@@ -1093,20 +832,7 @@ const createEntry = asyncHandler(async (req, res) => {
     ...(sheets == null ? {} : { sheetsFilledAt: new Date(), sheetsFilledByName: actorName }),
   });
 
-  // The day's group now covers this team too: a team put together at four
-  // o'clock shares the day with the ones from the morning, and anybody this
-  // team just claimed comes out of the group (they are paid as a roller now).
-  // Best-effort — the team is already recorded, and a group that could not be
-  // re-applied must not turn a saved day into an error.
-  const dayRows = isManager && req.body.nonRolling !== undefined ? req.body.nonRolling : undefined;
-  await applyDayGroup(req, date, dayRows).catch((err) => {
-    if (dayRows !== undefined) throw err; // they asked for this group explicitly
-    console.error('incentive: could not re-apply the day group:', err.message);
-  });
-  // Re-read: applyDayGroup wrote through its own copies of the day's entries.
-  const saved = await IncentiveEntry.findById(entry._id);
-
-  res.status(201).json({ entry: saved || entry });
+  res.status(201).json({ entry });
 });
 
 /**
@@ -1192,12 +918,6 @@ const updateEntry = asyncHandler(async (req, res) => {
     if (built.company) entry.company = built.company;
   }
 
-  // The non-rolling group is the DAY's (see applyDayGroup), so a group sent to
-  // one entry is applied to every team of that day. Deferred until after this
-  // entry has been saved, below — the day is read from the database, and a
-  // half-saved team would be read in its old shape.
-  const dayGroupRows = req.body.nonRolling;
-
   const ids = [entry.picker.employee, ...entry.members.map((m) => m.employee)].map(String);
   // One team per picker per day still holds after an edit that moved the date or
   // swapped the picker.
@@ -1228,44 +948,7 @@ const updateEntry = asyncHandler(async (req, res) => {
   entry.updatedBy = req.user._id;
   entry.updatedByName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
   await entry.save();
-
-  // Now the day: either the group the caller sent (applied to every team of
-  // that day), or a re-apply, which matters when this edit moved the team to
-  // another day or changed who is on it — the old day loses a roller, the new
-  // one gains one, and the group on both has to stop paying them twice.
-  await applyDayGroup(req, entry.date, dayGroupRows);
-  const saved = await IncentiveEntry.findById(entry._id);
-  res.json({ entry: saved || entry });
-});
-
-/**
- * Set the day's non-rolling group — the people who did not roll and share in
- * everything that was rolled that day.
- *
- * One call per DAY, replacing the old per-team group: send the whole list and
- * it becomes the day's group, send an empty list and the day's teams keep all
- * their points. See applyDayGroup for why it is stored on every entry.
- * @route PUT /api/incentives/non-rolling/day   (manager only)
- * @param {string} req.body.date - YYYY-MM-DD
- * @param {Array<{employee: string, present?: boolean}>} req.body.members
- * @returns {{date: string, teams: number, group: Object[], dropped: Object[], entries: Object[]}}
- */
-const setDayGroup = asyncHandler(async (req, res) => {
-  const date = dayAt(req.body.date);
-  if (!date) {
-    res.status(400);
-    throw new Error('Say which day the group is for');
-  }
-  const rows = Array.isArray(req.body.members) ? req.body.members : [];
-  const { entries, group, dropped } = await applyDayGroup(req, date, rows);
-  res.json({
-    date: ymd(date),
-    teams: entries.length,
-    group,
-    dropped,
-    // The day as it now stands, so the page can redraw without a refetch.
-    entries: entries.map((e) => e.toObject()),
-  });
+  res.json({ entry });
 });
 
 /**
@@ -1322,13 +1005,13 @@ const updateSettings = asyncHandler(async (req, res) => {
   if (req.body.pointsPerSheet !== undefined && req.body.pointsPerSheet !== '') {
     doc.incentive.pointsPerSheet = num(req.body.pointsPerSheet, 'Points per sheet');
   }
-  if (req.body.nonRollingSharePct !== undefined && req.body.nonRollingSharePct !== '') {
-    const pct = num(req.body.nonRollingSharePct, 'Non-rolling share');
+  if (req.body.deductionPct !== undefined && req.body.deductionPct !== '') {
+    const pct = num(req.body.deductionPct, 'Deduction');
     if (pct > 100) {
       res.status(400);
-      throw new Error('The non-rolling share cannot be more than 100% — the team has nothing left to give.');
+      throw new Error('The deduction cannot be more than 100% — the team would be left with less than nothing.');
     }
-    doc.incentive.nonRollingSharePct = pct;
+    doc.incentive.deductionPct = pct;
   }
   await doc.save();
   res.json({ settings: await incentiveSettings() });
@@ -1373,7 +1056,7 @@ const exportXlsx = asyncHandler(async (req, res) => {
   const byPerson = new Map();
   const seed = (p, date) => ({
     employee: p.employee, name: p.name || '', employeeCode: p.employeeCode || '', department: p.department || '',
-    days: 0, pickerDays: 0, nonRollingDays: 0, sheets: 0, teamPoints: 0, creditPoints: 0, points: 0, paidPoints: 0, unpaidPoints: 0, _at: date,
+    days: 0, pickerDays: 0, sheets: 0, teamPoints: 0, creditPoints: 0, points: 0, paidPoints: 0, unpaidPoints: 0, _at: date,
   });
   for (const e of entries) {
     for (const p of IncentiveEntry.payees(e)) {
@@ -1382,12 +1065,9 @@ const exportXlsx = asyncHandler(async (req, res) => {
       const row = byPerson.get(key);
       row.days += 1;
       if (p.isPicker) row.pickerDays += 1;
-      // A non-roller did not roll: the sheets are not theirs, and their day is
-      // counted apart so the two ways of earning stay legible in the roll-up.
-      if (p.isNonRolling) row.nonRollingDays += 1;
-      else row.sheets += e.sheets || 0;
-      // Each payee carries their OWN share — a rolling share and a non-rolling
-      // share are different numbers on the same entry (models/IncentiveEntry).
+      row.sheets += e.sheets || 0;
+      // The share comes off the payee rather than the entry — see payees() on
+      // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
     }
   }
@@ -1528,10 +1208,10 @@ const importEntries = asyncHandler(async (req, res) => {
     };
 
     if (entry) {
-      // NOTE `fields` carries no `nonRolling` and no `nonRollingSharePct`, so a
-      // re-upload leaves the group and the frozen percentage exactly as they
-      // were. That is the point: the spreadsheet records who ROLLED, and a
-      // corrected sheet must not wipe the group somebody set by hand.
+      // NOTE `fields` carries no `deductionPct`, so a re-upload leaves the
+      // frozen percentage exactly as it was. That is the point: a day is valued
+      // on the figures it was recorded with, and a corrected sheet restates how
+      // much was rolled, never what the company was taking at the time.
       Object.assign(entry, fields);
       entry.date = row.date;
       entry.updatedBy = req.user._id;
@@ -1544,7 +1224,7 @@ const importEntries = asyncHandler(async (req, res) => {
         date: row.date,
         // A day arriving by spreadsheet freezes the current figure exactly as a
         // hand-typed one does; the schema default would pin it to 30 forever.
-        nonRollingSharePct: settings.nonRollingSharePct,
+        deductionPct: settings.deductionPct,
         createdBy: req.user._id,
         createdByName: actorName,
       });
@@ -1601,17 +1281,14 @@ const myPoints = asyncHandler(async (req, res) => {
     : `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const { filter: dateFilter, from, to } = dateRange({ month: monthParam });
 
-  // ALL THREE WAYS ONTO A DAY, not two. A person who did not roll but was in the
-  // day's non-rolling group is a payee of that entry (models/IncentiveEntry.payees)
-  // and is owed a share of it — and this filter used to leave those entries out
-  // entirely, so the home screen under-reported exactly the people whose points
-  // arrive that way, sometimes as zero. The share() below already handled them
-  // correctly; they simply never reached it.
+  // Both ways onto a day: leading the team and being on it. (There was a third
+  // until 2026-09-22, the day's non-rolling group, and forgetting it here once
+  // made the home screen under-report exactly the people it paid. Whatever
+  // `payees` counts, this filter has to reach.)
   const mine = {
     $or: [
       { 'picker.employee': profile._id },
       { 'members.employee': profile._id },
-      { 'nonRolling.employee': profile._id },
     ],
   };
   const [monthEntries, allEntries, monthCredits, allCredits] = await Promise.all([
@@ -1728,6 +1405,23 @@ async function myProfile(req) {
 const paise = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 /**
+ * What the one billing row on somebody's own incentive list says it covers.
+ *
+ * Normally a whole calendar month, because that is the unit the billing system
+ * settles in. In the month counting STARTED partway through it is only the days
+ * from that day on, and the row has to say which — a line reading "the whole
+ * month" over a part-month figure is the sort of thing nobody re-checks.
+ * @param {string} month - 'YYYY-MM'
+ * @returns {string}
+ */
+function billingRowNote(month) {
+  const started = billingIncentive.firstDay();
+  if (!started || started.slice(0, 7) !== month) return 'Billing for the whole month';
+  const day = new Date(`${started}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  return `Billing from ${day}, when counting started, to the end of the month`;
+}
+
+/**
  * WHO MAY SEE WHOSE POINTS on the leaderboard, as configured by a SuperAdmin
  * (Setting.incentive.leaderboard), with every default filled in.
  *
@@ -1829,12 +1523,10 @@ function visibleDepartments(myDepartment, cfg, allDepartments, unrestricted) {
  *
  * GET /me answers "what am I owed" in one number for a home screen; this answers
  * "where did that number come from", which is the question somebody actually
- * has when the number surprises them. Every row is one of the three ways points
+ * has when the number surprises them. Every row is one of the ways points
  * arrive, and says which:
  *
  *   rolling     — I was on the team that rolled, picker or member.
- *   nonRolling  — I did not roll that day but the day's teams shared their cut
- *                 with the group I was in (see models/IncentiveEntry).
  *   credit      — somebody credited me points directly, with a reason.
  *
  * A day whose sheet count has not been filled in yet is returned as PENDING with
@@ -1873,7 +1565,7 @@ const myHistory = asyncHandler(async (req, res) => {
     });
   }
 
-  const mine = { $or: [{ 'picker.employee': profile._id }, { 'members.employee': profile._id }, { 'nonRolling.employee': profile._id }] };
+  const mine = { $or: [{ 'picker.employee': profile._id }, { 'members.employee': profile._id }] };
   const [monthEntries, allEntries, monthCredits, allCredits, paidRows] = await Promise.all([
     IncentiveEntry.find({ $and: [mine, dateFilter] }).sort({ date: -1 }).lean(),
     // The lifetime figure is what somebody wants in the first week of a month,
@@ -1894,26 +1586,24 @@ const myHistory = asyncHandler(async (req, res) => {
   }, 0));
 
   // One row per day I earned on, newest first. `payees` is what decides my
-  // share — never `perPersonPoints`, which is the ROLLING share and would pay a
-  // non-rolling day far too much (see models/IncentiveEntry.payees).
+  // share, and every roll-up in the module reads it the same way — see
+  // models/IncentiveEntry.payees.
   const rows = [];
   let sheets = 0;
   let pending = 0;
   for (const e of monthEntries) {
     const hit = IncentiveEntry.payees(e).find((p) => String(p.employee) === String(profile._id));
-    // Listed but marked absent from the day's non-rolling group: not a payee,
-    // and deliberately not a row — there is nothing to explain.
     if (!hit) continue;
     const waiting = IncentiveEntry.isPending(e);
     if (waiting) pending += 1;
-    if (!hit.isNonRolling) sheets += e.sheets || 0;
+    sheets += e.sheets || 0;
     rows.push({
       _id: String(e._id),
-      kind: hit.isNonRolling ? 'nonRolling' : 'rolling',
+      kind: 'rolling',
       date: e.date,
       teamName: e.teamName || '',
       pickerName: e.picker?.name || '',
-      role: hit.isNonRolling ? 'Non-rolling' : (hit.isPicker ? 'Picker' : 'Member'),
+      role: hit.isPicker ? 'Picker' : 'Member',
       sheets: e.sheets == null ? null : e.sheets,
       pending: waiting,
       headCount: e.headCount || 0,
@@ -1960,7 +1650,11 @@ const myHistory = asyncHandler(async (req, res) => {
       invoices: myBilling.invoices || 0,
       band: myBilling.band || '',
       calculation: myBilling.calculation || '',
-      note: 'Billing for the whole month',
+      // "The whole month" is a promise, and in the month counting started
+      // partway through it is not one the figure keeps. Both portals and the
+      // app print `note` as given, so wording it correctly here is the whole
+      // fix — there is no second copy of this sentence to keep in step.
+      note: billingRowNote(monthParam),
     });
   }
   rows.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -2005,7 +1699,7 @@ const myHistory = asyncHandler(async (req, res) => {
       // of one ('credit'), which meant the billing row — a whole month on one
       // line — would have been counted as a single day's work. An allowlist
       // cannot be wrong the same way when a fifth kind of row turns up.
-      days: rows.filter((r) => r.kind === 'rolling' || r.kind === 'nonRolling').length,
+      days: rows.filter((r) => r.kind === 'rolling').length,
       sheets,
       pending,
     },
@@ -2484,89 +2178,6 @@ const deletePayment = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
-/**
- * Who may be put in a team's non-rolling group, and what Attendance says about
- * each of them on that day.
- *
- * The whole department minus everybody already on a rolling team that day —
- * they are earning a rolling share and cannot also take a cut of one. Somebody
- * ALREADY in this entry's group comes back `selected`, carrying the presence
- * that was saved rather than whatever attendance says now: a day that has been
- * recorded (and possibly paid) must not quietly restate itself because an
- * attendance correction landed afterwards.
- *
- * @route GET /api/incentives/non-rolling-options?date=YYYY-MM-DD&entry=<id>
- * @returns {{date: string, department: string, sharePct: number, people: Object[]}}
- */
-const nonRollingOptions = asyncHandler(async (req, res) => {
-  const entry = req.query.entry
-    ? await IncentiveEntry.findOne({ _id: req.query.entry, ...entryScopeFilter(req) }).lean()
-    : null;
-  const date = dayAt(req.query.date || entry?.date);
-  if (!date) {
-    res.status(400);
-    throw new Error('Say which day the group is for');
-  }
-  // The group belongs to the DAY, so the saved one is read from the day rather
-  // than from one team: asking with a date alone (which is how the day editor
-  // asks) has to come back with the group already on screen.
-  const dayEntries = await IncentiveEntry.find({
-    date: { $gte: dayBounds(date)[0], $lte: dayBounds(date)[1] },
-    ...entryScopeFilter(req),
-  }).select('nonRolling nonRollingSharePct teamPoints sheets teamName picker').lean();
-  const dayGroup = entry || dayEntries.find((e) => (e.nonRolling || []).length) || null;
-
-  const [people, settings, rollers] = await Promise.all([
-    pickablePeople(req),
-    incentiveSettings(),
-    rollingOnDay(date),
-  ]);
-  // This entry's own rollers are already in `rollers` once it exists; when the
-  // form is open on an unsaved team the client sends nothing and they are simply
-  // not there yet, which is why create() adds them by hand too.
-  const department = boysDepartment(people);
-
-  const saved = new Map((dayGroup?.nonRolling || []).map((m) => [String(m.employee), m]));
-  const eligible = people.filter(
-    (p) => String(p.department || '').trim().toLowerCase() === department.toLowerCase()
-      && (!rollers.has(String(p._id)) || saved.has(String(p._id))),
-  );
-
-  const attendance = await attendanceOnDay(eligible.map((p) => String(p._id)), date);
-
-  res.json({
-    date: ymd(date),
-    department,
-    sharePct: dayGroup ? dayGroup.nonRollingSharePct : settings.nonRollingSharePct,
-    // What the day has rolled so far, so the editor can say what the cut is
-    // worth before anybody is ticked.
-    teams: dayEntries.length,
-    dayPoints: dayEntries.reduce((sum, e) => sum + (Number(e.teamPoints) || 0), 0),
-    pendingTeams: dayEntries.filter((e) => e.sheets == null).length,
-    people: eligible
-      .map((p) => {
-        const key = String(p._id);
-        const att = attendance.get(key);
-        const row = saved.get(key);
-        return {
-          employee: p._id,
-          name: fullName(p),
-          employeeCode: p.employeeCode || '',
-          department: p.department || '',
-          // Already in the group, and on which presence.
-          selected: !!row,
-          present: row ? row.present !== false : presenceDefault(att),
-          // What attendance actually says. The client shows it, and flags a
-          // disagreement with the tick as an override — but only where there IS
-          // a record to disagree with.
-          attendance: att ? att.status : null,
-          attendancePresent: att ? att.present : false,
-        };
-      })
-      .sort((a, b) => (a.employeeCode || '').localeCompare(b.employeeCode || '') || a.name.localeCompare(b.name)),
-  });
-});
-
 // ------------------------------------------------- points dashboard ---------
 //
 // The section-wide screen (Incentive → Points Dashboard): EVERY employee and
@@ -2625,7 +2236,6 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     left: true,
     days: 0,
     pickerDays: 0,
-    nonRollingDays: 0,
     sheets: 0,
     teamPoints: 0,
     creditPoints: 0,
@@ -2665,12 +2275,9 @@ const pointsDashboard = asyncHandler(async (req, res) => {
       const row = byPerson.get(key);
       row.days += 1;
       if (p.isPicker) row.pickerDays += 1;
-      // A non-roller did not roll: the sheets are not theirs, and their day is
-      // counted apart so the two ways of earning stay legible in the roll-up.
-      if (p.isNonRolling) row.nonRollingDays += 1;
-      else row.sheets += e.sheets || 0;
-      // Each payee carries their OWN share — a rolling share and a non-rolling
-      // share are different numbers on the same entry (models/IncentiveEntry).
+      row.sheets += e.sheets || 0;
+      // The share comes off the payee rather than the entry — see payees() on
+      // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
     }
   }
@@ -2789,6 +2396,11 @@ const pointsDashboard = asyncHandler(async (req, res) => {
       // happened the screen has to say so.
       months: billingMonths,
       billingWholeMonths: !!(from || to),
+      // The day counting started, when it started partway through a month —
+      // null in the ordinary case. That month is NOT counted in full, so the
+      // "counted whole" line above it has to be worded differently or it is
+      // simply untrue.
+      startedOn: billingIncentive.firstDay(),
       // Months that could not be read at all — the totals are short by these.
       failed: billing.failed,
       // Billing rows the portal could not place against anybody, with what they
@@ -2973,8 +2585,6 @@ module.exports = {
   payPoints,
   listPayments,
   deletePayment,
-  nonRollingOptions,
-  setDayGroup,
   pointsDashboard,
   createCredit,
   listCredits,

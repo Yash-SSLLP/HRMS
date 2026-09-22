@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const {
   TASK_PRIORITY,
+  LEGACY_PRIORITY_MAP,
   DEFAULT_PRIORITY,
   DEFAULT_TASK_POINTS,
   MAX_TASK_POINTS,
@@ -52,7 +53,15 @@ const recurringTaskSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true, maxlength: 300 },
     description: { type: String, trim: true, maxlength: 5000 },
     category: { type: String, trim: true },
-    priority: { type: String, enum: TASK_PRIORITY, default: DEFAULT_PRIORITY },
+    // The legacy words are accepted on write and normalised by the controller,
+    // the same bargain the Task's own priority makes: a template saved before
+    // 2026-09-22 says `High`, and refusing it outright would make an old row
+    // unsaveable rather than merely out of date.
+    priority: {
+      type: String,
+      enum: [...TASK_PRIORITY, ...Object.keys(LEGACY_PRIORITY_MAP)],
+      default: DEFAULT_PRIORITY,
+    },
     points: { type: Number, min: 0, max: MAX_TASK_POINTS, default: DEFAULT_TASK_POINTS },
 
     assignees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],

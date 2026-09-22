@@ -161,17 +161,6 @@ const managerOnly = requireIncentiveManager(MODULE);
 // 403 a standalone-grant holder.
 router.get('/people', ctrl.listPeople);
 
-// GET /non-rolling-options — who may take a cut of a team's points on a given
-// day (the department, minus anybody already rolling), with what Attendance says
-// about each of them. Open to the whole tab: a picker sees the group that shares
-// their team's points even though only a manager may set it.
-router.get('/non-rolling-options', ctrl.nonRollingOptions);
-
-// PUT /non-rolling/day — set the DAY's group (one group per day, shared by
-// every team that rolled). Manager only, like every other decision about who
-// gets paid out of a team's points.
-router.put('/non-rolling/day', managerOnly, ctrl.setDayGroup);
-
 // GET /settings — the default rate and default department.
 router.get('/settings', ctrl.getSettings);
 // PUT /settings — change them. Manager only: a picker records who worked, not

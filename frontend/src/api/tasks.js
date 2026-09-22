@@ -127,17 +127,115 @@ export const declineTask = (id, reason) =>
 export const delegateTask = (id, to, note) =>
   api.post(`/tasks/${id}/delegate`, { to, note }).then((r) => r.data);
 
-// ===== Subtasks =====
+// ===== Handing it in, and the two answers to that (2026-09-22) =====
+//
+// All three are the ONE status endpoint underneath (routes/taskRoutes.js says
+// so in as many words). They exist separately for the WORDING: "Submit",
+// "Approve" and "Send back" are not "mark it in progress", and a client that
+// had to work out which move its button meant would be re-deriving the server's
+// review rule in the browser — which is the bug this module was rewritten to
+// stop.
+//
+// EVERY ONE OF THEM NEEDS A NOTE OR A RECORDING. The server refuses a silent
+// move (services/taskEngine.move), approve included, so they take the same
+// `{ note, voice, files }` the status box does.
 
-/** `items` is `[{ title, assignee? }]`. No assignee = anybody on the task. */
-export const addSubtasks = (id, items) =>
-  api.post(`/tasks/${id}/subtasks`, { items }).then((r) => r.data);
+/** Hand it in. Lands in review, not done — the approver finishes it. */
+export const submitTask = (id, { note, mentions, voice, files } = {}) => {
+  const { data } = toFormData({ note, mentions }, { voice, files });
+  return api.post(`/tasks/${id}/submit`, data).then((r) => r.data);
+};
 
-export const setSubtask = (id, subId, done) =>
-  api.patch(`/tasks/${id}/subtasks/${subId}`, { done }).then((r) => r.data);
+/** Sign it off. This is the move that credits the points. */
+export const approveTask = (id, { note, voice, files } = {}) => {
+  const { data } = toFormData({ note }, { voice, files });
+  return api.post(`/tasks/${id}/approve`, data).then((r) => r.data);
+};
 
-export const removeSubtask = (id, subId) =>
-  api.delete(`/tasks/${id}/subtasks/${subId}`).then((r) => r.data);
+/**
+ * Send it back — it reopens with the same people still on it.
+ *
+ * The note is REQUIRED here and the server says why: a submission sent back
+ * with no reason is a task that will come back identical.
+ */
+export const rejectTask = (id, { note, voice, files } = {}) => {
+  const { data } = toFormData({ note }, { voice, files });
+  return api.post(`/tasks/${id}/reject`, data).then((r) => r.data);
+};
+
+// ===== How far along =====
+
+/**
+ * "I am this far." The doer's own row, 0–100.
+ *
+ * Reporting anything above 0 on a task nobody has started also STARTS it
+ * (services/taskEngine.setProgress) — the response carries the moved task, so
+ * callers should redraw from it rather than assuming the status stood still.
+ */
+export const setProgress = (id, progress, note) =>
+  api.patch(`/tasks/${id}/progress`, { progress, note }).then((r) => r.data);
+
+// ===== More time =====
+
+/**
+ * Ask for it. `reason` is required, and `toDate` must be later than the
+ * deadline the task has now — both refused by the server otherwise.
+ */
+export const requestExtension = (id, { toDate, reason }) =>
+  api.post(`/tasks/${id}/extension`, { toDate, reason }).then((r) => r.data);
+
+/**
+ * Answer it. The approver's alone.
+ *
+ * Approving MOVES the deadline and re-arms the reminders; neither answer
+ * touches anybody's frozen `completedLate`.
+ */
+export const decideExtension = (id, reqId, { approve, note } = {}) =>
+  api.post(`/tasks/${id}/extension/${reqId}`, { approve, note }).then((r) => r.data);
+
+/* The embedded-subtask calls (POST/PATCH/DELETE /tasks/:id/subtasks) are gone
+ * from this client. A piece is a REAL TASK now, not a row with a tick, so the
+ * browser has nothing to tick: it splits, claims and moves pieces with the
+ * calls below. The three endpoints still answer on the server — an Android
+ * build that has not updated is still calling them — but nothing in the web
+ * app may, and re-adding a wrapper here would invite a second, embedded
+ * notion of a piece back into the UI. */
+
+// ===== Pieces, and the two ways work moves (2026-09-22) =====
+
+/**
+ * Split a task into pieces, each a real task of its own.
+ *
+ * `items` is `[{ title, description?, assignee?, openTo?, points?, dueDate?, priority? }]`.
+ * A piece with no `assignee` is OPEN — offered to `openTo` (defaulting, on the
+ * server, to the splitter's own direct reports) and held by the first person to
+ * claim it. Leaving `points` off lets the server share the remaining pool out
+ * equally; the form sends the figures it has shown so what was on screen is
+ * what gets created.
+ *
+ * Not the same call as the pre-2026-09-22 `POST /subtasks`, which is kept
+ * alive on the server for an Android build that has not updated and which this
+ * client no longer has a wrapper for.
+ */
+export const splitTask = (id, items) =>
+  api.post(`/tasks/${id}/split`, { items }).then((r) => r.data);
+
+/** Take an open piece. It becomes yours alone. */
+export const claimTask = (id) => api.post(`/tasks/${id}/claim`).then((r) => r.data);
+
+/**
+ * It went to the wrong person — hand it to the right one.
+ *
+ * The OPPOSITE of `delegateTask`: whoever had it comes off the task entirely,
+ * stops being notified about it, and the work restarts from Pending. `reason`
+ * is required by the server, because the person picking it up has nothing else
+ * to go on. See services/taskEngine.transferTask.
+ */
+export const transferTask = (id, to, reason) =>
+  api.post(`/tasks/${id}/transfer`, { to, reason }).then((r) => r.data);
+
+/** The pieces under a parent, each with its own `can`. */
+export const taskChildren = (id) => api.get(`/tasks/${id}/children`).then((r) => r.data);
 
 // ===== Categories =====
 

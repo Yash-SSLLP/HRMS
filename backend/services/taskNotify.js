@@ -87,7 +87,6 @@ function everyone(task) {
   for (const a of task.assignees || []) out.add(String(a.user?._id || a.user));
   for (const u of task.loopUsers || []) out.add(String(u._id || u));
   for (const u of task.originalAssignees || []) out.add(String(u._id || u));
-  for (const st of task.subtasks || []) if (st.assignee) out.add(String(st.assignee._id || st.assignee));
   return [...out].filter(Boolean);
 }
 
@@ -141,6 +140,77 @@ async function statusMoved(task, update, actor) {
   const line = update.note
     ? `${nameOf(actor)}: ${String(update.note).slice(0, 140)}`
     : `${nameOf(actor)} marked it ${word}.`;
+
+  /**
+   * THE THREE MOVES THAT NEED SOMEBODY TO DO SOMETHING (2026-09-22).
+   *
+   * A submission is a job landing in the assigner's tray, an approval and a
+   * rejection are the answers coming back. Each is routed at ONE person and
+   * worded as the thing that happened, then we return — falling through to the
+   * generic "X is in review" would tell the same person twice, in vaguer words,
+   * and bury the one line they have to act on.
+   */
+  if (update.kind === 'SUBMITTED') {
+    // THE APPROVER, not the creator. After a delegation they are different
+    // people and only one of them has an Approve button — see
+    // models/Task.approver.
+    const to = recipients([task.approver || task.createdBy], actor?._id);
+    if (to.length) {
+      await notifyMany(to, {
+        type: 'task',
+        audience: 'admin',
+        title: `${nameOf(actor)} handed in ${taskName(task)}`,
+        body: `${String(update.note || 'Waiting on your approval.').slice(0, 160)}`,
+        link: adminTaskLink(task._id),
+        data: { taskId: String(task._id), status: update.to, needsReview: true },
+      });
+    }
+    const watchers = recipients([...(task.loopUsers || []), ...followers(task)], actor?._id)
+      .filter((id) => !to.includes(id));
+    if (watchers.length) {
+      await notifyMany(watchers, {
+        type: 'task',
+        audience: 'admin',
+        title: `${taskName(task)} is in review`,
+        body: line,
+        link: adminTaskLink(task._id),
+        data: { taskId: String(task._id), status: update.to },
+      });
+    }
+    return;
+  }
+
+  if (update.kind === 'APPROVED' || update.kind === 'SENT_BACK') {
+    const yes = update.kind === 'APPROVED';
+    const doers = recipients(ids(task.assignees), actor?._id);
+    if (doers.length) {
+      await notifyMany(doers, {
+        type: 'task',
+        audience: 'employee',
+        title: yes
+          ? `${nameOf(actor)} approved ${taskName(task)}`
+          : `${nameOf(actor)} sent ${taskName(task)} back`,
+        body: yes
+          ? `${String(update.note || 'Signed off.').slice(0, 160)}`
+          : `${String(update.note || 'It needs another look.').slice(0, 160)}`,
+        link: employeeTaskLink(task._id),
+        data: { taskId: String(task._id), status: update.to, approved: yes },
+      });
+    }
+    const watchers = recipients([...(task.loopUsers || []), ...followers(task)], actor?._id)
+      .filter((id) => !doers.includes(id));
+    if (watchers.length) {
+      await notifyMany(watchers, {
+        type: 'task',
+        audience: 'admin',
+        title: `${taskName(task)} is ${word}`,
+        body: line,
+        link: adminTaskLink(task._id),
+        data: { taskId: String(task._id), status: update.to },
+      });
+    }
+    return;
+  }
 
   // The assigner, the loop, AND everyone who has ever held this task — see
   // `followers`. They are watching rather than doing, so it is admin-portal news.
@@ -312,60 +382,184 @@ async function delegated(task, update, actor, newAssignee) {
  * else gets one line saying it happened. Sending every doer a notification per
  * subtask would mean five pushes for one act of planning.
  */
-async function subtasksAdded(task, update, actor, added = []) {
-  const owners = new Map();
-  for (const st of added) {
-    if (!st.assignee) continue;
-    const id = String(st.assignee);
-    if (!owners.has(id)) owners.set(id, []);
-    owners.get(id).push(st.title);
-  }
-
-  for (const [id, titles] of owners) {
-    if (id === String(actor?._id)) continue;
-    await notifyMany([id], {
+async function taskSplit(task, update, actor, children = []) {
+  // The person NAMED on a piece is being handed a job. That is employee-portal
+  // news and it links to the PIECE, not to the parent — the parent is somebody
+  // else's task and half of it is nothing to do with them.
+  const owned = children.filter((c) => (c.assignees || []).length);
+  for (const child of owned) {
+    const to = recipients(ids(child.assignees), actor?._id);
+    if (!to.length) continue;
+    await notifyMany(to, {
       type: 'task',
       audience: 'employee',
-      title: titles.length === 1 ? 'A piece of work is yours' : `${titles.length} pieces are yours`,
-      body: `${taskName(task)} — ${titles.slice(0, 3).join('; ')}`,
-      link: employeeTaskLink(task._id),
-      data: { taskId: String(task._id), subtask: true },
+      title: `New task from ${nameOf(actor)}`,
+      body: `${child.title} — part of ${taskName(task)}${meta(child)}`,
+      link: employeeTaskLink(child._id),
+      data: { taskId: String(child._id), parentTask: String(task._id), points: child.points },
     });
   }
 
+  // A piece nobody was named for is an OFFER, and it goes to everybody it was
+  // offered to. Worded as an offer rather than an instruction, because the one
+  // thing that must be obvious is that nobody has been given it yet.
+  const open = children.filter((c) => !(c.assignees || []).length);
+  for (const child of open) {
+    const to = recipients((child.openTo || []).map(String), actor?._id);
+    if (!to.length) continue;
+    await notifyMany(to, {
+      type: 'task',
+      audience: 'employee',
+      title: 'A piece of work is up for grabs',
+      body: `${child.title} — part of ${taskName(task)}. First to pick it up gets it.`,
+      link: employeeTaskLink(child._id),
+      data: { taskId: String(child._id), parentTask: String(task._id), openPiece: true },
+    });
+  }
+
+  // Everybody watching the PARENT hears that it was split, once, whatever the
+  // pieces turned out to be — the alternative is one push per piece at somebody
+  // who is not doing any of them.
+  const owners = new Set(children.flatMap((c) => [
+    ...ids(c.assignees), ...(c.openTo || []).map(String),
+  ]));
   const rest = recipients(everyone(task), actor?._id).filter((id) => !owners.has(id));
   if (rest.length) {
     await notifyMany(rest, {
       type: 'task',
-      audience: 'all',
-      title: `${taskName(task)} was split up`,
-      body: String(update.note || '').slice(0, 200),
-      link: employeeTaskLink(task._id),
-      data: { taskId: String(task._id), subtask: true },
+      audience: 'admin',
+      title: `${taskName(task)} was split into ${children.length} piece${children.length === 1 ? '' : 's'}`,
+      body: children.map((c) => c.title).slice(0, 3).join('; ').slice(0, 200),
+      link: adminTaskLink(task._id),
+      data: { taskId: String(task._id), split: true },
     });
   }
 }
 
 /**
- * A piece was ticked off (or reopened).
+ * A task went to the wrong person and has been handed to the right one.
  *
- * Only the assigner and the followers — the other doers see the progress line
- * on the task itself, and a push each time somebody ticks one of eight boxes is
- * a push nobody reads by the third one.
+ * TWO DIFFERENT MESSAGES, because the two audiences need opposite things. The
+ * new owner is being given a job and must hear it as one. The person it came
+ * off is being told to STOP — and this is the last thing they will ever hear
+ * about this task, because a transfer takes them out of the audience entirely
+ * (services/taskEngine.transferTask). Saying it plainly here is the only chance
+ * to say it at all.
  */
-async function subtaskMoved(task, update, actor) {
-  const to = recipients([task.createdBy, ...followers(task)], actor?._id);
+async function transferred(task, update, actor, leaving = []) {
+  const to = recipients(ids(task.assignees), actor?._id);
+  if (to.length) {
+    await notifyMany(to, {
+      type: 'task',
+      audience: 'employee',
+      title: `${taskName(task)} is now yours`,
+      body: `${nameOf(actor)} transferred it to you.${meta(task)}`,
+      link: employeeTaskLink(task._id),
+      data: { taskId: String(task._id), transferred: true },
+    });
+  }
+
+  const off = recipients(leaving.map((l) => l.id), actor?._id);
+  if (off.length) {
+    await notifyMany(off, {
+      type: 'task',
+      audience: 'employee',
+      title: `${taskName(task)} is no longer yours`,
+      body: `${nameOf(actor)} transferred it to ${task.assignees?.[0]?.name || 'somebody else'}. `
+        + 'You will not hear about it again.',
+      link: employeeTaskLink(task._id),
+      data: { taskId: String(task._id), transferred: true, removed: true },
+    });
+  }
+
+  const watchers = recipients(
+    [task.createdBy, task.approver, ...(task.loopUsers || [])], actor?._id
+  ).filter((id) => !to.includes(id) && !off.includes(id));
+  if (watchers.length) {
+    await notifyMany(watchers, {
+      type: 'task',
+      audience: 'admin',
+      title: `${taskName(task)} was transferred`,
+      body: String(update.note || '').slice(0, 200),
+      link: adminTaskLink(task._id),
+      data: { taskId: String(task._id), transferred: true },
+    });
+  }
+}
+
+/** Somebody took an open piece. The person who offered it is the one who cares. */
+async function pieceClaimed(task, update, actor) {
+  const to = recipients([task.createdBy, ...(task.loopUsers || [])], actor?._id);
   if (!to.length) return;
-  const { done, total } = typeof task.subtaskProgress === 'function'
-    ? task.subtaskProgress()
-    : { done: 0, total: 0 };
   await notifyMany(to, {
     type: 'task',
     audience: 'admin',
-    title: `${taskName(task)} — ${done} of ${total} done`,
-    body: String(update.note || '').slice(0, 200),
+    title: `${nameOf(actor)} picked up ${taskName(task)}`,
+    body: task.parentTitle ? `Part of ${task.parentTitle}` : '',
     link: adminTaskLink(task._id),
-    data: { taskId: String(task._id), subtask: true },
+    data: { taskId: String(task._id), claimed: true },
+  });
+}
+
+/**
+ * Somebody moved their progress bar.
+ *
+ * The assigner and the loop only, and NOT the other doers — a push every time
+ * one of four people nudges a slider is four times the noise for none of the
+ * information, and the figure is on the row anyway. Held back below 100 unless
+ * it is the first report: what an assigner wants to know is "started" and
+ * "finished", not "43%".
+ */
+async function progressSet(task, update, actor, pct) {
+  if (pct > 0 && pct < 100 && (task.updateCount || 0) > 3) return;
+  const to = recipients([task.createdBy, ...(task.loopUsers || [])], actor?._id);
+  if (!to.length) return;
+  await notifyMany(to, {
+    type: 'task',
+    audience: 'admin',
+    title: `${taskName(task)} — ${pct}% done`,
+    body: `${nameOf(actor)}: ${String(update.note || '').slice(0, 140)}`,
+    link: adminTaskLink(task._id),
+    data: { taskId: String(task._id), progress: pct },
+  });
+}
+
+/**
+ * Somebody wants longer.
+ *
+ * Goes UP, to whoever can say yes — there is no point telling the other doers
+ * that a deadline MIGHT move. The new date is in the body because that, and the
+ * reason, are the whole of what the decision turns on.
+ */
+async function extensionAsked(task, update, actor, request) {
+  const to = recipients([task.createdBy], actor?._id);
+  if (!to.length) return;
+  await notifyMany(to, {
+    type: 'task',
+    audience: 'admin',
+    title: `${nameOf(actor)} needs longer on ${taskName(task)}`,
+    body: `Asking for ${fmtDateTime(request.toDate)} — ${String(request.reason || '').slice(0, 140)}`,
+    link: adminTaskLink(task._id),
+    data: { taskId: String(task._id), extension: String(request._id) },
+  });
+}
+
+/** …and the answer, which goes back DOWN to whoever asked. */
+async function extensionDecided(task, update, actor, request) {
+  const to = recipients([request.requestedBy], actor?._id);
+  if (!to.length) return;
+  const yes = request.status === 'APPROVED';
+  await notifyMany(to, {
+    type: 'task',
+    audience: 'employee',
+    title: yes
+      ? `More time granted on ${taskName(task)}`
+      : `No extra time on ${taskName(task)}`,
+    body: yes
+      ? `New deadline: ${fmtDateTime(request.toDate)}.${request.decisionNote ? ` ${String(request.decisionNote).slice(0, 120)}` : ''}`
+      : (String(request.decisionNote || '').slice(0, 160) || 'The deadline stands.'),
+    link: employeeTaskLink(task._id),
+    data: { taskId: String(task._id), extension: String(request._id), approved: yes },
   });
 }
 
@@ -424,8 +618,12 @@ module.exports = {
   accepted,
   declined,
   delegated,
-  subtasksAdded,
-  subtaskMoved,
+  transferred,
+  taskSplit,
+  pieceClaimed,
+  progressSet,
+  extensionAsked,
+  extensionDecided,
   commented,
   edited,
   reminder,

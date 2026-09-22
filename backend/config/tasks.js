@@ -46,6 +46,25 @@ const TASK_KINDS = [KIND_TASK, KIND_REQUEST];
 const STATUS = {
   PENDING: 'PENDING',
   IN_PROGRESS: 'IN_PROGRESS',
+  /**
+   * HANDED BACK, AWAITING THE ASSIGNER'S WORD. Added 2026-09-22.
+   *
+   * The 2026-09-21 rework had three states and no review step: the doer pressed
+   * Complete and the task was done. The brief that replaced it asks for the
+   * opposite — "when user submit any task then manager should have the option
+   * to approve that and on reject that submission the task will reopen again".
+   * So finishing is a SUBMISSION and completing is the assigner's act.
+   *
+   * This is ONE extra state, not the twelve that were removed, and it is the
+   * one the board's "In Review" column has to have. It earns its place because
+   * it answers a question none of the other three can: the work is out of the
+   * doer's hands and not yet accepted. Folding it into IN_PROGRESS would hide
+   * a queue the manager is the only person who can clear.
+   *
+   * It is skipped entirely when `Task.requiresApproval` is false, or when the
+   * person finishing is the person who set it (see effectiveTarget).
+   */
+  SUBMITTED: 'SUBMITTED',
   COMPLETED: 'COMPLETED',
   CANCELLED: 'CANCELLED',
 };
@@ -69,12 +88,14 @@ const LABELS = {
   [KIND_TASK]: {
     PENDING: 'Pending',
     IN_PROGRESS: 'In progress',
+    SUBMITTED: 'In review',
     COMPLETED: 'Completed',
     CANCELLED: 'Cancelled',
   },
   [KIND_REQUEST]: {
     PENDING: 'Open',
     IN_PROGRESS: 'Looking into it',
+    SUBMITTED: 'Answer sent',
     COMPLETED: 'Answered',
     CANCELLED: 'Withdrawn',
   },
@@ -83,6 +104,22 @@ const LABELS = {
 function statusLabel(status, kind = KIND_TASK) {
   return (LABELS[kind] || LABELS[KIND_TASK])[status] || status || '';
 }
+
+/**
+ * The board, left to right. ONE list, served to both clients from
+ * `GET /api/tasks/meta`, so a column cannot be called "In Review" on the web
+ * and "Submitted" on the phone.
+ *
+ * CANCELLED is deliberately not a column: a called-off task is not a stage of
+ * the work, and a fifth column of them would be the widest and emptiest thing
+ * on the screen. It is reachable from the list with the status filter.
+ */
+const BOARD_COLUMNS = [
+  { key: STATUS.PENDING, label: 'To do' },
+  { key: STATUS.IN_PROGRESS, label: 'In progress' },
+  { key: STATUS.SUBMITTED, label: 'Review' },
+  { key: STATUS.COMPLETED, label: 'Done' },
+];
 
 /**
  * The legal moves, keyed by the state being left.
@@ -98,12 +135,27 @@ function statusLabel(status, kind = KIND_TASK) {
 const TRANSITIONS = {
   PENDING: [
     { to: STATUS.IN_PROGRESS, by: ['doer', 'assigner'], note: true },
+    { to: STATUS.SUBMITTED, by: ['doer'], note: true },
     { to: STATUS.COMPLETED, by: ['doer', 'assigner'], note: true },
     { to: STATUS.CANCELLED, by: ['assigner'], note: true },
   ],
   IN_PROGRESS: [
+    { to: STATUS.SUBMITTED, by: ['doer'], note: true },
     { to: STATUS.COMPLETED, by: ['doer', 'assigner'], note: true },
     { to: STATUS.PENDING, by: ['assigner'], note: true },
+    { to: STATUS.CANCELLED, by: ['assigner'], note: true },
+  ],
+  // The review desk. Approving is the assigner's; sending it back is too, and
+  // it is the move the brief calls "reject that submission … the task will
+  // reopen again" — it lands on IN_PROGRESS with the same person still on it,
+  // because reassigning from scratch would throw away everything already done.
+  SUBMITTED: [
+    { to: STATUS.COMPLETED, by: ['assigner'], note: true },
+    { to: STATUS.IN_PROGRESS, by: ['assigner'], note: true },
+    // A doer may withdraw their own submission — they spotted the mistake
+    // before the manager did, and making them wait for a rejection to fix it is
+    // the sort of small indignity that stops people submitting at all.
+    { to: STATUS.PENDING, by: ['doer', 'assigner'], note: true },
     { to: STATUS.CANCELLED, by: ['assigner'], note: true },
   ],
   // Reopening a finished task is the assigner's call and always needs a reason.
@@ -121,6 +173,32 @@ function transitionFor(from, to) {
   return (TRANSITIONS[from] || []).find((t) => t.to === to) || null;
 }
 
+/**
+ * Where a move ACTUALLY lands, once the review rule is applied.
+ *
+ * A doer pressing Complete on a task that has to be approved is not finishing
+ * it — they are handing it in. Rather than refusing the move (which would break
+ * every Android build that predates this change, and read as a bug to anyone
+ * who did the work), the server quietly redirects it to SUBMITTED and tells the
+ * manager there is something to look at.
+ *
+ * Two exemptions, both obvious once stated:
+ *   - `requiresApproval === false` — the assigner chose not to review it.
+ *   - the mover IS the assigner — approving your own submission is a round trip
+ *     to nowhere, and a manager working a task they set themselves should not
+ *     have to press two buttons.
+ */
+function effectiveTarget(task, role, to, userId) {
+  if (to !== STATUS.COMPLETED) return to;
+  if (role !== 'doer') return to;
+  if (task?.kind && task.kind !== KIND_TASK) return to;   // a request is answered, not reviewed
+  if (task?.requiresApproval === false) return to;
+  // Somebody reviewing their own submission is a round trip to nowhere.
+  const setter = String(task?.createdBy?._id || task?.createdBy || '');
+  if (setter && setter === String(userId || '')) return to;
+  return STATUS.SUBMITTED;
+}
+
 function isTerminal(status) {
   return TERMINAL_STATUS.includes(status);
 }
@@ -135,7 +213,17 @@ function isTerminal(status) {
 function isOverdue(task, now = new Date()) {
   if (!task || !task.dueDate) return false;
   if (isTerminal(task.status)) return false;
+  // A SUBMITTED task is NOT overdue. The doer handed it in; whether it has been
+  // looked at since is the assigner's business, and painting it red in the
+  // doer's list would blame them for somebody else's inbox. The "In review"
+  // counter is where that queue shows up instead. (2026-09-22.)
+  if (task.status === STATUS.SUBMITTED) return false;
   return new Date(task.dueDate).getTime() < now.getTime();
+}
+
+/** Handed in and waiting on somebody to look at it. */
+function isInReview(task) {
+  return task?.status === STATUS.SUBMITTED;
 }
 
 // ===== Acceptance — a SECOND axis, deliberately not a fourth status =====
@@ -193,8 +281,82 @@ function isAwaitingAcceptance(task) {
 
 // ===== The rest of a task's vocabulary =====
 
-const TASK_PRIORITY = ['High', 'Medium', 'Low'];
+/**
+ * How urgent it is — THREE levels, and they colour the whole row.
+ *
+ * Changed 2026-09-22 from `['High','Medium','Low']`. The brief names the top
+ * level "urgent" and gives each level a colour, and the live data had already
+ * drifted there on its own: of 59 tasks, 50 carried a priority of `Urgent` that
+ * no picker offered and no filter matched, left behind by a rework that renamed
+ * the level without migrating the rows. So `High` becomes `Urgent` rather than
+ * the other way round — it is the word the company is already using.
+ */
+const TASK_PRIORITY = ['Urgent', 'Medium', 'Low'];
 const DEFAULT_PRIORITY = 'Medium';
+
+/** Words that have meant one of the three, in this collection or another. */
+const LEGACY_PRIORITY_MAP = {
+  High: 'Urgent', HIGH: 'Urgent', Critical: 'Urgent', Highest: 'Urgent', Immediate: 'Urgent',
+  Normal: 'Medium', MEDIUM: 'Medium', Moderate: 'Medium',
+  Lowest: 'Low', LOW: 'Low', Minor: 'Low',
+};
+
+/** Whatever came in — old word, new word, any case — as a current priority. */
+function normalisePriority(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (TASK_PRIORITY.includes(raw)) return raw;
+  if (LEGACY_PRIORITY_MAP[raw]) return LEGACY_PRIORITY_MAP[raw];
+  const title = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  if (TASK_PRIORITY.includes(title)) return title;
+  return LEGACY_PRIORITY_MAP[title] || null;
+}
+
+/**
+ * THE COLOUR OF A TASK — and the reason it is defined on the server.
+ *
+ * The brief: *"if any task is pending then the whole task should be in the
+ * priority color, and if the task is completed then show that in Green"*. So
+ * this is not a chip's palette, it is the accent behind an entire row, card and
+ * detail header, in two clients that must not drift. Hard-coding four hexes in
+ * the web bundle and four more in the app is how a red in one place becomes a
+ * slightly different red in the other, and nobody notices until somebody puts
+ * the two screens side by side.
+ *
+ * Shipped as data on `GET /api/tasks/meta` for exactly that reason.
+ *
+ * `bg` is the tint behind the row; `solid` is the 4px rail down its left edge
+ * and the dot in a dropdown; `border` is the hairline; `ink` is text that has
+ * to sit ON the tint and clears 4.5:1 against it.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO. It does not colour the STATUS — amber /
+ * blue / violet / green / grey stay the status chip's, per
+ * utils/taskLifecycle — and it does not make an overdue task red. Overdue is
+ * shown as a SOLID red chip and a red deadline, so that a late Low-priority
+ * task still reads as low priority rather than being promoted by being late.
+ */
+const PRIORITY_COLORS = {
+  Urgent: { ink: '#B42318', bg: '#FEF3F2', border: '#FDA29B', solid: '#D92D20' },
+  Medium: { ink: '#B54708', bg: '#FFFAEB', border: '#FEC84B', solid: '#F79009' },
+  Low: { ink: '#475467', bg: '#F2F4F7', border: '#D0D5DD', solid: '#98A2B3' },
+};
+
+/** Finished. Green beats the priority colour — the brief's second sentence. */
+const DONE_COLOR = { ink: '#027A48', bg: '#ECFDF3', border: '#6CE9A6', solid: '#12B76A' };
+
+/** Called off. Grey, and the row is drawn faded. */
+const CANCELLED_COLOR = { ink: '#667085', bg: '#F9FAFB', border: '#EAECF0', solid: '#98A2B3' };
+
+/**
+ * The accent for one row — the ONE rule every list, card and header obeys.
+ * Returns `{ key, ink, bg, border, solid }`; `key` is what a client keys off.
+ */
+function accentFor(task) {
+  if (task?.status === STATUS.COMPLETED) return { key: 'DONE', ...DONE_COLOR };
+  if (task?.status === STATUS.CANCELLED) return { key: 'CANCELLED', ...CANCELLED_COLOR };
+  const p = normalisePriority(task?.priority) || DEFAULT_PRIORITY;
+  return { key: p, ...(PRIORITY_COLORS[p] || PRIORITY_COLORS[DEFAULT_PRIORITY]) };
+}
 
 /**
  * What one task is worth, in points, before the assigner says otherwise.
@@ -211,14 +373,86 @@ const DEFAULT_TASK_POINTS = 100;
 const MAX_TASK_POINTS = 100000;
 
 /**
- * How many subtasks one task may carry.
+ * How many pieces one task may be split into.
  *
- * Capped because they are EMBEDDED (models/Task.subtasks) — a document that
- * grows without bound is the thing this module put submissions, updates and
- * time entries in their own collections to avoid. Fifty is far past the point
- * where the right answer is two tasks rather than one.
+ * REWORKED 2026-09-22. A piece used to be an embedded row on the parent
+ * (`Task.subtasks`) with a title, an owner and a tick — and the cap existed to
+ * stop a document growing without bound. A piece is now a TASK OF ITS OWN
+ * (`Task.parentTask`), because the brief asks it to do everything a task does:
+ * carry its own share of the points, its own deadline, its own progress, its
+ * own accept/decline, its own submission, and to appear in its owner's list.
+ *
+ * The cap survives for a different reason: fifty pieces on one task is not a
+ * plan, it is a project, and the honest answer at that point is more than one
+ * task. It is also what stops a loop in a client turning one POST into a
+ * thousand rows.
  */
 const MAX_SUBTASKS = 50;
+/** One task's pieces, and its pieces' pieces. Depth 3 is a plan; 4 is a maze. */
+const MAX_SPLIT_DEPTH = 3;
+
+// ===== Progress =====
+
+/**
+ * How far along, as a percentage the doer types in themselves.
+ *
+ * Asked for in the brief — *"they can put how much progression they did till
+ * now"*. It is DECLARED, not inferred: nothing in this module can tell how much
+ * of a job is left, and a bar computed from elapsed time against the deadline
+ * is a lie that looks like data. A parent's figure is the only derived one, and
+ * it is the points-weighted mean of its pieces (services/taskEngine).
+ */
+const PROGRESS_MIN = 0;
+const PROGRESS_MAX = 100;
+/** The quick buttons a client offers beside the slider. */
+const PROGRESS_STEPS = [0, 25, 50, 75, 100];
+
+function clampProgress(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(PROGRESS_MAX, Math.max(PROGRESS_MIN, n));
+}
+
+// ===== Asking for more time =====
+
+/**
+ * The doer's third answer, after accept and decline: *"I will do it, but not by
+ * then"*. Added 2026-09-22 at the user's request.
+ *
+ * It is NOT a status — the work carries on while the answer is awaited, which
+ * is the whole point of asking rather than stopping. Approving it moves the
+ * deadline; declining it leaves everything exactly as it was and says so.
+ */
+const EXTENSION_STATUS = { PENDING: 'PENDING', APPROVED: 'APPROVED', DECLINED: 'DECLINED' };
+const EXTENSION_STATES = Object.values(EXTENSION_STATUS);
+
+// ===== Sorting a list =====
+
+/**
+ * The orders the list offers, and the mongo sort each one means.
+ *
+ * `pending` is the one worth explaining: it is "how long has this been sitting
+ * there", which is the oldest `assignedAt` first — a task set three weeks ago
+ * and never touched is the one a manager wants at the top, and sorting by
+ * deadline alone never surfaces it because it may not have one.
+ *
+ * `priority` cannot sort on the stored string (Low < Medium < Urgent
+ * alphabetically is exactly wrong), so the controller sorts on a computed rank.
+ */
+const SORTS = {
+  due: { label: 'Due date', field: 'dueDate', dir: 1 },
+  assigned: { label: 'Day assigned', field: 'assignedAt', dir: -1 },
+  pending: { label: 'Pending days', field: 'assignedAt', dir: 1, openFirst: true },
+  points: { label: 'Points', field: 'points', dir: -1 },
+  priority: { label: 'Priority', field: 'priorityRank', dir: 1, computed: true },
+  title: { label: 'Title', field: 'title', dir: 1 },
+  created: { label: 'Newest first', field: 'createdAt', dir: -1 },
+};
+const SORT_KEYS = Object.keys(SORTS);
+const DEFAULT_SORT = 'due';
+
+/** Urgent first. The number a `$addFields` stage puts on each row to sort by. */
+const PRIORITY_RANK = { Urgent: 0, Medium: 1, Low: 2 };
 
 // ===== Recurrence =====
 
@@ -321,6 +555,14 @@ const UPDATE_KINDS = [
   // the feed can word it and colour it for itself rather than every one of them
   // arriving as a generic remark.
   'ACCEPTED', 'REJECTED', 'DELEGATED', 'SUBTASK',
+  // Added 2026-09-22 (third pass), same reasoning. A submission that came back
+  // and a deadline that moved are the two things people argue about afterwards,
+  // and a feed that records both as "status changed" cannot settle it.
+  'SUBMITTED', 'APPROVED', 'SENT_BACK', 'PROGRESS', 'SPLIT', 'CLAIMED',
+  'EXTENSION_ASKED', 'EXTENSION_DECIDED',
+  // A task that went to the wrong person and was handed to the right one. Its
+  // own word because it is the opposite of DELEGATED in who stays answerable.
+  'TRANSFERRED',
 ];
 
 // ===== Legacy =====
@@ -339,13 +581,15 @@ const LEGACY_STATUS_MAP = {
   // the four the module had before the 2026-09-17 rework
   Todo: STATUS.PENDING,
   InProgress: STATUS.IN_PROGRESS,
-  Review: STATUS.IN_PROGRESS,
+  Review: STATUS.SUBMITTED,
   Done: STATUS.COMPLETED,
   // the twelve that rework introduced
   ASSIGNED: STATUS.PENDING,
   ACCEPTED: STATUS.IN_PROGRESS,
-  SUBMITTED: STATUS.IN_PROGRESS,
-  UNDER_REVIEW: STATUS.IN_PROGRESS,
+  // SUBMITTED is a CURRENT status again as of 2026-09-22 and so is no longer
+  // mapped away — `normaliseStatus` checks TASK_STATUS first, and a row written
+  // by the twelve-status module meant exactly what the word means now.
+  UNDER_REVIEW: STATUS.SUBMITTED,
   APPROVED: STATUS.COMPLETED,
   REJECTED: STATUS.IN_PROGRESS,
   DECLINED: STATUS.CANCELLED,
@@ -374,10 +618,13 @@ module.exports = {
   OPEN_STATUS,
   LABELS,
   statusLabel,
+  BOARD_COLUMNS,
   TRANSITIONS,
   transitionFor,
+  effectiveTarget,
   isTerminal,
   isOverdue,
+  isInReview,
   ACCEPTANCE,
   ACCEPTANCE_STATES,
   ACCEPTANCE_LABELS,
@@ -385,9 +632,26 @@ module.exports = {
   isAwaitingAcceptance,
   TASK_PRIORITY,
   DEFAULT_PRIORITY,
+  LEGACY_PRIORITY_MAP,
+  normalisePriority,
+  PRIORITY_COLORS,
+  DONE_COLOR,
+  CANCELLED_COLOR,
+  accentFor,
+  PRIORITY_RANK,
   DEFAULT_TASK_POINTS,
   MAX_TASK_POINTS,
   MAX_SUBTASKS,
+  MAX_SPLIT_DEPTH,
+  PROGRESS_MIN,
+  PROGRESS_MAX,
+  PROGRESS_STEPS,
+  clampProgress,
+  EXTENSION_STATUS,
+  EXTENSION_STATES,
+  SORTS,
+  SORT_KEYS,
+  DEFAULT_SORT,
   FREQUENCY,
   FREQUENCIES,
   FREQUENCY_LABELS,

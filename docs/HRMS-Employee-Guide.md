@@ -295,7 +295,25 @@ A question you have already answered is never asked again, and a lesson you have
 
 ### 9.1 Tasks
 
-Tasks assigned to you with a project, priority, and due date. You move each one through Todo, In Progress, Review, and Done.
+Work handed to you, and work you have handed on. Every task carries a priority, a deadline, a category and a points value, and it moves through four stages:
+
+**To do** — it has been given to you and you have not answered yet. Press **Accept** to take it on, which also starts it, or **Decline** with a reason if it is not yours to do.
+
+**In progress** — you are working on it. Drag the **progress** slider as you go, or tap 25 / 50 / 75 / 100. Nobody can see how far along you are unless you say.
+
+**Review** — you pressed **Submit** and said what you did. It is now with whoever gave it to you. They either **approve** it, which finishes it, or **send it back** with a note saying what still needs doing, which reopens it with everything you have already done still on it.
+
+**Done** — approved. The points are recorded against your name.
+
+[!NOTE] A task is coloured by how urgent it is — red for Urgent, amber for Medium, grey for Low — and turns **green** once it is finished. A task past its deadline also carries a red **Overdue** tag.
+
+**If you cannot make the deadline, say so.** Use **Ask for more time**, pick the new date and give a reason. The person who set the task grants it or refuses it, and you are told either way. The work carries on while you wait — asking is not the same as stopping.
+
+**If a task is too big for one person**, use **Delegate**. You can hand the whole thing to somebody on your team, or break it into pieces and give each piece to a different person. Each piece is a task in its own right, with its own deadline and its own share of the points — shared out equally unless you change the figures. A piece you leave unassigned is offered to your team, and the first person to **pick it up** gets it. Whichever way you delegate, **you become the person who approves it**.
+
+**If a task reached you by mistake**, use **Transfer**. That is not the same as delegating: the task leaves you completely and the new person holds it as if it had always been theirs. You stop hearing about it.
+
+You can see everything as a **list** — with a serial number, and sortable by deadline, day assigned, how long it has been pending, points or priority — or as a **board** with the four stages as columns, shown twice: everything assigned **to** you, and everything assigned **by** you.
 
 ### 9.2 Assets
 

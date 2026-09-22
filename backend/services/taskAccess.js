@@ -70,25 +70,113 @@ const TOP_ROLES = ['SuperAdmin', 'CEO', 'MD'];
  * between two clicks. Deliberately NOT a permanent cache: an org change should
  * take effect within the minute, not on the next deploy.
  */
-let treeCache = { at: 0, managerOf: null };
+let treeCache = { at: 0, managerOf: null, reportsOf: null };
 const TREE_TTL_MS = 60 * 1000;
 
-async function reportingTree() {
-  if (treeCache.managerOf && Date.now() - treeCache.at < TREE_TTL_MS) return treeCache.managerOf;
+/**
+ * Both directions, built from ONE scan.
+ *
+ * `managerOf` answers "who is above me" and is what direction has always
+ * needed. `reportsOf` — added 2026-09-22 — answers "who is below me", which is
+ * what every person dropdown in the module now opens with: *"only show the team
+ * member for manager and for CEO and MD show Manager who are under them"*.
+ * Inverting the map afterwards would mean a second pass over the same rows, so
+ * both are filled in the same loop and cached together.
+ */
+async function buildTree() {
+  if (treeCache.managerOf && Date.now() - treeCache.at < TREE_TTL_MS) return treeCache;
   const rows = await EmployeeProfile.find({ reportingManager: { $ne: null } })
     .select('user reportingManager')
     .lean();
   const managerOf = new Map();
+  const reportsOf = new Map();
   for (const r of rows) {
-    if (r.user && r.reportingManager) managerOf.set(String(r.user), String(r.reportingManager));
+    if (!r.user || !r.reportingManager) continue;
+    const u = String(r.user);
+    const m = String(r.reportingManager);
+    managerOf.set(u, m);
+    if (!reportsOf.has(m)) reportsOf.set(m, []);
+    reportsOf.get(m).push(u);
   }
-  treeCache = { at: Date.now(), managerOf };
-  return managerOf;
+  treeCache = { at: Date.now(), managerOf, reportsOf };
+  return treeCache;
+}
+
+async function reportingTree() {
+  return (await buildTree()).managerOf;
 }
 
 /** Drop the cache — called when a reporting line is edited. */
 function invalidateTree() {
-  treeCache = { at: 0, managerOf: null };
+  treeCache = { at: 0, managerOf: null, reportsOf: null };
+}
+
+/**
+ * Everybody under `userId` — direct reports, then everybody under them.
+ *
+ * Breadth-first, so `direct` is the first rung and `indirect` is the rest in
+ * the order you would read an org chart. Cycle-guarded on a `seen` set rather
+ * than a depth counter: the data can and does contain a loop, and a loop here
+ * would hang a dropdown rather than merely mis-sort it.
+ *
+ * @returns {Promise<{direct: string[], indirect: string[], all: Set<string>}>}
+ */
+async function teamOf(userId) {
+  const { reportsOf } = await buildTree();
+  const root = String(userId || '');
+  const direct = [...(reportsOf.get(root) || [])];
+  const seen = new Set([root, ...direct]);
+  const indirect = [];
+
+  let frontier = direct;
+  let depth = 0;
+  while (frontier.length && depth < MAX_CHAIN) {
+    const next = [];
+    for (const id of frontier) {
+      for (const child of reportsOf.get(id) || []) {
+        if (seen.has(child)) continue;
+        seen.add(child);
+        indirect.push(child);
+        next.push(child);
+      }
+    }
+    frontier = next;
+    depth += 1;
+  }
+
+  seen.delete(root);
+  return { direct, indirect, all: seen };
+}
+
+/**
+ * How `targetId` stands to `actorId`, in the words a picker groups by.
+ *
+ *   self · direct · indirect   — my team, and what a dropdown opens with
+ *   manager · chain            — my line manager, and everybody above them
+ *   peer                       — everybody else
+ *
+ * This is deliberately NOT the same question as `directionOf`. Direction
+ * decides what may be CREATED (a task or a request) and falls back to PEER
+ * whenever the data cannot say; relation decides what is SHOWN FIRST, and
+ * "somewhere else in the company" is a perfectly good answer for it.
+ */
+async function relationTo(actorId, targetId) {
+  const a = String(actorId || '');
+  const b = String(targetId || '');
+  if (!a || !b) return 'peer';
+  if (a === b) return 'self';
+
+  const { managerOf } = await buildTree();
+  if (managerOf.get(b) === a) return 'direct';
+
+  const above = await chainAbove(b);
+  if (above.includes(a)) return 'indirect';
+
+  const myChain = await chainAbove(a);
+  if (myChain[0] === b) return 'manager';
+  if (myChain.includes(b)) return 'chain';
+
+  return 'peer';
 }
 
 /** The ids above `userId`, nearest first. */
@@ -231,6 +319,85 @@ async function requestableUserIds(req) {
   return execs.map((u) => String(u._id));
 }
 
+/**
+ * Roles that stand in for "my team" when the reporting tree has nothing to say.
+ *
+ * A CEO or MD almost never appears in `EmployeeProfile.reportingManager` — they
+ * have no employee profile at all in this portal (see the celebrations module,
+ * which had to solve the same absence). So the tree hands them an empty team,
+ * and a picker that opens empty for the two people who assign the most work is
+ * the picker not working. The brief says what they should see instead: *"for
+ * CEO and MD show Manager who are under them"*.
+ */
+const MANAGER_ROLES = ['Manager', 'HRManager', 'AccountsManager'];
+
+/**
+ * Tag every person in a picker with where they stand — the ONE answer both the
+ * web picker and the app's picker group by, computed once on the server.
+ *
+ * Every dropdown in the module then follows the same rule without re-deriving
+ * anything: with an empty search box it shows `relation` of `direct` then
+ * `indirect`; typing searches the lot; somebody who can only be ASKED is shown
+ * greyed. See the contract in docs/task-module.md §7.
+ *
+ * @param {import('express').Request} req
+ * @param {Array} people - lean User rows, each with `_id` and `role`
+ * @returns {Promise<{people: Array, team: {direct: string[], indirect: string[]}, hasTeam: boolean}>}
+ */
+async function annotatePeople(req, people = []) {
+  const me = String(req.user._id);
+  const { direct, indirect } = await teamOf(me);
+  const directSet = new Set(direct);
+  const indirectSet = new Set(indirect);
+
+  // The stand-in, for somebody the tree puts nobody under. Only ever WIDENS the
+  // first screen of a dropdown — it changes nothing about who may be assigned,
+  // which stays `directionOf`'s answer and is enforced on write either way.
+  let fallback = null;
+  if (!direct.length && !indirect.length && isTopOfTree(req.user)) {
+    fallback = new Set(
+      people.filter((p) => MANAGER_ROLES.includes(p.role)).map((p) => String(p._id))
+    );
+  }
+
+  const annotated = [];
+  for (const p of people) {
+    const id = String(p._id);
+    let relation;
+    if (id === me) relation = 'self';
+    else if (directSet.has(id)) relation = 'direct';
+    else if (indirectSet.has(id)) relation = 'indirect';
+    else if (fallback?.has(id)) relation = 'direct';
+    else relation = await relationTo(me, id);
+
+    annotated.push({
+      ...p,
+      relation,
+      direction: isTopOfTree(req.user) ? 'DOWN' : await directionOf(me, id),
+      depth: await depthOf(id),
+    });
+  }
+
+  return {
+    people: annotated,
+    team: {
+      direct: annotated.filter((p) => p.relation === 'direct').map((p) => String(p._id)),
+      indirect: annotated.filter((p) => p.relation === 'indirect').map((p) => String(p._id)),
+    },
+    hasTeam: annotated.some((p) => p.relation === 'direct' || p.relation === 'indirect'),
+  };
+}
+
+/**
+ * The ids this caller's team covers — used to default the `openTo` pool of a
+ * piece nobody has been named for, so "anybody on my team can pick this up"
+ * needs no typing at all.
+ */
+async function defaultOpenTo(userId) {
+  const { direct } = await teamOf(userId);
+  return direct;
+}
+
 // ===== Visibility =====
 
 /** Does this caller see everything inside the wall? */
@@ -250,14 +417,19 @@ async function visibleFilter(req, scope = 'all') {
 
   let base;
   if (scope === 'mine') {
-    // "Mine" includes a task I am on only for ONE SUBTASK — that piece is
-    // genuinely mine to do, and a list that hid it would be a list of work
-    // nobody could find.
-    base = { $or: [{ assignedTo: me }, { 'assignees.user': me }, { 'subtasks.assignee': me }] };
+    // "Mine" includes a PIECE that is open to me but not yet claimed. It is
+    // work I may pick up, and a list that hid it would be a list nobody could
+    // find the offer in — which is the whole of the brief's *"they can pick the
+    // task"*. The row draws a Claim button instead of the usual ones.
+    base = { $or: [{ assignedTo: me }, { 'assignees.user': me }, { openTo: me }] };
   } else if (scope === 'delegated') {
     // What I handed out — as the assigner, AND anything I passed on by
     // delegating it. I am no longer doing it but I am still answerable for it.
-    base = { $or: [{ createdBy: me }, { 'delegations.from': me }] };
+    // What I handed out — as the person who SET it, as anybody who passed it
+    // on, and (since 2026-09-22) as whoever it now waits on. A manager who
+    // delegated a CEO's task is no longer doing it and is not its creator, but
+    // they are the one who has to sign it off, so it belongs on their desk.
+    base = { $or: [{ createdBy: me }, { approver: me }, { 'delegations.from': me }] };
   } else if (scope === 'loop') {
     base = { loopUsers: me };
   } else if (seesEverything(req.user)) {
@@ -265,10 +437,11 @@ async function visibleFilter(req, scope = 'all') {
   } else {
     base = {
       $or: [
-        { assignedTo: me }, { 'assignees.user': me }, { createdBy: me }, { loopUsers: me },
-        // Somebody who owns a subtask sees the parent; somebody who once owned
-        // the whole thing keeps seeing it after delegating it on.
-        { 'subtasks.assignee': me }, { originalAssignees: me },
+        { assignedTo: me }, { 'assignees.user': me }, { createdBy: me }, { approver: me },
+        { loopUsers: me },
+        // A piece offered to me; and somebody who once owned the whole thing
+        // keeps seeing it after delegating it on.
+        { openTo: me }, { originalAssignees: me },
       ],
     };
   }
@@ -295,13 +468,34 @@ function canSee(user, task) {
     String(task.createdBy?._id || task.createdBy || '') === id
     || (task.assignees || []).some((a) => String(a.user?._id || a.user) === id)
     || String(task.assignedTo?._id || task.assignedTo || '') === id
+    || String(task.approver?._id || task.approver || '') === id
     || (task.loopUsers || []).some((u) => String(u?._id || u) === id)
-    // A subtask assigned to somebody who is not on the task would otherwise be
-    // invisible to the only person who can do it.
-    || (task.subtasks || []).some((st) => String(st.assignee?._id || st.assignee || '') === id)
+    // A piece offered to me and not yet claimed would otherwise be invisible to
+    // the only people who are allowed to take it.
+    || (task.openTo || []).some((u) => String(u?._id || u) === id)
     // Delegating a task on does not stop you following it.
     || (task.originalAssignees || []).some((u) => String(u?._id || u) === id)
   );
+}
+
+/**
+ * May this caller open a PIECE they have no direct claim on?
+ *
+ * Yes if they can see its parent. A manager splits the CEO's task five ways;
+ * the CEO is on none of the five and is in nobody's `openTo`, but "how is my
+ * task going" has to be answerable — so the parent's detail response carries
+ * its children, and this is the check behind it. Deliberately one extra READ
+ * rather than a `parentViewers` array copied onto every child, which would be a
+ * second list of people to keep in step and would go stale the first time
+ * somebody was added to the parent.
+ */
+async function canSeeThroughParent(user, task) {
+  if (!task?.parentTask) return false;
+  const Task = require('../models/Task');
+  const parent = await Task.findById(task.parentTask)
+    .select('createdBy assignees assignedTo loopUsers openTo originalAssignees company')
+    .lean();
+  return parent ? canSee(user, parent) : false;
 }
 
 /**
@@ -315,8 +509,33 @@ function actorRoleOn(user, task) {
   const id = String(user._id);
   if ((task.assignees || []).some((a) => String(a.user?._id || a.user) === id)) return 'doer';
   if (String(task.createdBy?._id || task.createdBy || '') === id) return 'assigner';
+  // The APPROVER counts too (2026-09-22). After a delegation they are the
+  // person the submission is actually waiting on, and if they were not an
+  // assigner here they could be notified of a job they had no button for.
+  if (String(task.approver?._id || task.approver || '') === id) return 'assigner';
   if (seesEverything(user)) return 'assigner';
   return null;
+}
+
+/** Whoever signs this off. The approver if one is set; otherwise its setter. */
+function approverOf(task) {
+  return task?.approver || task?.createdBy || null;
+}
+
+/**
+ * May this caller hand the task to somebody else outright?
+ *
+ * A transfer corrects a MISTAKE — *"if the task is assigned to wrong user"* —
+ * so the two people who can see the mistake are the two who may fix it: whoever
+ * set it, and whoever it landed on. (An admin, as always, can do either.)
+ */
+function canTransfer(user, task) {
+  if (!task) return false;
+  const id = String(user._id);
+  return String(task.createdBy?._id || task.createdBy || '') === id
+    || String(task.approver?._id || task.approver || '') === id
+    || (task.assignees || []).some((a) => String(a.user?._id || a.user) === id)
+    || seesEverything(user);
 }
 
 /** May this caller edit the task's own fields (title, deadline, points)? */
@@ -361,17 +580,42 @@ function canPurge(user) {
  * told — the pattern the mobile port already settled on.
  */
 function capabilitiesFor(user, task) {
+  const {
+    TRANSITIONS, ACCEPTANCE, STATUS, EXTENSION_STATUS, MAX_SPLIT_DEPTH,
+    KIND_TASK, isTerminal: terminal, effectiveTarget,
+  } = require('../config/tasks');
   const role = actorRoleOn(user, task);
-  const { TRANSITIONS, ACCEPTANCE, STATUS, isTerminal: terminal } = require('../config/tasks');
-  const moves = (TRANSITIONS[task.status] || [])
-    .filter((t) => role && t.by.includes(role))
-    .map((t) => ({ to: t.to, note: Boolean(t.note) }));
+  const id = String(user._id);
 
-  // The caller's OWN row, which is what accept / decline / delegate act on.
-  const mine = (task.assignees || []).find(
-    (a) => String(a.user?._id || a.user) === String(user._id)
-  ) || null;
+  // The caller's OWN row, which is what accept / decline / progress act on.
+  const mine = (task.assignees || []).find((a) => String(a.user?._id || a.user) === id) || null;
   const open = !terminal(task.status);
+  const isSetter = String(task.createdBy?._id || task.createdBy || '') === id;
+  const isPiece = Boolean(task.parentTask);
+  const unclaimed = isPiece && !(task.assignees || []).length;
+  const offeredToMe = (task.openTo || []).some((u) => String(u?._id || u) === id);
+
+  /**
+   * The moves, AFTER the review rule.
+   *
+   * A doer's Complete is redirected to SUBMITTED by the engine
+   * (config/tasks.effectiveTarget), so offering both here would draw two
+   * buttons that do the same thing and label one of them wrongly. The list is
+   * mapped through the same function the engine uses and de-duplicated, which
+   * is the only way the button a person presses and the thing that happens
+   * cannot come apart.
+   */
+  const seen = new Set();
+  const moves = [];
+  for (const t of TRANSITIONS[task.status] || []) {
+    if (!role || !t.by.includes(role)) continue;
+    const to = effectiveTarget(task, role, t.to, user._id);
+    if (seen.has(to) || to === task.status) continue;
+    seen.add(to);
+    moves.push({ to, note: Boolean(t.note) });
+  }
+
+  const canApprove = task.status === STATUS.SUBMITTED && role === 'assigner';
 
   return {
     role,
@@ -392,46 +636,57 @@ function capabilitiesFor(user, task) {
     canDelegate: Boolean(mine) && open && mine.status !== STATUS.COMPLETED,
     myAcceptance: mine ? mine.acceptance : null,
 
-    // ===== Subtasks =====
-    // Anybody on the task may split it up, not just whoever set it: the person
-    // doing the work is the one who knows what the pieces are.
-    canAddSubtasks: Boolean(role) && open,
-    // Ticking one is decided PER SUBTASK (an assigned piece is its owner's),
-    // so this only says whether the person may tick ANYTHING at all.
-    //
-    // Computed from the array rather than through the document's `ownsSubtask`
-    // method, because the LIST hands this function `.lean()` rows which have no
-    // methods — and `undefined?.()` would silently answer "no" to the one
-    // person who owns the piece.
-    canTickSubtasks: Boolean(role) || ownsAnySubtask(user, task),
+    // ===== Submit · approve · send back (2026-09-22) =====
+    // Submitting is the doer's; both answers to it are the assigner's. They are
+    // named separately from `transitions` because the WORDS matter on a button
+    // — "Approve" and "Send back" are not "mark completed" and "mark in
+    // progress", even though that is what they do underneath.
+    canSubmit: Boolean(mine) && open && task.status !== STATUS.SUBMITTED
+      && mine.status !== STATUS.COMPLETED && task.requiresApproval !== false && !isSetter,
+    canApprove,
+    canReject: canApprove,
+    canWithdraw: Boolean(mine) && task.status === STATUS.SUBMITTED,
+
+    // ===== Progress =====
+    // Only the person doing it may say how far along it is. An assigner who
+    // could type it would be reporting on work they have not done.
+    canSetProgress: Boolean(mine) && open && mine.status !== STATUS.COMPLETED,
+    myProgress: mine ? (Number(mine.progress) || 0) : null,
+
+    // ===== Splitting it into pieces =====
+    // Anybody on the task may split it, not just whoever set it: the person
+    // doing the work is the one who knows what the pieces are. Capped by depth
+    // so a chain of pieces-of-pieces cannot run away.
+    canSplit: Boolean(role) && open && task.kind === KIND_TASK
+      && (Number(task.depth) || 0) < MAX_SPLIT_DEPTH - 1,
+    // A piece nobody has been named for, offered to me.
+    canClaim: unclaimed && open && (offeredToMe || seesEverything(user)),
+    pointsBudget: Math.max(0, (Number(task.points) || 0) - (Number(task.distributedPoints) || 0)),
+
+    // ===== Asking for more time =====
+    // One un-answered request per person: a doer who could stack three would be
+    // asking the same question three times, and the assigner would have to say
+    // no to all of them.
+    canRequestExtension: Boolean(mine) && open && Boolean(task.dueDate)
+      && !(task.extensions || []).some(
+        (e) => e.status === EXTENSION_STATUS.PENDING
+          && String(e.requestedBy?._id || e.requestedBy) === id
+      ),
+    canDecideExtension: role === 'assigner'
+      && (task.extensions || []).some((e) => e.status === EXTENSION_STATUS.PENDING),
+
+    // ===== Handing it to the right person =====
+    // Correcting a mis-assignment, which is NOT delegating: the person it comes
+    // off drops out completely. See services/taskEngine.transferTask.
+    canTransfer: canTransfer(user, task) && open,
+
+    // ===== Retired, kept truthful for an un-updated Android build =====
+    // It reads `can.canAddSubtasks` to decide whether to draw the split button
+    // and `can.canTickSubtasks` to decide whether the pieces are interactive.
+    // Both still mean what they meant; they simply drive child tasks now.
+    canAddSubtasks: Boolean(role) && open && task.kind === KIND_TASK,
+    canTickSubtasks: Boolean(role),
   };
-}
-
-/** Does this user own at least one piece of the task? Lean-safe. */
-function ownsAnySubtask(user, task) {
-  const id = String(user._id);
-  return (task.subtasks || []).some(
-    (st) => String(st.assignee?._id || st.assignee || '') === id
-  );
-}
-
-/**
- * May this caller tick THIS subtask?
- *
- * An unassigned subtask is open to everybody on the task — the user's "any
- * assignee can do any subtask". An assigned one belongs to its owner, and to
- * whoever set the task (who has to be able to close out a piece when the owner
- * has left or gone quiet).
- */
-function canTickSubtask(user, task, subtask) {
-  const id = String(user._id);
-  if (!subtask) return false;
-  if (subtask.assignee) {
-    return String(subtask.assignee._id || subtask.assignee) === id
-      || String(task.createdBy?._id || task.createdBy || '') === id
-      || seesEverything(user);
-  }
-  return Boolean(actorRoleOn(user, task));
 }
 
 /** A guard that throws the 403 rather than making every handler write it. */
@@ -458,6 +713,11 @@ module.exports = {
   chainAbove,
   depthOf,
   directionOf,
+  teamOf,
+  relationTo,
+  annotatePeople,
+  defaultOpenTo,
+  MANAGER_ROLES,
   isTopOfTree,
   resolveAssignmentKind,
   assignableUserIds,
@@ -465,10 +725,12 @@ module.exports = {
   seesEverything,
   visibleFilter,
   canSee,
+  canSeeThroughParent,
+  approverOf,
+  canTransfer,
   canEdit,
   canDelete,
   canPurge,
-  canTickSubtask,
   actorRoleOn,
   capabilitiesFor,
   assertCanSee,

@@ -175,7 +175,7 @@ export const adminNav = [
     { to: '/admin/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'conversion', 'incentive'] },
     { to: '/admin/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid', 'share', 'present'],
+      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid', 'deduction'],
       tabs: [{ id: 'entries', label: 'Daily teams' }, { id: 'summary', label: 'Per employee' },
         { id: 'points', label: 'Points per sheet' }] },
     // The billing team's incentive, which is counted in the billing system and
@@ -238,16 +238,23 @@ export const adminNav = [
     // NO `perm` — everybody can set a task, and everybody has tasks. What
     // `tasks.manage` buys is the All Tasks tab and the team dashboard, which
     // the page itself decides from GET /tasks/meta (2026-09-21 rework).
-    // The separate Task Workflows page went with the workflow builder;
-    // templates and repeating schedules are tabs here now.
+    // The separate Task Workflows page went with the workflow builder.
+    //
+    // KANBAN TOOK TEMPLATES' PLACE IN THE STRIP (user decision, 2026-09-22).
+    // It is the two-board screen — everything assigned TO me over everything
+    // assigned BY me, four columns each — and it is what people open the module
+    // for, which a tab five along from a template library was not. Templates
+    // did NOT go: they are reached from a button in the page header, because
+    // "Save as template" on a row has to lead somewhere.
     { to: '/admin/tasks', label: 'Tasks', icon: FiList,
       badge: 'taskApproval',
       keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'assign', 'delegate',
-        'request', 'overdue', 'template', 'templates', 'recurring', 'repeat', 'reminder',
-        'voice note', 'dashboard', 'points'],
+        'transfer', 'request', 'overdue', 'kanban', 'board', 'review', 'approve', 'submit',
+        'progress', 'piece', 'pieces', 'subtask', 'template', 'templates', 'recurring',
+        'repeat', 'reminder', 'voice note', 'dashboard', 'points'],
       tabs: [{ id: 'mine', label: 'My Tasks' }, { id: 'delegated', label: 'Delegated' },
         { id: 'all', label: 'All Tasks' }, { id: 'requests', label: 'Requests' },
-        { id: 'templates', label: 'Templates' }, { id: 'dashboard', label: 'Dashboard' }] },
+        { id: 'kanban', label: 'Kanban' }, { id: 'dashboard', label: 'Dashboard' }] },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
       tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' }] },
@@ -406,7 +413,7 @@ export const employeeNav = [
     { to: '/employee/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
     { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'non rolling', 'non-rolling', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid', 'share', 'present'] },
+      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid', 'deduction'] },
     // The billing team's, read out of the billing system rather than recorded
     // here — the same page the admin portal mounts, for a grant holder with no
     // admin portal of their own.

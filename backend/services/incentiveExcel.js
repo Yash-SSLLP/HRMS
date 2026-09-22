@@ -333,13 +333,11 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
     { header: 'Members', key: 'heads', width: 10 },
     { header: 'Sheet Rolled', key: 'sheets', width: 12 },
     { header: 'Points/sheet', key: 'perSheet', width: 12 },
+    { header: 'Gross points', key: 'grossPoints', width: 13 },
+    { header: 'Deduction %', key: 'deductionPct', width: 12 },
+    { header: 'Deducted', key: 'deductionPoints', width: 11 },
     { header: 'Team points', key: 'teamPoints', width: 12 },
-    { header: 'To non-rolling', key: 'nonRollingPoints', width: 14 },
-    { header: 'Team keeps', key: 'rollingPoints', width: 12 },
     { header: 'Points each', key: 'pointsEach', width: 12 },
-    { header: 'Non-rolling', key: 'nonRolling', width: 44 },
-    { header: 'Present', key: 'nonRollingHeads', width: 9 },
-    { header: 'Each (non-rolling)', key: 'nonRollingEach', width: 17 },
     { header: 'Status', key: 'status', width: 12 },
     { header: 'Note', key: 'note', width: 28 },
     { header: 'Recorded by', key: 'by', width: 22 },
@@ -356,33 +354,29 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
       heads: e.headCount || 0,
       sheets: e.sheets == null ? '' : e.sheets,
       perSheet: e.pointsPerSheet || 0,
+      // Gross, what came off it, and what the team is actually credited with.
+      // All three, because "why is this lower than sheets x points" is the first
+      // question anybody opening this file asks.
+      grossPoints: e.sheets == null ? '' : (e.grossPoints || 0),
+      deductionPct: e.deductionPct == null ? '' : e.deductionPct,
+      deductionPoints: e.sheets == null ? '' : (e.deductionPoints || 0),
       teamPoints: e.sheets == null ? '' : (e.teamPoints || 0),
-      nonRollingPoints: e.sheets == null ? '' : (e.nonRollingPoints || 0),
-      rollingPoints: e.sheets == null ? '' : (e.rollingPoints == null ? (e.teamPoints || 0) : e.rollingPoints),
       pointsEach: e.sheets == null ? '' : (e.perPersonPoints || 0),
-      // Present first, then whoever was listed and was not in — an absent name
-      // is part of the record, and the sheet is where a question about a day
-      // gets settled.
-      nonRolling: (e.nonRolling || [])
-        .map((m) => `${nameOf(m)}${m.present === false ? ' (absent)' : ''}`)
-        .join(', '),
-      nonRollingHeads: e.nonRollingHeadCount || 0,
-      nonRollingEach: e.sheets == null ? '' : (e.perNonRollingPoints || 0),
       status: e.sheets == null ? 'Pending' : 'Recorded',
       note: e.note || '',
       by: e.updatedByName || e.createdByName || '',
     });
   }
-  ['teamPoints', 'nonRollingPoints', 'rollingPoints', 'pointsEach', 'nonRollingEach']
+  ['grossPoints', 'deductionPoints', 'teamPoints', 'pointsEach']
     .forEach((k) => { ws.getColumn(k).numFmt = '#,##0.##'; });
   if (entries.length) {
     const totalRow = ws.addRow({
       date: 'TOTAL',
       heads: entries.reduce((s, e) => s + (e.headCount || 0), 0),
       sheets: entries.reduce((s, e) => s + (e.sheets || 0), 0),
+      grossPoints: Math.round(entries.reduce((s, e) => s + (e.grossPoints || 0), 0) * 100) / 100,
+      deductionPoints: Math.round(entries.reduce((s, e) => s + (e.deductionPoints || 0), 0) * 100) / 100,
       teamPoints: Math.round(entries.reduce((s, e) => s + (e.teamPoints || 0), 0) * 100) / 100,
-      nonRollingPoints: Math.round(entries.reduce((s, e) => s + (e.nonRollingPoints || 0), 0) * 100) / 100,
-      rollingPoints: Math.round(entries.reduce((s, e) => s + (e.rollingPoints == null ? (e.teamPoints || 0) : e.rollingPoints), 0) * 100) / 100,
     });
     totalRow.font = { bold: true };
   }
@@ -395,7 +389,6 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
     { header: 'Department', key: 'department', width: 20 },
     { header: 'Days', key: 'days', width: 10 },
     { header: 'Days as picker', key: 'pickerDays', width: 14 },
-    { header: 'Days non-rolling', key: 'nonRollingDays', width: 16 },
     { header: 'Sheet Rolled', key: 'sheets', width: 12 },
     { header: 'Team points', key: 'teamPoints', width: 13 },
     { header: 'Credited points', key: 'creditPoints', width: 15 },
@@ -411,7 +404,6 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
       department: p.department || '',
       days: p.days || 0,
       pickerDays: p.pickerDays || 0,
-      nonRollingDays: p.nonRollingDays || 0,
       sheets: p.sheets || 0,
       teamPoints: p.teamPoints || 0,
       creditPoints: p.creditPoints || 0,
@@ -426,7 +418,6 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
       code: 'TOTAL',
       days: people.reduce((s, p) => s + (p.days || 0), 0),
       pickerDays: people.reduce((s, p) => s + (p.pickerDays || 0), 0),
-      nonRollingDays: people.reduce((s, p) => s + (p.nonRollingDays || 0), 0),
       sheets: people.reduce((s, p) => s + (p.sheets || 0), 0),
       teamPoints: Math.round(people.reduce((s, p) => s + (p.teamPoints || 0), 0) * 100) / 100,
       creditPoints: Math.round(people.reduce((s, p) => s + (p.creditPoints || 0), 0) * 100) / 100,

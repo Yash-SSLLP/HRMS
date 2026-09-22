@@ -72,13 +72,12 @@ const TABS = [
 // kind of wrong nobody reports because it looks like an answer.
 const KIND = {
   rolling: { label: 'Rolled', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
-  nonRolling: { label: 'Team share', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
   credit: { label: 'Credited', cls: 'bg-green-50 text-green-700 border-green-200' },
   billing: { label: 'Billing', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
 };
 
 /** A day's work, as opposed to a credit or a whole month of billing. */
-const isTeamDay = (kind) => kind === 'rolling' || kind === 'nonRolling';
+const isTeamDay = (kind) => kind === 'rolling';
 
 /** Gold, silver, bronze — everybody else gets the plain chip. */
 const RANK_CLS = {

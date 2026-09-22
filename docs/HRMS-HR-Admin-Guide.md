@@ -368,7 +368,7 @@ Each person has one **wallet** (the company cash they hold) and as many named **
 Some teams are paid for what they produce rather than only for being here, and what they produce is counted in **points**. It has its own **Incentive** menu rather than a row under Payroll, because the work is recorded by whoever supervised it — a grant an ordinary supervisor can hold — and nothing in it touches the payroll module.
 
 - **Point Rate** — what one point is worth. A single company-wide figure, because every incentive is earned in points and converted here.
-- **Boys Incentive** — the daily rolling teams: who was on one, how many sheets they rolled, and the share taken off the top for the non-rolling group that day.
+- **Boys Incentive** — the daily rolling teams: who was on one, how many sheets they rolled, and the deduction taken off the top before the team is credited.
 - **Billing Incentive** — the billing team's invoicing, read live from the billing system. Described below.
 - **Points Dashboard** — every employee and the points they hold, across every incentive. This is where extra points are credited by hand with a reason, and where people are paid, in full or in part.
 - **Leaderboard** — the standing, described below.
@@ -422,7 +422,19 @@ There is no month picker on a leaderboard, because neither figure belongs to a m
 
 ## 10. Work and resources
 
-**Projects** and **tasks** are maintained here, with employees updating task status.
+**Tasks.** Anybody can set a task; who they may set it for is decided by the org chart rather than by a permission. Work travels **down** the reporting line or **across** it — an upward ask becomes a **request** instead, which carries no points and is never counted in anybody's score. Every person picker opens on your own team and searches the whole company when you type.
+
+A task moves through **To do → In progress → Review → Done**. Accepting it starts it; submitting it sends it to whoever set it, who approves it or sends it back with a note. Turn off **"I want to review this before it is marked done"** on the form if a particular task does not need that step.
+
+A task can be **split into pieces**, each a task in its own right with its own owner, deadline, progress and share of the points. The points on the parent are a pool: whatever is handed down to the pieces comes off what the person holding the parent earns, so splitting a job never creates points out of nothing. A piece left unassigned is offered to a team and claimed by the first person to take it.
+
+**Delegating moves the approval with the work** — whoever hands a task on becomes the person who signs it off, so a director who asked a manager for a report is not made to read the junior's draft. **Transferring** is the opposite and exists for a mis-assignment: the task leaves the wrong person completely, resets to To do, and they stop hearing about it. Both are recorded.
+
+Doers can **ask for more time**; the person who set the task grants or refuses it, and granting it moves the deadline. Whether a delivery was punctual is fixed at the moment it was **handed in**, not the moment it was approved, so a slow review never makes somebody late.
+
+Above every list are five figures — Total, Overdue, Pending, Review and Completed — which never double-count, and a **Dashboard** tab scores each person on what they were given, what they finished, and how much of it was on time. Points settle into the same pool as the other incentives, but only once a SuperAdmin turns on **Settings → Tasks → points to pool**; until then they score without becoming money.
+
+**Projects** are maintained here alongside them.
 
 **Assets** is a register with statuses of Available, Assigned, In Repair and Retired. Assign an asset to a person and record its return; a full allocation register keeps the history, and asset tags are unique.
 

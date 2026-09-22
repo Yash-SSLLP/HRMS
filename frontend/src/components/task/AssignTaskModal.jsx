@@ -37,15 +37,17 @@ import { toast } from 'react-toastify';
 import {
   FiX, FiPlus, FiLink, FiPaperclip, FiImage, FiBell, FiFlag, FiRepeat,
   FiCalendar, FiAward, FiUsers, FiEye, FiTag, FiSend, FiTrash2, FiCheck, FiSettings,
+  FiGitBranch,
 } from 'react-icons/fi';
 import { VoiceRecorder } from './VoiceNote';
 import ReminderEditor from './ReminderEditor';
 import PeoplePicker from './PeoplePicker';
 import CategoryManager from './CategoryManager';
+import { PieceEditor, emptyPiece, filledPieces, pieceItems } from './DelegateModal';
+import { priorityColor, tintStyle, useIsDark } from './taskColors';
 import * as T from '../../api/tasks';
 import {
-  TASK_PRIORITY, PRIORITY_ACTIVE, PRIORITY_CHIPS, FREQUENCIES, FREQUENCY_LABELS,
-  WEEKDAYS, WEEKDAY_NAMES,
+  TASK_PRIORITY, FREQUENCIES, FREQUENCY_LABELS, WEEKDAYS, WEEKDAY_NAMES,
 } from '../../utils/taskLifecycle';
 
 /** A datetime-local value for `d`, in the browser's own zone. */
@@ -73,6 +75,11 @@ const EMPTY = {
   category: '',
   priority: 'Medium',
   points: 100,
+  // Checked by default, matching models/Task.requiresApproval: finishing is a
+  // SUBMISSION and completing it is the assigner's act. Somebody who does not
+  // want to be asked has to say so, rather than the other way round — the
+  // whole review column on the board depends on this being the norm.
+  requiresApproval: true,
   dueDate: '',
   repeat: { frequency: 'ONCE', weekdays: [], monthDay: undefined, time: '18:00' },
   reminders: [],
@@ -104,6 +111,12 @@ export default function AssignTaskModal({
   const [saving, setSaving] = useState(false);
   const [more, setMore] = useState(false);
 
+  // "Delegate it straight away" — the same rows DelegateModal collects, posted
+  // to /split the moment the task exists. See the submit handler.
+  const [showPieces, setShowPieces] = useState(false);
+  const [pieces, setPieces] = useState([]);
+
+  const dark = useIsDark();
   const fileRef = useRef(null);
   const imageRef = useRef(null);
   const titleRef = useRef(null);
@@ -127,6 +140,8 @@ export default function AssignTaskModal({
     setShowReminders(false);
     setShowLinks(false);
     setLinkDraft('');
+    setShowPieces(false);
+    setPieces([]);
     // Focus the title: the form is useless until it has one, and the pointer
     // is already where somebody clicked to open it.
     setTimeout(() => titleRef.current?.focus(), 80);
@@ -198,6 +213,24 @@ export default function AssignTaskModal({
       return;
     }
 
+    // The pieces are checked here rather than after the task exists: a task
+    // created and then refused its split leaves somebody looking at a row they
+    // did not mean to make on its own.
+    const wanted = filledPieces(pieces);
+    if (wanted.some((p) => !p.title.trim())) {
+      toast.error('Give every piece a name, or remove the blank one.');
+      return;
+    }
+    const budget = isRequest ? 0 : Number(form.points) || 0;
+    const pinned = wanted.reduce(
+      (sum, p) => sum + (p.points === '' || p.points === null ? 0 : Math.max(0, Math.round(Number(p.points) || 0))),
+      0
+    );
+    if (pinned > budget) {
+      toast.error(`The pieces hand out ${pinned} points and the task is only worth ${budget}.`);
+      return;
+    }
+
     setSaving(true);
     try {
       const body = {
@@ -208,7 +241,8 @@ export default function AssignTaskModal({
         loopUsers: form.loopUsers,
         category: form.category,
         priority: form.priority,
-        points: isRequest ? 0 : Number(form.points) || 0,
+        points: budget,
+        requiresApproval: form.requiresApproval !== false,
         dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : null,
         repeat: form.repeat,
         reminders: form.reminders,
@@ -222,6 +256,29 @@ export default function AssignTaskModal({
           : recurring ? 'Repeating task set up.'
             : 'Task assigned.'
       );
+
+      /**
+       * The pieces can only be cut once the task has an id, so this is a second
+       * call rather than part of the create.
+       *
+       * It is deliberately NOT fatal. The task exists either way, and a split
+       * the server refuses — somebody has left, a piece pointed upward — must
+       * not read as "the task was not assigned", which is the one thing that
+       * definitely did happen.
+       */
+      if (task?._id && wanted.length) {
+        try {
+          const { children } = await T.splitTask(task._id, pieceItems(pieces, budget));
+          const n = children?.length || wanted.length;
+          toast.success(`Split into ${n} piece${n === 1 ? '' : 's'} — you approve each one.`);
+        } catch (err) {
+          toast.error(
+            err?.response?.data?.message
+            || 'The task was assigned, but it could not be split up. Open it and split it there.'
+          );
+        }
+      }
+
       onCreated?.(task);
 
       if (more) {
@@ -230,6 +287,8 @@ export default function AssignTaskModal({
         setForm((f) => ({ ...f, title: '', description: '', links: [] }));
         setVoice(null);
         setFiles([]);
+        setPieces([]);
+        setShowPieces(false);
         titleRef.current?.focus();
       } else {
         onClose?.();
@@ -239,7 +298,7 @@ export default function AssignTaskModal({
     } finally {
       setSaving(false);
     }
-  }, [form, isRequest, mixedSelection, voice, files, more, recurring, linkedTask, onCreated, onClose]);
+  }, [form, isRequest, mixedSelection, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose]);
 
   if (!open) return null;
 
@@ -368,25 +427,39 @@ export default function AssignTaskModal({
           />
 
           {/* ── Priority ─────────────────────────────────────────── */}
+          {/* Urgent · Medium · Low, painted from the SERVER's palette
+              (config/tasks.PRIORITY_COLORS, via taskColors) rather than
+              Tailwind's near-misses — the pill, the row tint it produces and
+              the card on the phone are then the same three colours. */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
               <FiFlag size={12} /> Priority
             </span>
-            {TASK_PRIORITY.map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => set({ priority: p })}
-                // Weight and border live on the BASE class, not on the selected
-                // state, so picking one cannot resize the pill and shuffle the
-                // row — the portal-wide layout-stability rule.
-                className={`rounded-lg border px-3 text-xs font-medium transition ${
-                  form.priority === p ? PRIORITY_ACTIVE[p] : `${PRIORITY_CHIPS[p]} hover:brightness-95`
-                } min-h-[32px]`}
-              >
-                {p}
-              </button>
-            ))}
+            {TASK_PRIORITY.map((p) => {
+              const colour = priorityColor(p);
+              const on = form.priority === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => set({ priority: p })}
+                  // Weight and border live on the BASE class, not on the selected
+                  // state, so picking one cannot resize the pill and shuffle the
+                  // row — the portal-wide layout-stability rule.
+                  className="min-h-[32px] inline-flex items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition"
+                  style={on
+                    ? { backgroundColor: colour.solid, borderColor: colour.solid, color: '#fff' }
+                    : tintStyle(colour, { dark })}
+                  aria-pressed={on}
+                >
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: on ? '#fff' : colour.solid }}
+                  />
+                  {p}
+                </button>
+              );
+            })}
           </div>
 
           {/* ── Points ───────────────────────────────────────────── */}
@@ -407,6 +480,84 @@ export default function AssignTaskModal({
                 each person earns this on finishing
                 {meta?.pointsArePaid ? '' : ' · scoring only, not paid'}
               </span>
+            </div>
+          )}
+
+          {/* ── Do you want the last word? ───────────────────────── */}
+          {/* On by default. When it is on, their "Complete" is a SUBMISSION —
+              the server coerces it (config/tasks.effectiveTarget) — and the row
+              waits in your review queue until you approve it or send it back. */}
+          <label className="flex items-start gap-2 text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={form.requiresApproval !== false}
+              onChange={(e) => set({ requiresApproval: e.target.checked })}
+              className="mt-0.5 rounded border-gray-300"
+              style={{ accentColor: 'var(--accent)' }}
+            />
+            <span>
+              {isRequest
+                ? 'I want to see the answer before this is closed off'
+                : 'I want to review this before it is marked done'}
+              <span className="block text-[11px] text-gray-400">
+                {form.requiresApproval !== false
+                  ? 'They hand it in, it waits in your review queue, and you approve it or send it back.'
+                  : 'Their Complete finishes it outright — nothing comes back to you.'}
+              </span>
+            </span>
+          </label>
+
+          {/* ── Delegate it straight away ────────────────────────── */}
+          {/* A manager who already knows the three pieces should not have to
+              assign the task, find it again and split it. The rows are the same
+              ones DelegateModal collects and they are POSTed to /split the
+              moment the task has an id — see the submit handler. */}
+          {!isRequest && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const opening = !showPieces;
+                  setShowPieces(opening);
+                  // Two rows, because one piece is not a split.
+                  if (opening && !pieces.length) {
+                    const team = (meta?.team?.direct || []).map(String);
+                    setPieces([emptyPiece(team), emptyPiece(team)]);
+                  }
+                }}
+                className="flex w-full items-center justify-between gap-2 text-left"
+              >
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                  <FiGitBranch size={12} /> Delegate it straight away
+                  {filledPieces(pieces).length > 0 && (
+                    <span className="font-normal text-gray-400">
+                      {filledPieces(pieces).length} piece{filledPieces(pieces).length === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[11px] font-medium text-gray-500">
+                  {showPieces ? 'Hide' : 'Split it up'}
+                </span>
+              </button>
+
+              {showPieces && (
+                <div className="mt-3 space-y-3">
+                  <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                    The pieces are cut as soon as the task is assigned, and
+                    <strong> you approve each one</strong> when it is handed in. What is not
+                    shared out stays with the people you assigned the task to.
+                  </p>
+                  <PieceEditor
+                    rows={pieces}
+                    onRows={setPieces}
+                    budget={Number(form.points) || 0}
+                    people={people.filter((p) => p.canAssign !== false)}
+                    defaultOpenTo={(meta?.team?.direct || []).map(String)}
+                    maxPieces={meta?.maxPieces || 50}
+                    remainderLabel="stays on the task"
+                  />
+                </div>
+              )}
             </div>
           )}
 

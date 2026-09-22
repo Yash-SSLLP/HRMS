@@ -19,6 +19,7 @@ const mongoose = require('mongoose');
 
 const c = require('../config/tasks');
 const r = require('../services/taskRecurrenceWorker');
+const engine = require('../services/taskEngine');
 const Task = require('../models/Task');
 
 let passed = 0;
@@ -44,9 +45,11 @@ const day = (s) => new Date(`${s}T12:00:00`);
 
 function testVocabulary() {
   console.log('\nStatus vocabulary');
-  // Twelve states collapsed to three; both older vocabularies still read.
-  ok('SUBMITTED → IN_PROGRESS', c.normaliseStatus('SUBMITTED'), 'IN_PROGRESS');
-  ok('UNDER_REVIEW → IN_PROGRESS', c.normaliseStatus('UNDER_REVIEW'), 'IN_PROGRESS');
+  // Twelve states collapsed to three, then a fourth came back for the review
+  // desk (2026-09-22). Both older vocabularies still read.
+  ok('SUBMITTED stays SUBMITTED', c.normaliseStatus('SUBMITTED'), 'SUBMITTED');
+  ok('UNDER_REVIEW → SUBMITTED', c.normaliseStatus('UNDER_REVIEW'), 'SUBMITTED');
+  ok('Review → SUBMITTED (pre-2026-09-17)', c.normaliseStatus('Review'), 'SUBMITTED');
   ok('BLOCKED → IN_PROGRESS', c.normaliseStatus('BLOCKED'), 'IN_PROGRESS');
   ok('APPROVED → COMPLETED', c.normaliseStatus('APPROVED'), 'COMPLETED');
   ok('DECLINED → CANCELLED', c.normaliseStatus('DECLINED'), 'CANCELLED');
@@ -60,6 +63,31 @@ function testVocabulary() {
   ok('a task is Completed', c.statusLabel('COMPLETED', c.KIND_TASK), 'Completed');
   ok('a request is Answered', c.statusLabel('COMPLETED', c.KIND_REQUEST), 'Answered');
   ok('a request is Withdrawn', c.statusLabel('CANCELLED', c.KIND_REQUEST), 'Withdrawn');
+  ok('a task in review', c.statusLabel('SUBMITTED', c.KIND_TASK), 'In review');
+  ok('a request whose answer is sent', c.statusLabel('SUBMITTED', c.KIND_REQUEST), 'Answer sent');
+
+  console.log('\nPriority');
+  ok('the three levels', c.TASK_PRIORITY, ['Urgent', 'Medium', 'Low']);
+  ok('High → Urgent', c.normalisePriority('High'), 'Urgent');
+  ok('Critical → Urgent', c.normalisePriority('Critical'), 'Urgent');
+  ok('urgent (any case) → Urgent', c.normalisePriority('urgent'), 'Urgent');
+  ok('Normal → Medium', c.normalisePriority('Normal'), 'Medium');
+  ok('nonsense → null', c.normalisePriority('banana'), null);
+
+  console.log('\nThe colour of a row');
+  // The brief's rule: pending wears its priority, finished wears green.
+  ok('an urgent pending task is red', c.accentFor({ status: 'PENDING', priority: 'Urgent' }).key, 'Urgent');
+  ok('a legacy High is red too', c.accentFor({ status: 'PENDING', priority: 'High' }).key, 'Urgent');
+  ok('a finished LOW task is GREEN, not grey',
+    c.accentFor({ status: 'COMPLETED', priority: 'Low' }).key, 'DONE');
+  ok('…and a finished urgent one is green as well',
+    c.accentFor({ status: 'COMPLETED', priority: 'Urgent' }).key, 'DONE');
+  ok('in review still wears its priority',
+    c.accentFor({ status: 'SUBMITTED', priority: 'Medium' }).key, 'Medium');
+  ok('a cancelled one is grey', c.accentFor({ status: 'CANCELLED', priority: 'Urgent' }).key, 'CANCELLED');
+  ok('every level has four hexes',
+    c.TASK_PRIORITY.every((p) => ['ink', 'bg', 'border', 'solid']
+      .every((k) => /^#[0-9A-F]{6}$/i.test(c.PRIORITY_COLORS[p][k]))), true);
 }
 
 // ===== 2. The lifecycle =====
@@ -159,7 +187,11 @@ async function testModel() {
   ok('one started', (await rollUp(['PENDING', 'IN_PROGRESS', 'PENDING'])).status, 'IN_PROGRESS');
   ok('one finished, two have not', (await rollUp(['COMPLETED', 'PENDING', 'PENDING'])).status, 'IN_PROGRESS');
   ok('everybody finished', (await rollUp(['COMPLETED', 'COMPLETED', 'COMPLETED'])).status, 'COMPLETED');
-  ok('legacy words normalise first', (await rollUp(['SUBMITTED', 'SUBMITTED', 'SUBMITTED'])).status, 'IN_PROGRESS');
+  // `SUBMITTED` is a CURRENT word again (2026-09-22), so the legacy check uses
+  // one that is genuinely retired. `BLOCKED` meant "not done yet" to everybody
+  // but the person holding it, which is IN_PROGRESS.
+  ok('legacy words normalise first', (await rollUp(['BLOCKED', 'BLOCKED', 'BLOCKED'])).status, 'IN_PROGRESS');
+  ok('everybody has handed in', (await rollUp(['SUBMITTED', 'SUBMITTED', 'SUBMITTED'])).status, 'SUBMITTED');
   ok('somebody taken off is ignored', (await rollUp(['CANCELLED', 'COMPLETED', 'COMPLETED'])).status, 'COMPLETED');
 
   const cancelled = await rollUp(['PENDING', 'PENDING']);
@@ -241,24 +273,112 @@ async function testAcceptance() {
 }
 
 async function testSubtasksAndFollowers() {
-  console.log('\nSubtasks');
-  const t = new Task({
-    title: 'x',
-    createdBy: C,
-    assignees: [{ user: A }],
-    subtasks: [
-      { title: 'open to anybody' },
-      { title: 'Bʼs piece', assignee: B, assigneeName: 'B' },
-      { title: 'done already', done: true },
+  console.log('\nPieces are tasks of their own, and points are a pool');
+  const parent = new Task({
+    title: 'x', createdBy: C, assignees: [{ user: A }], points: 100,
+  });
+  await parent.validate().catch(() => {});
+  ok('nothing handed out yet, so the whole pool is earned', parent.effectivePoints(), 100);
+
+  parent.distributedPoints = 60;
+  await parent.validate().catch(() => {});
+  ok('60 handed down leaves 40 on the parent', parent.effectivePoints(), 40);
+
+  // THE RULE THAT IS MONEY: the pieces can never be worth more than the task.
+  parent.distributedPoints = 500;
+  await parent.validate().catch(() => {});
+  ok('a distribution larger than the pool is clamped, not stored',
+    parent.distributedPoints, 100);
+  ok('…and the parent then earns nothing, never a negative', parent.effectivePoints(), 0);
+
+  console.log('\nSharing the points out');
+  const share = (items, budget) => engine.shareOut(items, budget);
+  ok('100 over three comes out WHOLE, not 33/33/33',
+    share([{}, {}, {}], 100), [34, 33, 33]);
+  ok('100 over four is even', share([{}, {}, {}, {}], 100), [25, 25, 25, 25]);
+  ok('an explicit figure is honoured and the rest shared',
+    share([{ points: 50 }, {}, {}], 100), [50, 25, 25]);
+  ok('nothing left over is 0 each, not a negative',
+    share([{ points: 100 }, {}], 100), [100, 0]);
+  ok('a split bigger than the pool is refused', (() => {
+    try { share([{ points: 80 }, { points: 80 }], 100); return 'allowed'; } catch { return 'refused'; }
+  })(), 'refused');
+
+  console.log('\nHanding it in, and the two answers');
+  ok('a doer\'s Complete becomes a submission',
+    c.effectiveTarget({ kind: 'TASK', requiresApproval: true, createdBy: C }, 'doer', 'COMPLETED', A),
+    'SUBMITTED');
+  ok('…unless the task needs no review',
+    c.effectiveTarget({ kind: 'TASK', requiresApproval: false, createdBy: C }, 'doer', 'COMPLETED', A),
+    'COMPLETED');
+  ok('…and never for the person who SET it',
+    c.effectiveTarget({ kind: 'TASK', requiresApproval: true, createdBy: A }, 'doer', 'COMPLETED', A),
+    'COMPLETED');
+  ok('a request is answered, not reviewed',
+    c.effectiveTarget({ kind: 'REQUEST', requiresApproval: true, createdBy: C }, 'doer', 'COMPLETED', A),
+    'COMPLETED');
+  ok('an assigner completing is not redirected',
+    c.effectiveTarget({ kind: 'TASK', requiresApproval: true, createdBy: C }, 'assigner', 'COMPLETED', C),
+    'COMPLETED');
+  ok('SUBMITTED → COMPLETED is the assigner\'s',
+    c.transitionFor('SUBMITTED', 'COMPLETED').by, ['assigner']);
+  ok('SUBMITTED → IN_PROGRESS (sent back) is the assigner\'s',
+    c.transitionFor('SUBMITTED', 'IN_PROGRESS').by, ['assigner']);
+  ok('a doer cannot approve their own submission',
+    c.transitionFor('SUBMITTED', 'COMPLETED').by.includes('doer'), false);
+
+  console.log('\nIn review is not overdue');
+  const past = new Date(Date.now() - 86400000);
+  ok('an unstarted task past its deadline IS overdue',
+    c.isOverdue({ status: 'PENDING', dueDate: past }), true);
+  // Handed in on Friday, read on Monday: that is the tray's delay, not the
+  // doer's, and painting it red would blame the wrong person.
+  ok('one that has been handed in is NOT',
+    c.isOverdue({ status: 'SUBMITTED', dueDate: past }), false);
+
+  console.log('\nThe roll-up knows the review desk');
+  const two = new Task({
+    title: 'x', createdBy: C,
+    assignees: [
+      { user: A, status: 'SUBMITTED', submittedAt: new Date() },
+      { user: B, status: 'IN_PROGRESS' },
     ],
   });
-  await t.validate().catch(() => {});
-  ok('progress counts the ticked ones', t.subtaskProgress(), { done: 1, total: 3 });
-  ok('B owns a piece', t.ownsSubtask(B), true);
-  ok('C owns none', t.ownsSubtask(C), false);
-  // The piece owner must be able to SEE the task, or it is invisible to the one
-  // person who can do it.
-  ok('a subtask owner is in the audience', t.audience().includes(String(B)), true);
+  await two.validate().catch(() => {});
+  ok('one handed in, one still working → still in progress', two.status, 'IN_PROGRESS');
+
+  two.assignees[1].status = 'SUBMITTED';
+  two.assignees[1].submittedAt = new Date();
+  await two.validate().catch(() => {});
+  ok('both handed in → in review', two.status, 'SUBMITTED');
+
+  two.assignees[0].status = 'COMPLETED';
+  two.assignees[0].completedAt = new Date();
+  await two.validate().catch(() => {});
+  ok('one approved, one still in the tray → still in review', two.status, 'SUBMITTED');
+
+  console.log('\nProgress');
+  const prog = new Task({
+    title: 'x', createdBy: C,
+    assignees: [{ user: A, progress: 40 }, { user: B, progress: 80 }],
+  });
+  await prog.validate().catch(() => {});
+  ok('the task shows the mean of its people', prog.progress, 60);
+
+  prog.assignees[0].status = 'SUBMITTED';
+  prog.assignees[0].submittedAt = new Date();
+  await prog.validate().catch(() => {});
+  ok('a handed-in row counts as 100 however it was left', prog.progress, 90);
+
+  // A parent's bar is the engine's job (recomputeParent), from its pieces —
+  // overwriting it from the assignee rows would reset a 70%-done delegated task
+  // to zero on every save.
+  const split = new Task({
+    title: 'x', createdBy: C, assignees: [{ user: A, progress: 0 }],
+    childCount: 2, progress: 70,
+  });
+  await split.validate().catch(() => {});
+  ok('a task WITH pieces keeps the figure its pieces gave it', split.progress, 70);
 
   console.log('\nWhoever first had it keeps hearing about it');
   const handed = new Task({ title: 'x', createdBy: C, assignees: [{ user: A }] });

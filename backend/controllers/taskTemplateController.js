@@ -23,7 +23,7 @@ const Task = require('../models/Task');
 const access = require('../services/taskAccess');
 const recurrence = require('../services/taskRecurrenceWorker');
 const {
-  TASK_PRIORITY, DEFAULT_PRIORITY, MAX_TASK_POINTS, FREQUENCIES, FREQUENCY,
+  TASK_PRIORITY, DEFAULT_PRIORITY, normalisePriority, MAX_TASK_POINTS, FREQUENCIES, FREQUENCY,
 } = require('../config/tasks');
 const {
   cleanReminders, cleanRepeat, cleanLinks, personName,
@@ -41,7 +41,12 @@ function templateFields(body) {
   if (body.title !== undefined) out.title = String(body.title).trim();
   if (body.description !== undefined) out.description = String(body.description).trim();
   if (body.category !== undefined) out.category = String(body.category).trim();
-  if (body.priority !== undefined && TASK_PRIORITY.includes(body.priority)) out.priority = body.priority;
+  // Normalised, not whitelisted: a template saved before 2026-09-22 carries
+  // `High`, and silently dropping it would quietly demote every urgent template.
+  if (body.priority !== undefined) {
+    const p = normalisePriority(body.priority);
+    if (p) out.priority = p;
+  }
   if (body.points !== undefined) {
     const p = Number(body.points);
     if (Number.isFinite(p) && p >= 0) out.points = Math.min(MAX_TASK_POINTS, Math.round(p));
@@ -282,7 +287,10 @@ const updateRecurring = asyncHandler(async (req, res) => {
   if (b.title !== undefined) schedule.title = String(b.title).trim();
   if (b.description !== undefined) schedule.description = String(b.description).trim();
   if (b.category !== undefined) schedule.category = String(b.category).trim();
-  if (b.priority !== undefined && TASK_PRIORITY.includes(b.priority)) schedule.priority = b.priority;
+  if (b.priority !== undefined) {
+    const p = normalisePriority(b.priority);
+    if (p) schedule.priority = p;
+  }
   if (b.points !== undefined) {
     const p = Number(b.points);
     if (Number.isFinite(p) && p >= 0) schedule.points = Math.min(MAX_TASK_POINTS, Math.round(p));

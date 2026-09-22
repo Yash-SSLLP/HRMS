@@ -84,7 +84,23 @@ async function award(task, assignee, actor) {
   if (!task || !assignee) return null;
   if (task.kind !== KIND_TASK) return null;            // a request is not work
   if (assignee.pointsAwardedAt) return null;           // already paid for
-  const points = Number(task.points) || 0;
+
+  /**
+   * WHAT IS LEFT ON THIS TASK, not what it started with.
+   *
+   * Changed 2026-09-22, when a task became splittable. `points` is the pool;
+   * whatever has been handed down to the pieces belongs to the people doing
+   * them. A manager who split 100 points three ways earns nothing for the
+   * parent — correctly, because they did not do it — and one who handed out 60
+   * earns the 40 they kept.
+   *
+   * Reading `task.points` here instead would pay the pool out TWICE: once to
+   * the pieces and once again to the parent, which on a three-way split is 200
+   * points of real money for 100 points of work.
+   */
+  const points = typeof task.effectivePoints === 'function'
+    ? task.effectivePoints()
+    : Math.max(0, (Number(task.points) || 0) - (Number(task.distributedPoints) || 0));
   if (points <= 0) return null;
 
   // Always record the figure, whether or not it becomes money.

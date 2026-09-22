@@ -196,6 +196,16 @@ const settingSchema = new mongoose.Schema(
       // default a person has to be able to change; another incentive will bring
       // its own per-unit yield.
       pointsPerSheet: { type: Number, default: 4, min: 0 },
+      // WHAT COMES OFF a team's gross before it is credited, as a percentage.
+      // The company's cut; it is settled outside the portal, so nobody here is
+      // paid out of it (models/IncentiveEntry explains the arithmetic).
+      //
+      // DECLARING IT IS THE POINT. Its predecessor `nonRollingSharePct` was
+      // never in this schema, so mongoose's default strict mode dropped every
+      // write of it and the settings card could only ever show the fallback 30
+      // back to whoever "changed" it. Frozen onto each day when the day is
+      // recorded, so editing it never restates a day already saved.
+      deductionPct: { type: Number, default: 30, min: 0, max: 100 },
       // NOTE: there is deliberately no department setting. The Boys module is
       // the BOYS department's incentive and only theirs — another department
       // gets its own tab rather than a dropdown here (user decision

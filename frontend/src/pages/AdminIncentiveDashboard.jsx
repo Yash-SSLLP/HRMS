@@ -408,6 +408,12 @@ export default function AdminIncentiveDashboard() {
                   A date range counts a billing month whole, because the billing system settles per
                   month: {billingMonths.join(', ')} {billingMonths.length === 1 ? 'is' : 'are'} in the
                   billing figures in full.
+                  {/* Except the month counting began in, which is a part month
+                      everywhere — saying "in full" of it would be untrue. */}
+                  {billing?.startedOn && billingMonths.includes(billing.startedOn.slice(0, 7)) ? (
+                    <> Billing points are counted from {billing.startedOn}, so{' '}
+                      {billing.startedOn.slice(0, 7)} covers that day onwards only.</>
+                  ) : null}
                 </p>
               )}
 
@@ -469,7 +475,6 @@ export default function AdminIncentiveDashboard() {
                             {/* The other way a day is earned: a share of a team
                                 they were not on. Without this the Days and the
                                 Sheet Rolled columns read as contradicting. */}
-                            {p.nonRollingDays ? <div className="text-[11px] text-gray-400">non-rolling {p.nonRollingDays}</div> : null}
                           </td>
                           <td className="px-4 py-3 text-right tabular-nums">{p.teamPoints ? points(p.teamPoints) : '—'}</td>
                           <td className="px-4 py-3 text-right tabular-nums">

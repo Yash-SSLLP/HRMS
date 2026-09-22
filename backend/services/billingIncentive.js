@@ -40,7 +40,9 @@
  * Configure via env (see .env.example):
  *   BILLING_INCENTIVE_URL     the endpoint; defaults to the live one
  *   BILLING_INCENTIVE_KEY     the shared key — REQUIRED; unset = tab switched off
- *   BILLING_INCENTIVE_FROM    first month with data, 'YYYY-MM' (default 2026-03)
+ *   BILLING_INCENTIVE_FROM    where counting starts (default 2026-03), either
+ *                             'YYYY-MM' for a whole month or 'YYYY-MM-DD' to
+ *                             start partway through one — see below
  */
 
 const DEFAULT_URL = 'https://sequence.salestracker.in/api/external/incentive';
@@ -89,10 +91,68 @@ function isConfigured() {
   return Boolean(process.env.BILLING_INCENTIVE_KEY);
 }
 
+/** 'YYYY-MM-DD' for a Date, in local time — the same clock as monthKey. */
+const dayKey = (d) => `${monthKey(d)}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** The last day of a 'YYYY-MM', as 'YYYY-MM-DD'. Day 0 of the next month. */
+function lastDayOf(month) {
+  const [y, m] = month.split('-').map(Number);
+  return `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Where counting starts, as the billing system has to be asked for it.
+ *
+ * STARTING PARTWAY THROUGH A MONTH is a real thing to want — the company began
+ * counting billing points on a date, not at a month boundary — and the upstream
+ * API does support it: `from`/`to` take days. What it does NOT do is shrink the
+ * TARGET to match. A person's band is worked out against a whole month's target
+ * (averaged from `lookbackMonths`), so three weeks of work is measured against
+ * four weeks' bar, and somebody who would have cleared the mid band over the
+ * full month may sit in the base band over the part of it that is counted.
+ *
+ * That is the price of a mid-month start and it is not a bug to be worked
+ * around here — the billing system is the authority on what it pays, and
+ * inventing a pro-rated target in the portal would be a second answer to that
+ * question. It is disclosed on the tab instead, which is why `firstDay()` is
+ * exported.
+ *
+ * @returns {{month: string, day: string|null}} day is 'YYYY-MM-DD' or null for
+ *   a whole month
+ */
+function startBound() {
+  const raw = String(process.env.BILLING_INCENTIVE_FROM || '').trim();
+  const dated = raw.match(/^(\d{4}-\d{2})-(\d{2})$/);
+  if (dated) {
+    const [month, dd] = [dated[1], Number(dated[2])];
+    // A date that does not exist ('2026-09-45', '2026-02-30') is a typo in the
+    // env, and a typo must not silently become a different day: fall back to
+    // the whole month, which is the safe reading of "start in September".
+    const real = dd >= 1 && `${month}-${dated[2]}` <= lastDayOf(month);
+    // The 1st IS the whole month. Spelling it as a range would buy nothing and
+    // would cost the band re-rating described above.
+    return { month, day: real && dd > 1 ? raw : null };
+  }
+  return { month: /^\d{4}-\d{2}$/.test(raw) ? raw : DEFAULT_FROM, day: null };
+}
+
 /** The first month the billing system has data for, as 'YYYY-MM'. */
 function firstMonth() {
-  const raw = String(process.env.BILLING_INCENTIVE_FROM || '').trim();
-  return /^\d{4}-\d{2}$/.test(raw) ? raw : DEFAULT_FROM;
+  return startBound().month;
+}
+
+/**
+ * The first DAY counted, when counting starts partway through a month.
+ *
+ * Null when the start is a whole month, which is the ordinary case. A screen
+ * that shows the first month must say so when this is set — its figures cover
+ * part of a month, and a total that looks like a September total but is really
+ * a 10th-of-September-onwards total is exactly the kind of quietly-wrong number
+ * this module refuses to print.
+ * @returns {string|null} 'YYYY-MM-DD'
+ */
+function firstDay() {
+  return startBound().day;
 }
 
 /**
@@ -122,11 +182,17 @@ function monthsUpTo(upTo) {
 /**
  * Every month a date range touches, clamped to the months that have data.
  *
- * A BILLING MONTH CANNOT BE SPLIT. The billing system settles per calendar month
- * — the bands are worked out against a month's volume — so there is no honest
- * way to answer "the first ten days of September". A range that covers part of a
- * month therefore counts that month WHOLE, and every caller that uses this says
- * so on screen rather than quietly reporting a figure that looks precise.
+ * A BILLING MONTH IS NOT SPLIT TO ORDER. The billing system settles per calendar
+ * month — the bands are worked out against a month's volume — so there is no
+ * honest way to answer "the first ten days of September" for an arbitrary range.
+ * A range that covers part of a month therefore counts that month WHOLE, and
+ * every caller that uses this says so on screen rather than quietly reporting a
+ * figure that looks precise.
+ *
+ * The ONE exception is the month counting starts in, when BILLING_INCENTIVE_FROM
+ * names a day: that bound is a floor on what the portal counts AT ALL, not a
+ * filter one screen applies, so every read of that month is the same part month
+ * and the two figures can never disagree. See startBound() for what it costs.
  *
  * @param {Date|null} from - null means "from the first month with data"
  * @param {Date|null} to - null means "up to the month we are in"
@@ -134,9 +200,15 @@ function monthsUpTo(upTo) {
  */
 function monthsBetween(from, to) {
   const all = monthsUpTo(to ? monthKey(new Date(to)) : undefined);
-  if (!from) return all;
+  const bound = startBound();
+  // A window that ENDS before counting began touches no billing data at all.
+  // Without this the first month would still be counted, and would answer with
+  // its whole bounded span — figures from days after the ones asked about.
+  const endsBefore = bound.day && to && dayKey(new Date(to)) < bound.day;
+  const within = endsBefore ? all.filter((m) => m !== bound.month) : all;
+  if (!from) return within;
   const start = monthKey(new Date(from));
-  return all.filter((m) => m >= start);
+  return within.filter((m) => m >= start);
 }
 
 /** How long an answer for this month may be reused. */
@@ -173,16 +245,34 @@ async function fetchMonth(month, opts = {}) {
   if (!isConfigured()) throw new Error('The billing incentive feed is not configured.');
   if (!/^\d{4}-\d{2}$/.test(String(month))) throw new Error('Ask for a month as YYYY-MM.');
 
+  // The one month that may be asked for as a part month. Everything else is a
+  // whole month, so this is null for all but the first.
+  const bound = startBound();
+  const partial = bound.day && month === bound.month ? bound.day : null;
+  // Keyed with the bound, not just the month: a cached whole September and a
+  // cached 10th-onward September are different answers to different questions,
+  // and a process that saw both must never hand back the wrong one.
+  const key = partial ? `${month}@${partial}` : month;
+
   if (!opts.force) {
-    const hit = cache.get(month);
+    const hit = cache.get(key);
     if (hit && Date.now() - hit.at < ttlFor(month)) return hit.data;
-    const running = inFlight.get(month);
+    const running = inFlight.get(key);
     if (running) return running;
   }
 
   const base = String(process.env.BILLING_INCENTIVE_URL || DEFAULT_URL).trim() || DEFAULT_URL;
   const url = new URL(base);
-  url.searchParams.set('month', month);
+  if (partial) {
+    // `month` is deliberately NOT sent alongside these. The billing system gives
+    // `month` precedence over `from`/`to`, so a request carrying both answers
+    // the whole month and the day bound is silently ignored — which would look
+    // exactly like it had worked.
+    url.searchParams.set('from', partial);
+    url.searchParams.set('to', lastDayOf(month));
+  } else {
+    url.searchParams.set('month', month);
+  }
   // In the query string because that is the only place this API takes it. It is
   // a server-to-server call, so the key never reaches a browser.
   url.searchParams.set('key', process.env.BILLING_INCENTIVE_KEY);
@@ -196,12 +286,12 @@ async function fetchMonth(month, opts = {}) {
     if (!res.ok || !json) {
       throw new Error(`The billing system answered ${res.status} for ${month}.`);
     }
-    const data = normaliseMonth(month, json);
-    cache.set(month, { at: Date.now(), data });
+    const data = normaliseMonth(month, json, partial);
+    cache.set(key, { at: Date.now(), data });
     return data;
-  })().finally(() => inFlight.delete(month));
+  })().finally(() => inFlight.delete(key));
 
-  inFlight.set(month, run);
+  inFlight.set(key, run);
   return run;
 }
 
@@ -209,9 +299,11 @@ async function fetchMonth(month, opts = {}) {
  * The upstream payload, reduced to what the portal shows and trusts.
  * @param {string} month - the month we asked for; kept even when the answer omits it
  * @param {Object} json - the raw upstream body
+ * @param {string|null} [partial] - the day this month was counted from, when it
+ *   was asked for as a part month
  * @returns {Object} normalised month
  */
-function normaliseMonth(month, json) {
+function normaliseMonth(month, json, partial = null) {
   const num = (v) => {
     const n = Number(String(v ?? '').replace(/,/g, ''));
     return Number.isFinite(n) ? n : 0;
@@ -219,6 +311,15 @@ function normaliseMonth(month, json) {
   const rows = Array.isArray(json.people) ? json.people : [];
   return {
     month: String(json.month || month),
+    // Set only for a month counted from a day rather than from the 1st, and
+    // carried all the way to the screen so the tab can name the span it is
+    // really showing. `daysWithData` is the billing system's own count of the
+    // days it actually holds figures for inside that span.
+    range: partial ? {
+      from: json.range?.from || partial,
+      to: json.range?.to || lastDayOf(month),
+      daysWithData: num(json.range?.daysWithData),
+    } : null,
     generatedAt: json.generatedAt || null,
     // 'upload' or whatever the billing system calls where the numbers came from
     // — worth showing, because a month with no data at all answers differently.
@@ -492,6 +593,7 @@ function attachToRoster(byCode, roster, codeless = []) {
 module.exports = {
   isConfigured,
   firstMonth,
+  firstDay,
   monthsUpTo,
   monthsBetween,
   fetchMonth,
