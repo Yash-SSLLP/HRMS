@@ -65,31 +65,6 @@ const taskUpload = createUpload({
 
 router.use(protect);
 
-/* ── TEMPORARY DIAGNOSTIC — REMOVE ──────────────────────────────────────────
-   Added 2026-09-22 to catch a reported "That task no longer exists." that
-   cannot be reproduced from a script: every task opens fine for all twelve
-   admin accounts over real HTTP, so the failing request is some OTHER call the
-   page makes. This records any task request that does not return 2xx, with the
-   path, the account and the message, so one click in the browser says exactly
-   which endpoint it is. Writes to backend/logs/task-errors.log and nothing
-   else; delete this block once the cause is known. */
-router.use((req, res, next) => {
-  res.on('finish', () => {
-    if (res.statusCode < 400) return;
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const dir = path.join(__dirname, '..', 'logs');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.appendFileSync(path.join(dir, 'task-errors.log'),
-        `${new Date().toISOString()}  ${res.statusCode}  ${req.method} ${req.originalUrl}`
-        + `  user=${req.user?._id || '?'} (${req.user?.role || '?'})\n`);
-    } catch { /* a diagnostic must never break a request */ }
-  });
-  next();
-});
-/* ── end TEMPORARY DIAGNOSTIC ───────────────────────────────────────────── */
-
 /* ============================================================
    Reference data — what the assign form needs
    ============================================================ */

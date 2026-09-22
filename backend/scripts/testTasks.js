@@ -380,6 +380,40 @@ async function testSubtasksAndFollowers() {
   await split.validate().catch(() => {});
   ok('a task WITH pieces keeps the figure its pieces gave it', split.progress, 70);
 
+  console.log('\nA row read back from Mongo is normalised');
+  /**
+   * `Task.hydrate` is the one way to exercise post('init') without a database:
+   * it builds a document from a plain object exactly as a query would, hooks
+   * and all. `new Task({...})` does NOT fire it, which is why this reads the
+   * way it does.
+   */
+  const stored = Task.hydrate({
+    _id: uid(), title: 'x', createdBy: C, status: 'ASSIGNED', priority: 'High',
+    assignees: [{ user: A, status: 'ASSIGNED' }],
+  });
+  ok('a stored ASSIGNED reads as PENDING', stored.status, 'PENDING');
+  ok('...on the assignee row too', stored.assignees[0].status, 'PENDING');
+  ok('a stored High reads as Urgent', stored.priority, 'Urgent');
+  // The engine's optimistic claim matches the STORED word, so it has to survive.
+  ok('the raw word is kept for the claim', stored.$locals.rawStatus, 'ASSIGNED');
+  ok('...so the claim still matches what is in Mongo',
+    c.spellingsOf(stored.status).includes('ASSIGNED'), true);
+  // The whole point: TRANSITIONS is keyed on the current words only.
+  ok('a legacy row now has legal moves',
+    (c.TRANSITIONS[stored.status] || []).length > 0, true);
+  ok('...which it did NOT have before', (c.TRANSITIONS.ASSIGNED || []).length, 0);
+
+  const doneRow = Task.hydrate({ _id: uid(), title: 'x', createdBy: C, status: 'Done' });
+  ok('the pre-2026-09-17 Done reads as COMPLETED', doneRow.status, 'COMPLETED');
+
+  console.log('\nAn aggregation cannot call normaliseStatus');
+  const stage = c.normaliseStatusStage();
+  const branches = stage.$addFields.status.$switch.branches;
+  ok('every legacy word has a branch',
+    branches.length, Object.keys(c.LEGACY_STATUS_MAP).length);
+  ok('ASSIGNED is rewritten to PENDING',
+    branches.find((b) => b.case.$eq[1] === 'ASSIGNED').then, 'PENDING');
+
   console.log('\nWhoever first had it keeps hearing about it');
   const handed = new Task({ title: 'x', createdBy: C, assignees: [{ user: A }] });
   await handed.validate().catch(() => {});

@@ -53,14 +53,14 @@ function toFormData(body = {}, { voice, files } = {}) {
 /** The list, its counters, and the paging — one call. */
 export const listTasks = (params = {}) => api.get('/tasks', { params }).then((r) => r.data);
 
-/** The counters alone, for a badge. */
+/** The counters alone, for a badge — or beside a board with a tile filter on. */
 export const taskCounters = (params = {}) => api.get('/tasks/counters', { params }).then((r) => r.data);
+
+/** The four columns, already grouped and capped by the server — see TaskBoard. */
+export const taskBoard = (params = {}) => api.get('/tasks/board', { params }).then((r) => r.data);
 
 /** One task, its whole feed, and what the caller may do to it. */
 export const getTask = (id) => api.get(`/tasks/${id}`).then((r) => r.data);
-
-/** More of the feed, for paging it. */
-export const taskFeed = (id, params = {}) => api.get(`/tasks/${id}/updates`, { params }).then((r) => r.data);
 
 /** People, categories, defaults — everything the assign form needs, in one call. */
 export const taskMeta = () => api.get('/tasks/meta').then((r) => r.data);
@@ -234,8 +234,11 @@ export const claimTask = (id) => api.post(`/tasks/${id}/claim`).then((r) => r.da
 export const transferTask = (id, to, reason) =>
   api.post(`/tasks/${id}/transfer`, { to, reason }).then((r) => r.data);
 
-/** The pieces under a parent, each with its own `can`. */
-export const taskChildren = (id) => api.get(`/tasks/${id}/children`).then((r) => r.data);
+/* No wrapper for GET /tasks/:id/children: `getTask` already returns the pieces
+ * with the parent, and ChildTaskList draws them from that one answer. Same for
+ * GET /tasks/:id/updates — the feed comes back with the task. A wrapper nothing
+ * calls is a wrapper that drifts out of step with the route it names, which is
+ * why this file keeps only the calls the module actually makes. */
 
 // ===== Categories =====
 
@@ -270,7 +273,6 @@ export const listTemplates = () => api.get('/tasks/templates').then((r) => r.dat
 export const createTemplate = (body) => api.post('/tasks/templates', body).then((r) => r.data);
 export const copyTemplate = (id) => api.post(`/tasks/templates/${id}/copy`).then((r) => r.data);
 export const templatePrefill = (id) => api.get(`/tasks/templates/${id}/prefill`).then((r) => r.data);
-export const updateTemplate = (id, body) => api.patch(`/tasks/templates/${id}`, body).then((r) => r.data);
 export const deleteTemplate = (id) => api.delete(`/tasks/templates/${id}`).then((r) => r.data);
 
 // ===== Repeating schedules =====
@@ -278,7 +280,11 @@ export const deleteTemplate = (id) => api.delete(`/tasks/templates/${id}`).then(
 export const listRecurring = () => api.get('/tasks/recurring').then((r) => r.data);
 export const updateRecurring = (id, body) => api.patch(`/tasks/recurring/${id}`, body).then((r) => r.data);
 export const deleteRecurring = (id) => api.delete(`/tasks/recurring/${id}`).then((r) => r.data);
-export const runRecurringNow = (id) => api.post(`/tasks/recurring/${id}/run`).then((r) => r.data);
+
+/* PATCH /tasks/templates/:id and POST /tasks/recurring/:id/run answer on the
+ * server but have no button in this portal — a template is copied and edited as
+ * a task, and a schedule is left to its worker. Their wrappers are gone with
+ * them; add one back beside the button that needs it. */
 
 // ===== Files =====
 

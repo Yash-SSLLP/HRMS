@@ -31,7 +31,7 @@ const Task = require('../models/Task');
 const TaskUpdate = require('../models/TaskUpdate');
 const {
   STATUS, ACCEPTANCE, transitionFor, effectiveTarget, isTerminal, statusLabel, KIND_TASK,
-  MAX_SUBTASKS, MAX_SPLIT_DEPTH, clampProgress, normalisePriority,
+  MAX_SUBTASKS, MAX_SPLIT_DEPTH, clampProgress, normalisePriority, spellingsOf,
   EXTENSION_STATUS, DEFAULT_PRIORITY,
 } = require('../config/tasks');
 const access = require('./taskAccess');
@@ -159,8 +159,14 @@ async function move({ taskId, user, to, note = '', voiceNote = null, files = [],
   // A conditional update on the CURRENT status: if another request has already
   // moved this task, the update matches nothing and we stop. Cheaper and more
   // honest than re-reading and comparing, which still leaves a window.
+  //
+  // MATCHED ON EVERY SPELLING, not on `from`. The document arrives NORMALISED
+  // (models/Task's post('init')), so `from` is 'PENDING' while the row in Mongo
+  // may still say 'ASSIGNED' — and 51 of 61 live rows do. Comparing the two
+  // would match nothing and report a conflict that had not happened, turning a
+  // fix for one bug into a different one.
   const claimed = await Task.updateOne(
-    { _id: task._id, status: from },
+    { _id: task._id, status: { $in: spellingsOf(from) } },
     { $set: { stateNote: said.slice(0, 1000) || task.stateNote } }
   );
   if (claimed.matchedCount === 0) {
@@ -168,7 +174,27 @@ async function move({ taskId, user, to, note = '', voiceNote = null, files = [],
   }
 
   // ===== Apply =====
-  const rows = wholeTask ? (task.assignees || []) : [mine];
+  /**
+   * WHOSE ROWS MOVE — and who is left out of a whole-task move.
+   *
+   * A whole-task move used to hit EVERY assignee row, including somebody who
+   * had DECLINED the job. Completing such a task therefore credited the points
+   * to the person who refused it, and those points settle in rupees
+   * (services/taskPoints). The roll-up has excluded refusers since 2026-09-21
+   * for the same reason — "a refusal must not hold the roll-up open" — and this
+   * is the other half of that rule, which was missed. (2026-09-22.)
+   *
+   * A refuser is still moved by a CANCELLATION: calling a task off is the
+   * assigner closing the whole row, and leaving one person on a task nobody is
+   * doing is the state that rule exists to prevent. Nothing is credited for a
+   * cancellation, so there is no money in that path.
+   */
+  const everyone = task.assignees || [];
+  const rows = wholeTask
+    ? (to === STATUS.CANCELLED
+      ? everyone
+      : everyone.filter((a) => a.acceptance !== ACCEPTANCE.REJECTED))
+    : [mine];
   const awarded = [];
 
   for (const row of rows) {

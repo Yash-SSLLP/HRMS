@@ -1052,6 +1052,13 @@ This cannot be undone.`,
 
   const exitedCount = useMemo(() => profiles.filter(hasLeft).length, [profiles]);
 
+  // How many people the CURRENT tab holds — the denominator the row counter
+  // under the filters measures against. Counting both tabs is what made the
+  // Working tab read "45 of 50" with nothing filtered at all, contradicting the
+  // tab pill directly above it, because "X of Y" is this page's way of saying a
+  // filter is narrowing the list.
+  const tabTotal = tab === 'exited' ? exitedCount : profiles.length - exitedCount;
+
   const visibleProfiles = useMemo(() => {
     const t = query.trim().toLowerCase();
     const matched = profiles.filter((p) => {
@@ -1366,9 +1373,9 @@ This cannot be undone.`,
             )}
             <span className="text-xs text-gray-500 whitespace-nowrap">
               {loading ? 'Loading…'
-                : visibleProfiles.length === profiles.length
-                  ? `${profiles.length} ${profiles.length === 1 ? 'profile' : 'profiles'}`
-                  : `${visibleProfiles.length} of ${profiles.length}`}
+                : visibleProfiles.length === tabTotal
+                  ? `${tabTotal} ${tabTotal === 1 ? 'profile' : 'profiles'}`
+                  : `${visibleProfiles.length} of ${tabTotal}`}
             </span>
           </div>
         </div>

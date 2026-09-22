@@ -445,14 +445,36 @@ async function runInterviews(dateStr, activeIds) {
   console.log(`Morning digest: ${items.length} interview(s) notified.`);
 }
 
-/** Open tasks due today → nudge the assignee. */
+/**
+ * Open tasks due today → nudge the assignee.
+ *
+ * REWRITTEN 2026-09-22, after this threw "Cannot populate path `project`". It
+ * was written against the task module of two rewrites ago and had three faults,
+ * only the first of which announced itself:
+ *
+ *  1. `.populate('project', 'name')` — `Task.project` went with the workflow
+ *     builder. The nearest thing a task now has is its CATEGORY, which is plain
+ *     text on the row and needs no join at all.
+ *  2. `status: { $ne: 'Done' }` — `Done` is the vocabulary from BEFORE
+ *     2026-09-17. Nothing stores it, so the filter excluded nothing: the digest
+ *     was nudging people about work they had finished or that had been called
+ *     off. The statuses are asked for by name now, through `spellingsOf`, which
+ *     also covers the legacy words un-migrated rows still carry.
+ *  3. `t.status` was printed raw, so a notification said `IN_PROGRESS`.
+ *
+ * SUBMITTED is deliberately not nudged: they handed it in, and chasing somebody
+ * for work sitting in somebody else's tray is the one reminder guaranteed to
+ * annoy. Archived tasks are excluded, which the old query also forgot.
+ */
 async function runTaskDeadlines(dateStr, activeIds) {
   const [start, end] = istDayRange(dateStr);
+  const { spellingsOf, statusLabel, STATUS, KIND_REQUEST } = require('../config/tasks');
   const tasks = await Task.find({
     dueDate: { $gte: start, $lte: end },
-    status: { $ne: 'Done' },
+    status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
     assignedTo: { $ne: null },
-  }).populate('project', 'name');
+    archived: { $ne: true },
+  });
   if (!tasks.length) return;
   if (!(await claim('task', dateStr))) return;
 
@@ -460,16 +482,18 @@ async function runTaskDeadlines(dateStr, activeIds) {
   let sent = 0;
   for (const t of tasks) {
     if (!active.has(String(t.assignedTo))) continue;
+    const label = statusLabel(t.status, t.kind);
     const bits = [
-      t.project?.name || null,
+      t.category || null,
       t.priority && t.priority !== 'Medium' ? `${t.priority} priority` : null,
-      t.status !== 'Todo' ? t.status : null,
+      // "Pending" adds nothing to "due today"; anything else does.
+      label && t.status !== STATUS.PENDING ? label : null,
     ].filter(Boolean);
     await notify({
       recipient: t.assignedTo,
       type: 'task',
       audience: 'all',
-      title: `⏳ Task due today: ${t.title}`,
+      title: `⏳ ${t.kind === KIND_REQUEST ? 'Request' : 'Task'} due today: ${t.title}`,
       body: bits.join(' · ') || 'Due today.',
       link: '/employee/tasks',
     });

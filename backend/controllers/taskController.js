@@ -49,6 +49,7 @@ const {
   normalisePriority, LEGACY_PRIORITY_MAP, PRIORITY_COLORS, DONE_COLOR, CANCELLED_COLOR,
   accentFor, PRIORITY_RANK, BOARD_COLUMNS, SORTS, SORT_KEYS, DEFAULT_SORT,
   PROGRESS_STEPS, MAX_SUBTASKS, EXTENSION_STATUS, clampProgress,
+  normaliseStatus, spellingsOf, normaliseStatusStage,
 } = require('../config/tasks');
 
 // ===== Small shared helpers =====
@@ -164,8 +165,10 @@ async function buildQuery(req, overrides = {}) {
     and.push({ priority: { $in: [...prios, ...legacy] } });
   }
 
+  // Expanded to every spelling, the same way the priority filter above is: a
+  // filter chip saying "Pending" must match the rows that say ASSIGNED.
   const states = listParam(status).filter((s) => TASK_STATUS.includes(s));
-  if (states.length) and.push({ status: { $in: states } });
+  if (states.length) and.push({ status: { $in: spellingsOf(...states) } });
 
   /**
    * THE PIECES, in or out.
@@ -190,7 +193,10 @@ async function buildQuery(req, overrides = {}) {
   // its deadline. Asking for it alongside `status=COMPLETED` correctly returns
   // nothing, which is the honest answer.
   if (overdue === 'true' || overdue === '1') {
-    and.push({ status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] }, dueDate: { $lt: new Date() } });
+    and.push({
+      status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
+      dueDate: { $lt: new Date() },
+    });
   }
 
   // The In Time / Delayed split, for when somebody clicks one of those two
@@ -247,6 +253,11 @@ async function countersFor(filter) {
 
   const rows = await Task.aggregate([
     { $match: filter },
+    // Rewrite the legacy words BEFORE anything compares them, or a row saying
+    // ASSIGNED lands in `total` and in none of the five buckets — and the
+    // boxes stop summing to the total, which is the one property this row
+    // documents and depends on.
+    normaliseStatusStage(),
     {
       $group: {
         _id: null,
@@ -282,6 +293,18 @@ async function countersFor(filter) {
   };
 }
 
+/**
+ * The fields `taskAccess.canSee` reads — every one of them.
+ *
+ * A `.select()` that omits one does not make the check stricter, it makes it
+ * WRONG: the field comes back undefined and the person it would have matched is
+ * refused. Three queries were missing `approver`, `openTo` and
+ * `originalAssignees`, so a delegator — who becomes exactly those — got a 403
+ * on the voice note of a task they had handed on. (2026-09-22.)
+ */
+const VISIBILITY_FIELDS = 'createdBy approver assignees assignedTo loopUsers openTo '
+  + 'originalAssignees company parentTask';
+
 /** What a list row needs, and nothing more. Keeps a 200-row page small. */
 const LIST_FIELDS = 'code kind title category priority status points dueDate startDate '
   + 'completedAt completedLate createdBy createdByName assignedTo assignees loopUsers '
@@ -308,6 +331,21 @@ const LIST_FIELDS = 'code kind title category priority status points dueDate sta
  * was added.
  */
 function decorate(row) {
+  /**
+   * A LEAN ROW NEVER PASSED THROUGH THE MODEL, so the post('init') hook that
+   * normalises a hydrated document did not run on it. 51 of 61 live rows still
+   * say ASSIGNED / Done / REJECTED, and without this every list row would carry
+   * a status no chip, filter or capability check recognises — the status chip
+   * would literally read "ASSIGNED". Priority was already normalised here for
+   * exactly the same reason; the status was the half that was missed.
+   */
+  const status = normaliseStatus(row.status) || row.status;
+  const assignees = (row.assignees || []).map((a) => {
+    const an = normaliseStatus(a.status);
+    return an && an !== a.status ? { ...a, status: an } : a;
+  });
+  row = { ...row, status, assignees };
+
   const pending = (row.extensions || []).find((e) => e.status === EXTENSION_STATUS.PENDING) || null;
   const pool = Number(row.points) || 0;
   const given = Number(row.distributedPoints) || 0;
@@ -598,7 +636,7 @@ const getTask = asyncHandler(async (req, res) => {
 const getChildren = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
   const parent = await Task.findById(req.params.id)
-    .select('createdBy assignees assignedTo loopUsers openTo originalAssignees company parentTask');
+    .select(VISIBILITY_FIELDS);
   if (!parent) bad(res, 'That task no longer exists.', 404);
   access.assertCanSee(req.user, parent);
 
@@ -633,7 +671,7 @@ const boardTasks = asyncHandler(async (req, res) => {
   const { sort, key } = resolveSort(req.query);
 
   const columns = await Promise.all(BOARD_COLUMNS.map(async (col) => {
-    const filter = { $and: [base, { status: col.key }] };
+    const filter = { $and: [base, { status: { $in: spellingsOf(col.key) } }] };
     const [rows, count] = await Promise.all([
       sortedRows(filter, sort, key, 0, perColumn),
       Task.countDocuments(filter),
@@ -658,7 +696,7 @@ const boardTasks = asyncHandler(async (req, res) => {
 /** GET /api/tasks/:id/updates — the feed on its own, for paging it. */
 const taskFeed = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
-  const task = await Task.findById(req.params.id).select('createdBy assignees loopUsers assignedTo');
+  const task = await Task.findById(req.params.id).select(VISIBILITY_FIELDS);
   if (!task) bad(res, 'That task no longer exists.', 404);
   access.assertCanSee(req.user, task);
 
@@ -1007,6 +1045,36 @@ const updateTask = asyncHandler(async (req, res) => {
         bad(res, `${task.distributedPoints} points are already shared out across this task's pieces. `
           + 'Lower those first, or keep this at or above that figure.');
       }
+
+      /**
+       * …AND THE OTHER DIRECTION, on a PIECE.
+       *
+       * The guard above is the parent's: do not drop the pool below what has
+       * been handed out. The mirror case was missing entirely — raising a
+       * CHILD's points past what its parent still has. Two 50-point pieces of a
+       * 100-point task, each edited to 100, made `distributedPoints` 200; the
+       * model's clamp then silently pinned it back to 100, so the parent's
+       * people earned nothing while 200 points of real money were credited out
+       * of a 100-point task. Points settle in rupees (services/taskPoints), so
+       * this is the same class as the split guard and belongs beside it.
+       *
+       * The budget is the parent's pool less what its OTHER pieces already
+       * hold — this piece's current figure is being replaced, not added to.
+       */
+      if (task.parentTask) {
+        const parent = await Task.findById(task.parentTask)
+          .select('points distributedPoints code').lean();
+        if (parent) {
+          const others = Math.max(0, (parent.distributedPoints || 0) - (task.points || 0));
+          const budget = Math.max(0, (parent.points || 0) - others);
+          if (rounded > budget) {
+            bad(res, `${parent.code || 'The task this is part of'} has only ${budget} points left `
+              + `to give out${others ? ` (${others} are on its other pieces)` : ''}. `
+              + 'Raise the task\'s own points first, or lower another piece.');
+          }
+        }
+      }
+
       task.points = rounded;
       changed.push('points');
     }
@@ -1059,6 +1127,21 @@ const updateTask = asyncHandler(async (req, res) => {
   if (voice) task.voiceNote = voice;
 
   await task.save();
+
+  /**
+   * EDITING A PIECE CHANGES ITS PARENT'S FIGURES.
+   *
+   * `recomputeParent` is the only thing that writes childCount, childDoneCount,
+   * distributedPoints and the parent's progress bar, and every OTHER path that
+   * touches a child already calls it — the engine's move, split, claim and
+   * progress all do. This one did not, so editing a piece's points or deadline
+   * left the parent's "3 of 5", its bar and `can.pointsBudget` stale until some
+   * unrelated event on a sibling happened to trigger a recompute.
+   */
+  if (task.parentTask) {
+    await engine.recomputeParent(task.parentTask)
+      .catch((e) => console.error('parent recompute failed:', e.message));
+  }
 
   if (changed.length) {
     await TaskUpdate.create({
@@ -1509,7 +1592,7 @@ const deleteTask = asyncHandler(async (req, res) => {
 const downloadFile = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That file is not there.', 404);
   const task = await Task.findById(req.params.id)
-    .select('createdBy assignees assignedTo loopUsers attachments voiceNote');
+    .select(`${VISIBILITY_FIELDS} attachments voiceNote`);
   if (!task) bad(res, 'That file is not there.', 404);
   access.assertCanSee(req.user, task);
 
@@ -1539,7 +1622,7 @@ const downloadFile = asyncHandler(async (req, res) => {
 const downloadUpdateVoice = asyncHandler(async (req, res) => {
   const upd = await TaskUpdate.findById(req.params.updateId).select('task voiceNote').lean();
   if (!upd?.voiceNote?.storagePath) bad(res, 'That recording is not there.', 404);
-  const task = await Task.findById(upd.task).select('createdBy assignees assignedTo loopUsers');
+  const task = await Task.findById(upd.task).select(VISIBILITY_FIELDS);
   if (!task) bad(res, 'That recording is not there.', 404);
   access.assertCanSee(req.user, task);
 

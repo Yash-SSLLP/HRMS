@@ -30,7 +30,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { FiChevronDown, FiChevronRight, FiLoader, FiInbox } from 'react-icons/fi';
-import api from '../../api/client';
+import * as T from '../../api/tasks';
 import { BOARD_COLUMNS, statusStyle } from '../../utils/taskLifecycle';
 import TaskCard from './TaskCard';
 import TaskStatTiles from './TaskStatTiles';
@@ -130,11 +130,11 @@ export default function TaskBoard({
      * request, and only while a filter is on.
      */
     const unfiltered = tile && tile !== 'total'
-      ? api.get('/tasks/counters', { params: { ...params, scope } }).then((r) => r.data)
+      ? T.taskCounters({ ...params, scope })
       : null;
 
     Promise.all([
-      api.get('/tasks/board', { params: sent }).then((r) => r.data),
+      T.taskBoard(sent),
       unfiltered,
     ])
       .then(([board, apart]) => {

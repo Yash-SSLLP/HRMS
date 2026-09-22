@@ -1230,11 +1230,19 @@ export default function Layout({ navItems = [], sectionTitle }) {
             )}
             {/* Tasks carries no badge: unlike an approval or an interview it is
                 not a queue that empties, and a permanent number beside two that
-                mean "act on me" would flatten both. Gated in the admin portal
-                exactly as Attendance is above — /admin/tasks is behind
-                tasks.manage, so without it this would be a shortcut to a 403.
-                In My Portal it is the person's own work and always applies. */}
-            {showOwnWork && (portal === 'employee' || hasPermission(user, 'tasks.manage')) && (
+                mean "act on me" would flatten both.
+
+                NOT gated on `tasks.manage` (fixed 2026-09-22). It used to be,
+                by analogy with Attendance — but /admin/tasks is one of the very
+                few admin routes with NO capability behind it: the 2026-09-21
+                rework made setting a task everybody's, narrowed only by the
+                direction rule, and what `tasks.manage` buys is the wide VIEW
+                inside the page (All Tasks, the team dashboard), which the page
+                decides for itself from GET /tasks/meta. Neither App.jsx's route
+                nor the sidebar entry gates it, so this pill was hiding a page
+                Managers are entitled to — the opposite of the 403 the old
+                comment worried about. */}
+            {showOwnWork && (
               <NavPill to={tasksPath} label="Tasks" icon={<FiList size={16} strokeWidth={2.2} />} />
             )}
             {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in

@@ -687,7 +687,12 @@ export default function AssignTaskModal({
                 <span className="ml-1 text-[11px] font-medium">{form.reminders.length}</span>
               )}
             </button>
-            <VoiceRecorder value={voice} onChange={setVoice} compact={!voice} />
+            {/* Only the MIC lives in this row. VoiceRecorder ignores `compact`
+                once it holds a recording and becomes a full player with its own
+                Remove cross, so leaving it mounted here drew a second, identical
+                player beside the one below the file list. The player belongs in
+                one place — see the `{voice && …}` mount further down. */}
+            {!voice && <VoiceRecorder value={voice} onChange={setVoice} compact />}
 
             <input ref={fileRef} type="file" multiple hidden onChange={pickFiles} />
             <input ref={imageRef} type="file" accept="image/*" multiple hidden onChange={pickFiles} />

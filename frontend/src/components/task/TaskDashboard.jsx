@@ -18,7 +18,7 @@
  * `.table-pane` gives the sticky head and the frozen first column — the
  * portal's shared table shell, and the reason it needs a capped height.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { FiUsers, FiTag, FiUser, FiSend, FiTrendingUp, FiAlertCircle, FiAward } from 'react-icons/fi';
 import * as T from '../../api/tasks';
@@ -50,6 +50,25 @@ export default function TaskDashboard({ meta, isAdmin }) {
   const [overdue, setOverdue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [grain, setGrain] = useState('day');
+
+  /**
+   * ADOPT THE ADMIN DEFAULT WHEN IT ARRIVES, NOT JUST AT MOUNT.
+   *
+   * `isAdmin` rides in on GET /tasks/meta, which is still null on the first
+   * paint — so the initialiser above saw `false` whenever this was mounted
+   * straight away (a deep link to ?tab=dashboard, or the list switched to the
+   * Report view) and left an admin on "My report", while opening the same tab
+   * after meta had landed gave "Employee wise". Same account, same page, two
+   * defaults depending on how it was reached.
+   *
+   * The ref is what keeps this a DEFAULT: once the viewer has picked a view
+   * themselves, a late answer must not pull them off it.
+   */
+  const viewPicked = useRef(false);
+
+  useEffect(() => {
+    if (isAdmin && !viewPicked.current) setView('employee');
+  }, [isAdmin]);
 
   const views = useMemo(
     () => VIEWS.filter(([, , , adminOnly]) => !adminOnly || isAdmin),
@@ -100,7 +119,7 @@ export default function TaskDashboard({ meta, isAdmin }) {
             <button
               key={key}
               type="button"
-              onClick={() => setView(key)}
+              onClick={() => { viewPicked.current = true; setView(key); }}
               className={`min-h-[34px] inline-flex items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition ${
                 view === key
                   ? 'accent-border bg-gray-100 accent-text'

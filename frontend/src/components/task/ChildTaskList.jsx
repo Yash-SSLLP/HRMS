@@ -78,9 +78,17 @@ export default function ChildTaskList({ children = [], onChanged, onOpen }) {
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => onOpen?.(piece)}
+                /* AN ID, NOT THE ROW. The only consumer is TaskDetailBody's
+                   `onOpenTask`, which TaskModal wires to
+                   `setOverride(String(id))` — handed the object it stringified
+                   to "[object Object]" and the piece could never be opened.
+                   (2026-09-22.) */
+                onClick={() => onOpen?.(String(piece._id))}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.(piece); }
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpen?.(String(piece._id));
+                  }
                 }}
                 // The rail, the tint and the hairline all come from one helper so
                 // a piece and a task are never two slightly different reds.

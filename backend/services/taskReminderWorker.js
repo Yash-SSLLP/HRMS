@@ -31,8 +31,9 @@ const engine = require('./taskEngine');
 const points = require('./taskPoints');
 const { enqueueMail } = require('./email');
 const {
-  STATUS, OPEN_STATUS, reminderOffsetMinutes, reminderKey, reminderLabel,
+  STATUS, reminderOffsetMinutes, reminderKey, reminderLabel,
   REMINDER_WHEN, REMINDER_CHANNEL, statusLabel, KIND_REQUEST,
+  spellingsOf,
 } = require('../config/tasks');
 
 /** How late a reminder may be and still be worth sending. See rule 2. */
@@ -64,8 +65,10 @@ async function claim(taskId, key) {
 
 /** Who hears about this rule. See rule 3. */
 function audienceFor(task, rule) {
+  // SUBMITTED joins the two terminal ones: on a task on three people, the two
+  // who have handed in should not be chased while the third is still working.
   const doers = (task.assignees || [])
-    .filter((a) => !['COMPLETED', 'CANCELLED'].includes(a.status))
+    .filter((a) => !['COMPLETED', 'CANCELLED', 'SUBMITTED'].includes(a.status))
     .map((a) => String(a.user));
 
   if (rule.when !== REMINDER_WHEN.AFTER) return { to: doers, portal: 'employee' };
@@ -149,7 +152,24 @@ async function tick(now = new Date()) {
   let sent = 0;
   try {
     const tasks = await Task.find({
-      status: { $in: OPEN_STATUS },
+      /**
+       * CHASED means "still somebody's to do" — which is NOT the same as
+       * OPEN_STATUS, and that is the bug this replaces.
+       *
+       * SUBMITTED is open (nothing further happens on its own) but the doer has
+       * already handed the work in; the only person who can move it is the
+       * approver. config/tasks.isOverdue was changed on 2026-09-22 so a
+       * submitted task is never overdue — "painting it red in the doer's list
+       * would blame them for somebody else's inbox" — and the counters follow
+       * that rule. This worker did not, so an AFTER rule pushed
+       * "Overdue: TSK-… is still in review" at exactly the person who had done
+       * their part.
+       *
+       * `spellingsOf` because a QUERY cannot normalise: 51 of the 61 live rows
+       * still hold the pre-rework word (ASSIGNED, Done, REJECTED), so naming
+       * the current two would have swept almost nothing.
+       */
+      status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
       dueDate: { $ne: null },
       'reminders.0': { $exists: true },
       archived: { $ne: true },
@@ -218,15 +238,22 @@ async function digestTick(now = new Date()) {
   if (lastDigestDay === day) return 0;
   lastDigestDay = day;
 
+  // Both stages name every spelling, for the same reason the sweep above does —
+  // and the assignee-level one matters MORE, because `assignees[].status`
+  // carries the identical legacy vocabulary (models/Task's assigneeSchema
+  // enumerates it). Matching the two current words alone meant somebody whose
+  // rows all said ASSIGNED got no evening digest at all, and everybody else's
+  // count under-reported.
+  const chased = spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS);
   const rows = await Task.aggregate([
     {
       $match: {
-        status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+        status: { $in: chased },
         archived: { $ne: true },
       },
     },
     { $unwind: '$assignees' },
-    { $match: { 'assignees.status': { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] } } },
+    { $match: { 'assignees.status': { $in: chased } } },
     {
       $group: {
         _id: '$assignees.user',

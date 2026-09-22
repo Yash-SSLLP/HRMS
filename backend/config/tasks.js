@@ -597,6 +597,52 @@ const LEGACY_STATUS_MAP = {
   ON_HOLD: STATUS.IN_PROGRESS,
 };
 
+/**
+ * EVERY SPELLING that means one of `targets` — the current word and every
+ * legacy one that normalises to it.
+ *
+ * Added 2026-09-22 after the morning digest broke. A QUERY cannot call
+ * `normaliseStatus`: the model normalises on SAVE, so a row nobody has
+ * re-saved since the rework still carries the word it was written with, and of
+ * 59 live tasks 49 were still `ASSIGNED`. A worker asking for
+ * `status: { $ne: 'Done' }` therefore matched everything — including the
+ * completed and cancelled work it was meant to exclude — and would have nudged
+ * people about tasks they finished last week.
+ *
+ * Use this wherever a status appears in a FILTER rather than on a document.
+ *
+ * @param {...string} targets - current statuses
+ * @returns {string[]} every word a stored row might hold for them
+ */
+function spellingsOf(...targets) {
+  const want = new Set(targets.filter((t) => TASK_STATUS.includes(t)));
+  const out = [...want];
+  for (const [legacy, current] of Object.entries(LEGACY_STATUS_MAP)) {
+    if (want.has(current)) out.push(legacy);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * An aggregation stage that rewrites `$status` (and, optionally, a nested one)
+ * into the CURRENT vocabulary before anything downstream compares it.
+ *
+ * The sibling of `spellingsOf` for the other half of the problem. A `$group`
+ * cannot call `normaliseStatus` either, and expanding every `$eq` into an `$in`
+ * makes a counter pipeline unreadable — so the words are fixed ONCE, at the
+ * top, and every comparison below is written against the five current ones.
+ *
+ * @param {string} [field] - the path to rewrite, default 'status'
+ * @returns {Object} an `$addFields` stage
+ */
+function normaliseStatusStage(field = 'status') {
+  const branches = Object.entries(LEGACY_STATUS_MAP).map(([legacy, current]) => ({
+    case: { $eq: [`$${field}`, legacy] },
+    then: current,
+  }));
+  return { $addFields: { [field]: { $switch: { branches, default: `$${field}` } } } };
+}
+
 /** Whatever came in — old word, new word, lower case — as a current status. */
 function normaliseStatus(value) {
   if (!value) return null;
@@ -671,5 +717,7 @@ module.exports = {
   evidenceKindFor,
   UPDATE_KINDS,
   LEGACY_STATUS_MAP,
+  spellingsOf,
+  normaliseStatusStage,
   normaliseStatus,
 };

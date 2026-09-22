@@ -155,25 +155,47 @@ async function reverse(task, assignee) {
   if (!assignee?.pointsAwardedAt) return null;
 
   const creditId = assignee.creditRef;
-  assignee.pointsAwarded = 0;
-  assignee.pointsAwardedAt = undefined;
-  assignee.creditRef = undefined;
-
-  if (!creditId) return { reversed: true, credited: false };
+  if (!creditId) {
+    assignee.pointsAwarded = 0;
+    assignee.pointsAwardedAt = undefined;
+    return { reversed: true, credited: false };
+  }
 
   try {
     const credit = await IncentiveCredit.findById(creditId).lean();
+
+    /**
+     * ASK BEFORE CLEARING, not after.
+     *
+     * The three fields used to be wiped at the top, before the paid-for check
+     * below had run. When the month WAS already settled the credit was
+     * deliberately left in place — but `creditRef` had already gone, so the row
+     * was orphaned: nothing pointed at it any more, and because
+     * `pointsAwardedAt` was empty too, `award()`'s idempotence guard no longer
+     * fired. Re-completing the task then wrote a SECOND credit for the same
+     * work, and points settle in rupees. (2026-09-22.)
+     *
+     * So the link is cut only on the path that actually removes the money.
+     */
+    if (credit && await alreadyPaidFor(credit)) {
+      // The money is gone and stays gone. The task reopens regardless, and the
+      // row keeps pointing at what it was paid, so nothing can pay it twice.
+      return { reversed: false, credited: true, keptCredit: true };
+    }
+
+    assignee.pointsAwarded = 0;
+    assignee.pointsAwardedAt = undefined;
+    assignee.creditRef = undefined;
     if (!credit) return { reversed: true, credited: false };
 
-    if (await alreadyPaidFor(credit)) {
-      // Leave the money alone and say so. The task reopens regardless.
-      return { reversed: true, credited: true, keptCredit: true };
-    }
     await IncentiveCredit.deleteOne({ _id: creditId });
     return { reversed: true, credited: true, keptCredit: false };
   } catch (err) {
+    // Left EXACTLY as it was: a half-reversed row that has lost its creditRef
+    // is the state that pays twice, and it is better to leave the points
+    // recorded and say so loudly than to guess.
     console.error('Task points reversal failed:', err.message);
-    return { reversed: true, error: err.message };
+    return { reversed: false, error: err.message };
   }
 }
 

@@ -23,7 +23,7 @@ import {
 } from 'react-icons/fi';
 import {
   statusLabel, statusStyle, dueLabel, DUE_TONES, repeatLabel,
-  COUNTERS, SUB_COUNTERS, isOverdue, clampProgress, dayLabel,
+  isOverdue, clampProgress, dayLabel,
 } from '../../utils/taskLifecycle';
 import { accentFor, priorityColor, useTintStyle } from './taskColors';
 
@@ -268,62 +268,10 @@ export function TaskMarks({ task }) {
   );
 }
 
-/**
- * The counter row — the compact form, for a panel that has no room for the
- * stat tiles (the dashboard, a drawer). The list page draws COUNTER_TILES
- * instead.
- *
- * The boxes DO NOT OVERLAP — the server counts each task in exactly one of them
- * (taskController.countersFor), so they add up to the total and the row can be
- * trusted. In Time and Delayed are a breakdown OF Completed and are drawn as a
- * second, quieter line so nobody adds them in.
- *
- * Every box is a filter: clicking Overdue narrows the list to the overdue ones.
- * A number you cannot click is a number you have to go and find by hand.
- */
-export function CounterBar({ counters = {}, active = '', onPick, loading = false }) {
-  const dot = (colour) => (
-    <span className={`h-2 w-2 shrink-0 rounded-full ${colour}`} />
-  );
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      {COUNTERS.map(([key, label, text, colour]) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onPick?.(active === key ? '' : key)}
-          className={`min-h-[32px] inline-flex items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition ${
-            active === key ? 'border-gray-300 bg-gray-100' : 'border-transparent hover:bg-gray-50'
-          }`}
-        >
-          {dot(colour)}
-          <span className="text-gray-600">{label}</span>
-          <span className={text}>{loading ? '·' : (counters[key] ?? 0)}</span>
-        </button>
-      ))}
-
-      {(counters.completed > 0 || active === 'completed') && (
-        <span className="flex items-center gap-3 border-l border-gray-200 pl-4">
-          {SUB_COUNTERS.map(([key, label, text, colour]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onPick?.(active === key ? '' : key)}
-              className={`min-h-[28px] inline-flex items-center gap-1.5 rounded-lg border px-2 text-xs transition ${
-                active === key ? 'border-gray-300 bg-gray-100' : 'border-transparent hover:bg-gray-50'
-              }`}
-            >
-              {dot(colour)}
-              <span className="text-gray-500">{label}</span>
-              <span className={text}>{loading ? '·' : (counters[key] ?? 0)}</span>
-            </button>
-          ))}
-        </span>
-      )}
-    </div>
-  );
-}
+/* CounterBar — the compact counter row — is gone (2026-09-22). TaskStatTiles
+ * replaced it everywhere, including in the panels it was written for, and
+ * nothing had imported it since. A second way to draw the same figures is how
+ * two surfaces end up disagreeing about what "overdue" counts. */
 
 /** The date-window chips. */
 export function RangeChips({ ranges, value, onChange }) {

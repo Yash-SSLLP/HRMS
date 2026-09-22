@@ -122,7 +122,12 @@ const perTask = (now) => statsStage(now, {
 
 /** Turn a raw group row into the shape the table draws. */
 function scoreRow(r, label, extra = {}) {
-  const notDone = r.overdue + r.pending + r.inProgress;
+  // `inReview` is counted by statsStage and used to be thrown away here, so
+  // every row silently lost its whole review queue and the halves stopped
+  // adding up: a task handed in and awaiting a word was in `total` and in
+  // neither `notDone` nor `completed`. It is not-done — the work is not
+  // finished until somebody approves it. (2026-09-22.)
+  const notDone = r.overdue + r.pending + r.inProgress + (r.inReview || 0);
   return {
     ...extra,
     label,
@@ -130,6 +135,7 @@ function scoreRow(r, label, extra = {}) {
     overdue: r.overdue,
     pending: r.pending,
     inProgress: r.inProgress,
+    inReview: r.inReview || 0,
     completed: r.completed,
     inTime: r.inTime,
     delayed: r.delayed,
@@ -142,6 +148,7 @@ function scoreRow(r, label, extra = {}) {
     overduePct: pct(r.overdue, notDone),
     pendingPct: pct(r.pending, notDone),
     inProgressPct: pct(r.inProgress, notDone),
+    inReviewPct: pct(r.inReview || 0, notDone),
     inTimePct: pct(r.inTime, r.completed),
     delayedPct: pct(r.delayed, r.completed),
     // THE score: how much of what they were given is finished. The badge on the

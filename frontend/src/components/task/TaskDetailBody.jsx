@@ -217,6 +217,15 @@ export default function TaskDetailBody({
   const fileRef = useRef(null);
   const imageRef = useRef(null);
   const feedRef = useRef(null);
+  /**
+   * Open on the newest remark rather than the oldest. Without this the panel
+   * opens on "Set this task." — the least interesting line in it — and every
+   * reader scrolls down before they read anything.
+   */
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [tab, updates]);
   const appliedInitial = useRef(false);
 
   // ===== Reading =====
@@ -236,6 +245,16 @@ export default function TaskDetailBody({
   useEffect(() => { changedRef.current = onChanged; }, [onChanged]);
 
   const load = useCallback(async ({ first = false } = {}) => {
+    /**
+     * NEVER FETCH WITHOUT AN ID.
+     *
+     * `GET /tasks/null` is a 404 that reads "That task no longer exists.", and
+     * the 404 branch below closes the window — so one render with a missing id
+     * made a perfectly healthy task look deleted. TaskModal's lagging state was
+     * the cause and is fixed, but the guard stays: this body is rendered from
+     * two places, and neither should be able to do that again by accident.
+     */
+    if (!taskId) { setLoading(false); setRefreshing(false); return null; }
     if (first) setLoading(true); else setRefreshing(true);
     setError(null);
     try {
@@ -434,7 +453,8 @@ export default function TaskDetailBody({
 
       clearComposer();
       await refresh();
-      feedRef.current?.scrollTo({ top: 0 });
+      // …and to the BOTTOM, which is now where the newest row is.
+      feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight });
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Could not save that.');
     } finally {
@@ -1288,7 +1308,18 @@ export default function TaskDetailBody({
               )
             ) : (
               (() => {
-                const rows = tab === 'comment' ? comments : updates;
+                /**
+                 * OLDEST FIRST — the composer is directly underneath, so the
+                 * remark somebody has just written must appear next to where
+                 * they wrote it, not at the far end of the scroll.
+                 *
+                 * The server sends newest-first (`sort({ createdAt: -1 })`),
+                 * which is right for the query — it is what a `limit` should
+                 * keep — so the reversal belongs here rather than in the API.
+                 * `.slice()` first: `reverse()` mutates, and `comments` and
+                 * `updates` are memoised arrays that other renders share.
+                 */
+                const rows = (tab === 'comment' ? comments : updates).slice().reverse();
                 if (!rows.length) {
                   return (
                     <Empty>
@@ -1449,7 +1480,10 @@ export default function TaskDetailBody({
       <AssignTaskModal
         open={asking}
         onClose={() => setAsking(false)}
-        onCreated={() => toast.success('Request sent.')}
+        /* Reload rather than announce: AssignTaskModal has already said
+           "Request sent." by the time it calls back (it toasts before
+           onCreated), and a second identical toast read as two requests. */
+        onCreated={refresh}
         meta={meta}
         forceRequest
         linkedTask={task._id}

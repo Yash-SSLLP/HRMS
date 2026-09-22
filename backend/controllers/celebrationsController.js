@@ -792,7 +792,11 @@ const monthCalendar = asyncHandler(async (req, res) => {
     dueDate: { $gte: monthStart, $lt: monthEnd },
     archived: { $ne: true },
   })
-    .populate('project', 'name')
+    // NO `.populate('project')`: `Task.project` went with the workflow builder
+    // in the 2026-09-21 rework, and asking for it threw
+    // "Cannot populate path `project`" — which took the whole month's calendar
+    // with it, not just the task tiles. A task's grouping is its CATEGORY now,
+    // and that is plain text on the row. (Fixed 2026-09-22.)
     .populate('assignedTo', 'firstName lastName')
     .sort({ dueDate: 1 });
   const now = new Date();
@@ -813,7 +817,10 @@ const monthCalendar = asyncHandler(async (req, res) => {
         status,
         statusLabel: statusLabel(status),
         priority: t.priority,
-        project: t.project?.name || '',
+        // Kept under its old key so the clients' tiles need no change; the
+        // value is the category, which is what a task is grouped by now.
+        project: t.category || '',
+        category: t.category || '',
         assignedTo: mine ? 'You' : (assignee || '—'),
         // `done` drives the strike-through on the tile. Terminal, not just
         // completed: a cancelled or declined task is not still owed either.

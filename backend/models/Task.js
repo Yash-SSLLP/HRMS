@@ -620,6 +620,47 @@ taskSchema.index({ title: 'text', description: 'text', code: 'text' });
 
 // ===== Hooks =====
 
+/**
+ * NORMALISE ON READ, not only on save.
+ *
+ * ADDED 2026-09-22, and it is the fix for a whole class of breakage rather than
+ * one bug. The schema deliberately ACCEPTS the legacy words so an un-migrated
+ * row is still a valid document and an old Android build can still write one —
+ * but normalisation lived only in pre('validate'), which runs on SAVE. A
+ * document READ BACK from Mongo therefore kept whatever word it was written
+ * with, and 51 of the 61 live rows say `ASSIGNED`, `Done` or `REJECTED`.
+ *
+ * Everything that keys off the status then quietly failed on those rows:
+ *
+ *   services/taskEngine.move   TRANSITIONS['ASSIGNED'] is undefined, so EVERY
+ *                              status move was refused with a 400 reading
+ *                              "A assigned task cannot be marked in review."
+ *   taskAccess.capabilitiesFor `can.transitions` came back empty, so the
+ *                              clients — which draw exactly what the server
+ *                              says — offered no buttons at all.
+ *
+ * `post('init')` fires once, as the document is hydrated, before any caller
+ * sees it. It does NOT fire for `.lean()` queries (there is no document to
+ * hook), so the list path normalises in `decorate()` and the aggregations use
+ * `config/tasks.normaliseStatusStage` — the three together cover every read.
+ *
+ * The raw word is kept on `$locals` because ONE caller still needs it: the
+ * engine's optimistic claim matches on the stored value, and comparing a
+ * normalised status against an un-migrated row would match nothing and report
+ * a phantom conflict.
+ */
+taskSchema.post('init', function normaliseOnRead() {
+  this.$locals.rawStatus = this.status;
+  const norm = normaliseStatus(this.status);
+  if (norm && norm !== this.status) this.status = norm;
+  for (const a of this.assignees || []) {
+    const an = normaliseStatus(a.status);
+    if (an && an !== a.status) a.status = an;
+  }
+  const np = normalisePriority(this.priority);
+  if (np && np !== this.priority) this.priority = np;
+});
+
 taskSchema.pre('validate', function normalise(next) {
   // Accept whatever vocabulary came in — see config/tasks.normaliseStatus.
   const norm = normaliseStatus(this.status);

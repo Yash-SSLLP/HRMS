@@ -61,9 +61,31 @@ export default function TaskModal({
    * Clicking a piece inside the detail swaps the window to that piece rather
    * than stacking a second modal on the first. Re-opening (a different row, a
    * different card) puts it back to whatever the caller asked for.
+   *
+   * ── WHY THIS IS DERIVED AND NOT COPIED (fixed 2026-09-22) ─────────────────
+   *
+   * It used to be `useState(taskId)` kept in step by an effect, and that state
+   * LAGGED BY ONE RENDER. The modal is always mounted, so `current` held the
+   * previous value — null, before anything had been opened. Pressing a row
+   * therefore rendered the body with `taskId = null` once, BEFORE the effect
+   * caught up, and the body fetched `GET /api/tasks/null`.
+   *
+   * The server answered 404 "That task no longer exists.", the body treated a
+   * 404 as a row that had been deleted, and closed the window. So every task
+   * looked unopenable: the toast appeared and the modal vanished, while the
+   * task itself was perfectly fine. Forty-two of them are in the diagnostic
+   * log, every one the same call, always in pairs — React renders the open
+   * twice.
+   *
+   * `override` now holds ONLY the deliberate swap to a piece, and the task we
+   * were asked for is used directly the moment it arrives. There is no render
+   * in which the body can see a stale id.
    */
-  const [current, setCurrent] = useState(taskId);
-  useEffect(() => { setCurrent(taskId); }, [taskId, open]);
+  const [override, setOverride] = useState(null);
+  const current = override || taskId;
+  // A different task — or a re-open — drops back to whatever the caller asked
+  // for. Guarded so it does not fight `setOverride` within the same task.
+  useEffect(() => { setOverride(null); }, [taskId, open]);
 
   // Escape closes. Bound on the document rather than the panel so it works
   // wherever focus happens to be — inside the composer, a picker, a menu.
@@ -74,7 +96,9 @@ export default function TaskModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  if (!open || !taskId) return null;
+  // The SAME value the body is handed — the guard used to test `taskId`
+  // while rendering `current`, which is how a null id got through.
+  if (!open || !current) return null;
 
   return createPortal(
     <div
@@ -123,7 +147,7 @@ export default function TaskModal({
                to a piece somebody opened from inside it afterwards. */
             initialStatus={current === taskId ? initialStatus : null}
             onChanged={onChanged}
-            onOpenTask={(id) => { if (id) setCurrent(String(id)); }}
+            onOpenTask={(id) => { if (id) setOverride(String(id)); }}
             onGone={onClose}
           />
         </div>
