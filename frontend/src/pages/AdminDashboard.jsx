@@ -10,6 +10,8 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { useTabParam } from '../hooks/useTabParam';
+import { hasLeft } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
 import { toYMD } from '../utils/time';
 import { confirmDialog } from '../components/dialogs';
@@ -111,7 +113,23 @@ export default function AdminDashboard() {
   // for everyone, so they can still be picked as an interviewer or as someone's
   // reporting manager.)
   const [q, setQ] = useState('');
-  const visibleUsers = (isSuperAdmin ? users : users.filter((u) => !['CEO', 'MD'].includes(u.role)))
+
+  /**
+   * WORKING vs EXITED (user decision, 2026-09-22).
+   *
+   * `/admin/users` stamps `departed` on every row — a deactivated login OR a
+   * last working day that has already passed — because a User account carries
+   * no exit date of its own and `isActive` alone still calls somebody a
+   * colleague the day after they walked out. `hasLeft` reads that stamp, so
+   * this page, the Employees page and every picker split on one rule.
+   */
+  const [tab, setTab] = useTabParam('working', ['working', 'exited']);
+
+  const inScope = isSuperAdmin ? users : users.filter((u) => !['CEO', 'MD'].includes(u.role));
+  const exitedCount = inScope.filter(hasLeft).length;
+
+  const visibleUsers = inScope
+    .filter((u) => hasLeft(u) === (tab === 'exited'))
     .filter((u) => {
       const needle = q.trim().toLowerCase();
       if (!needle) return true;
@@ -249,6 +267,30 @@ This cannot be undone.`,
           + Add User
         </button>
       </PageHeader>
+
+      {/* ── Working · Exited ────────────────────────────────── */}
+      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-gray-200">
+        {[
+          ['working', 'Working', inScope.length - exitedCount],
+          ['exited', 'Exited', exitedCount],
+        ].map(([key, label, count]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`min-h-[40px] -mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
+              tab === key
+                ? 'accent-border accent-text'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+            <span className="rounded-lg bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
+              {count}
+            </span>
+          </button>
+        ))}
+      </div>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">

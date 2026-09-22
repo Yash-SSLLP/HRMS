@@ -12,6 +12,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { useTabParam } from '../hooks/useTabParam';
 import { useViewOnly } from '../hooks/useViewOnly';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
@@ -1033,9 +1034,28 @@ This cannot be undone.`,
     [profiles]
   );
 
+  /**
+   * WORKING vs EXITED (user decision, 2026-09-22).
+   *
+   * People who have left used to sit in the same list as everybody else, found
+   * only by setting the status filter to Inactive — which is not the same
+   * question: a resignation leaves the login working through the notice period,
+   * so somebody can be Active and have walked out last week. That is exactly
+   * the gap `hasLeft` exists to close (utils/peopleOptions, mirroring the
+   * server's utils/departed), and it is the rule these two tabs split on.
+   *
+   * The status filter stays, and is still useful INSIDE the Exited tab: it
+   * separates a leaver whose login is already off from one still inside their
+   * notice period.
+   */
+  const [tab, setTab] = useTabParam('working', ['working', 'exited']);
+
+  const exitedCount = useMemo(() => profiles.filter(hasLeft).length, [profiles]);
+
   const visibleProfiles = useMemo(() => {
     const t = query.trim().toLowerCase();
     const matched = profiles.filter((p) => {
+      if (hasLeft(p) !== (tab === 'exited')) return false;
       if (filters.department && p.department !== filters.department) return false;
       if (filters.company && p.company?.name !== filters.company) return false;
       if (filters.status && String(!!p.user?.isActive) !== filters.status) return false;
@@ -1171,6 +1191,32 @@ This cannot be undone.`,
         </button>
         )}
       </PageHeader>
+
+      {/* ── Working · Exited ──────────────────────────────────
+          The same tab shape the rest of the portal uses. Weight and the border
+          live on the BASE class, so picking one cannot re-measure the strip. */}
+      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-gray-200">
+        {[
+          ['working', 'Working', profiles.length - exitedCount],
+          ['exited', 'Exited', exitedCount],
+        ].map(([key, label, count]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTab(key)}
+            className={`min-h-[40px] -mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
+              tab === key
+                ? 'accent-border accent-text'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+            <span className="rounded-lg bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
+              {count}
+            </span>
+          </button>
+        ))}
+      </div>
 
       {/* An import never refuses a row for naming something new — it creates
           what it safely can and says so here. Amber, not red: nothing is
