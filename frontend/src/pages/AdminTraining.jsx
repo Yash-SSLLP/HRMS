@@ -2,19 +2,20 @@
  * AdminTraining — instructor-led training programs. Distinct from the LMS
  * courses managed on AdminCourses.
  *
- * ONE PAGE, TWO FACES (2026-09-22). It is mounted at /admin/training and at
- * /employee/training, and which one you get is decided here rather than by
- * having a second read-only copy to keep in step:
+ * ONE PAGE, TWO MOUNTS (2026-09-22): /admin/training and /employee/training.
+ * The second exists because `training.manage` is grantable to ANY account by
+ * the standalone User.trainingAccess switch — a training coordinator is often
+ * neither HR nor a manager, and they need somewhere to run it from. Whoever
+ * holds the grant gets the whole module, booking included; there is no
+ * read-only tier ("whoever has access they can create that").
  *
- *   training.manage  schedule, edit, cancel, pick participants
- *   training.view    read the schedule and nothing else — the standalone
- *                    User.trainingAccess grant a SuperAdmin ticks per person
+ * `writable` survives for the accounts that can SEE the portal but not write to
+ * it — a CEO/MD in view-only mode, and the God audit login. They get the list
+ * and no buttons.
  *
- * Without `training.manage` this draws no New/Edit/Delete and no Actions
- * column, and — just as important — does NOT call GET /admin/users: that route
- * is role-gated, so asking for it as an Employee is a guaranteed error on a
- * page they are entitled to. The server gates the read and every write anyway;
- * this only decides what to offer.
+ * PARTICIPANTS COME FROM /training/people, NOT /admin/users. That route is
+ * role-gated (SuperAdmin, HRManager, CEO, MD, LDManager), so an Employee
+ * holding the grant would have opened "New Training" and found nobody to add.
  *
  * Dates carry a TIME. The model always stored a Date, and the form always threw
  * the time away — so "Tomorrow" was all anybody could say about a session that
@@ -105,11 +106,11 @@ export default function AdminTraining() {
     setLoading(true);
     setError('');
     try {
-      // The people list is only ever used to PICK participants, and
-      // /admin/users is role-gated — so a reader must not ask for it.
+      // The module's OWN people route — see the docblock. Only fetched when
+      // there is a form to fill: a view-only exec never opens one.
       const [tRes, uRes] = await Promise.all([
         api.get('/training'),
-        writable ? api.get('/admin/users?active=true&excludeExecutives=true') : Promise.resolve(null),
+        writable ? api.get('/training/people') : Promise.resolve(null),
       ]);
       setTrainings(tRes.data.trainings);
       if (uRes) setUsers(uRes.data.users);

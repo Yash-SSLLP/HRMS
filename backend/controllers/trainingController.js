@@ -4,9 +4,11 @@
  */
 const asyncHandler = require('express-async-handler');
 const Training = require('../models/Training');
+const User = require('../models/User');
 const { TRAINING_STATUS } = require('../models/Training');
 // Company wall: Training.participants refs User, so the User-keyed helper applies.
 const { allowedUserIds } = require('../utils/employeeScope');
+const { pickableUserFilter } = require('../utils/peoplePicker');
 // IST day boundaries — the company's calendar day, and what a bare date means.
 const { istDayRange } = require('../utils/istDate');
 
@@ -93,6 +95,30 @@ const listTrainings = asyncHandler(async (req, res) => {
 });
 
 /**
+ * The people who can be put on a training.
+ *
+ * ITS OWN ROUTE, not GET /admin/users — that one is restrictTo(SuperAdmin,
+ * HRManager, CEO, MD, LDManager), so the moment `training.manage` became
+ * grantable to anybody (User.trainingAccess) the picker would have 403'd for
+ * exactly the people the grant was created for: an Employee running training
+ * could open the form and find nobody to add to it. Assets and Incentive own
+ * their pickers for the same reason.
+ *
+ * `pickableUserFilter` carries the rules that are easy to forget — active
+ * accounts only, no SuperAdmin or audit login, executives only if a SuperAdmin
+ * opted them in — and the company wall.
+ * @route GET /api/trainings/people   (training.manage)
+ * @returns {{count: number, users: Object[]}}
+ */
+const listTrainingPeople = asyncHandler(async (req, res) => {
+  const users = await User.find(await pickableUserFilter(req))
+    .select(USER_FIELDS)
+    .sort({ firstName: 1, lastName: 1 })
+    .lean();
+  res.json({ count: users.length, users });
+});
+
+/**
  * Create a training.
  * @route POST /api/trainings
  * @param {string} req.body.title - required
@@ -165,4 +191,5 @@ const deleteTraining = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
-module.exports = { listTrainings, createTraining, updateTraining, deleteTraining };
+module.exports = {
+  listTrainingPeople, listTrainings, createTraining, updateTraining, deleteTraining };

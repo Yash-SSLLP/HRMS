@@ -381,10 +381,10 @@ export default function App() {
             no admin portal — the same page /admin/assets serves, mounted here.
             The backend's assets.manage gate is the real check. */}
         <Route path="assets-manage" element={<AdminAssets />} />
-        {/* The training schedule for holders of the standalone `training.view`
-            grant. The SAME page /admin/training serves — it draws itself
-            read-only for anybody without training.manage — and the server's
-            gate on both the read and every write is the real check. */}
+        {/* Training for holders of the standalone Training grant, who have no
+            admin portal to reach it from. The SAME page /admin/training serves,
+            with the same buttons — the grant is the whole module, booking
+            included — and the server's gate is the real check. */}
         <Route path="training" element={<AdminTraining />} />
         {/* Loan approvals for a standalone `loansAccess` holder — an accounts
             clerk with no admin portal. Same page HR uses at /admin/loans. */}

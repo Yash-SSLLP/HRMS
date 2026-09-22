@@ -427,11 +427,11 @@ export const employeeNav = [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },
     { to: '/employee/reviews', label: 'My Reviews', icon: FiEdit },
     { to: '/employee/learning', label: 'Learning', icon: FiBookOpen },
-    // Instructor-led training, as opposed to the LMS courses above it. Behind
-    // the standalone `training.view` grant (User.trainingAccess) so a SuperAdmin
-    // decides per person who sees the schedule; read-only for anybody without
-    // `training.manage`.
-    { to: '/employee/training', label: 'Training', icon: FiBookOpen, perm: 'training.view',
+    // Instructor-led training, as opposed to the LMS courses above it. Shown to
+    // whoever holds `training.manage` — which a SuperAdmin can hand to any
+    // account, whatever its role, with the standalone Training switch. They can
+    // book sessions from here, not just read them.
+    { to: '/employee/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage',
       keywords: ['training', 'session', 'workshop', 'trainer', 'programme', 'program', 'schedule'] },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [

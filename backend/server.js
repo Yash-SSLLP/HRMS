@@ -42,6 +42,7 @@ const { startWorker: startExitWorker } = require('./services/exitWorker');
 const { startWorker: startLatePolicySync } = require('./services/latePolicy');
 const { startWorker: startTaskReminderWorker } = require('./services/taskReminderWorker');
 const { startWorker: startTaskRecurrenceWorker } = require('./services/taskRecurrenceWorker');
+const { startWorker: startNotificationCleanup } = require('./services/notificationCleanupWorker');
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
@@ -240,6 +241,10 @@ connectDB()
     startAttendanceWorker();
     startPushReminderWorker();
     startExitWorker();
+    // Notification retention: read alerts go a week after they were read,
+    // expired ones and swiped-away ones with them. See the worker for what it
+    // deliberately does NOT touch.
+    startNotificationCleanup();
     // Loads the SuperAdmin-set late-marking cut-off into utils/workday's cache
     // and keeps it refreshed; until it lands, lateness uses the 10:00 AM default.
     startLatePolicySync();

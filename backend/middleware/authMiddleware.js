@@ -348,26 +348,21 @@ function hasPermission(user, cap) {
   if (cap === 'cashbook.manage' && user.cashbookAccess === true) return true;
   if (cap === 'expenses.manage' && user.expensesAccess === true) return true;
   if (cap === 'assets.manage' && user.assetsAccess === true) return true;
-  // Seeing what training is booked. Read-only, and the only grant in this list
-  // that an ordinary Employee is expected to hold — the audience for a training
-  // calendar is the people on it.
-  if (cap === 'training.view' && user.trainingAccess === true) return true;
-  // …and running training implies seeing it. Asked here, above the role
-  // branches, so a Manager holding training.manage is not told no.
+  // Running training: booking a session, editing it, cancelling it, and seeing
+  // the schedule. A standalone grant like the four above — the people who
+  // organise training are as often a department lead or a coordinator as they
+  // are HR, and `permissions` only reaches HR Manager and Manager accounts.
   //
-  // `&& … return true`, NOT `return hasPermission(...)`. Returning the answer
-  // ended the function, which made the `permissions.includes(cap)` tests at the
-  // bottom unreachable for this key — and `training.view` IS in the catalogue,
-  // so a SuperAdmin could tick it for a Manager, watch it save, reopen the
-  // dialog to find it still ticked, and have granted nothing whatsoever. The
-  // most discoverable way to hand over the page was the one way that did not
-  // work. Falling through lets a ticked box mean what it says.
-  if (cap === 'training.view' && hasPermission(user, 'training.manage')) return true;
-  // L&D runs learning. Instructor-led training is the half of it that is not
-  // the LMS, and the branch below answers this role with courses.manage and
-  // nothing else — so without this the one role whose job this is was the one
-  // role locked out of it.
-  if (cap === 'training.view' && user.role === 'LDManager') return true;
+  // THE WHOLE MODULE, not a read-only corner of it. There was briefly a
+  // separate `training.view` for that; it went on 2026-09-22 when the rule
+  // became "whoever has access can create" — a second key that granted less
+  // was one more thing to get wrong, and it had already been got wrong once.
+  if (cap === 'training.manage' && user.trainingAccess === true) return true;
+  // L&D runs learning, and instructor-led training is the half of it that is
+  // not the LMS. The branch below answers this role with courses.manage and
+  // nothing else, so without this the one role whose job this is would be the
+  // one role locked out of it.
+  if (cap === 'training.manage' && user.role === 'LDManager') return true;
   // Deciding loans and advances is the same kind of standalone grant: the
   // person who sanctions an advance is usually in accounts, not HR.
   if (cap === 'loans.manage' && user.loansAccess === true) return true;

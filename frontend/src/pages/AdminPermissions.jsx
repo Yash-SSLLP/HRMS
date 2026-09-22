@@ -78,7 +78,7 @@ const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
-  training: 'Lets them OPEN the training schedule — what is booked, when, who is running it and who is attending — from My Portal. Read-only: scheduling, editing and cancelling stay with whoever holds the Training capability. Give it to the people who attend training, which is why it is a standalone switch rather than a capability: an Employee holds nothing from the capability list.',
+  training: 'Opens the training module: the schedule, and booking on it. They can create a training, set its dates and times, add participants, edit it and cancel it — the same page HR uses, reached from My Portal. A standalone grant because whoever organises training is as often a department lead or a coordinator as HR, and the capability list only reaches HR Manager and Manager accounts.',
   loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
@@ -706,7 +706,7 @@ function AccessTab({ showGuide, setShowGuide }) {
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="See training"
+                    <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="Training"
                       title={GRANT_HELP.training} onChange={() => toggleTraining(u)} />
                   </td>
 

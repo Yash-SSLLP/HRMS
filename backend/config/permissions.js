@@ -121,13 +121,10 @@ const PERMISSIONS = [
 
   // Performance & learning
   { key: 'performance.manage', label: 'Performance & appraisals', group: 'Performance & Learning' },
+  // Also grantable to ANY account, whatever their role, by the standalone
+  // User.trainingAccess switch on the Permissions page — the training
+  // coordinator is often neither HR nor a manager.
   { key: 'training.manage', label: 'Training', group: 'Performance & Learning' },
-  // READ-ONLY, and not ticked from this catalogue for an Employee — it is the
-  // standalone User.trainingAccess switch that grants it (see hasPermission and
-  // the Access grants column of the Permissions page). It is listed here so the
-  // key has a label wherever it is shown, exactly like the note on
-  // incentive.manage above.
-  { key: 'training.view', label: 'Training — see the schedule', group: 'Performance & Learning' },
   { key: 'courses.manage', label: 'Courses / LMS', group: 'Performance & Learning' },
 
   // Work management
