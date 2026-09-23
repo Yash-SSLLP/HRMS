@@ -232,11 +232,15 @@ Regards,
     ['employeeName', 'employeeCode', 'period', 'companyName', 'link', 'hrName']
   ),
 
+  // One relieving letter per exit type (2026-09-23): a terminated employee was
+  // being issued the resignation wording. The key of the resignation one is
+  // unchanged so any wording HR had already saved keeps applying to it. Keep
+  // each body identical to relievingBody() in services/letterPdf.js.
   letter(
     'relieving.letter',
-    'Relieving letter',
+    'Relieving letter — resignation',
     'People',
-    'The body of the relieving letter PDF issued to a leaver once their notice is served and no-dues clearance is complete. Page layout, letterhead and signature block stay fixed.',
+    'The body of the relieving letter PDF issued to somebody who RESIGNED, once their notice is served and no-dues clearance is complete. Terminations and retirements have letters of their own. Page layout, letterhead and signature block stay fixed.',
     `This is to certify that {{employeeName}}{{employeeCodeClause}} was employed with {{companyName}} as {{designation}}{{departmentClause}} from {{joiningDate}} to {{lastWorkingDay}}.
 
 The resignation tendered has been accepted, and {{employeeName}} stands relieved of all duties with effect from the close of business on {{lastWorkingDay}}.
@@ -246,6 +250,38 @@ The resignation tendered has been accepted, and {{employeeName}} stands relieved
 During the tenure with us, {{employeeName}} was found to be sincere and diligent in the discharge of the responsibilities assigned.
 
 **We thank {{employeeName}} for the contribution made to {{companyName}} and wish every success in the future.**`,
+    ['employeeName', 'employeeCode', 'employeeCodeClause', 'designation', 'department', 'departmentClause',
+      'companyName', 'joiningDate', 'lastWorkingDay']
+  ),
+
+  letter(
+    'relieving.termination.letter',
+    'Relieving letter — termination',
+    'People',
+    'The body of the relieving letter PDF issued when employment was TERMINATED by the company. Deliberately plain — the facts of service, the date of relief and the no-dues statement, with no resignation clause and no remark on conduct. Page layout, letterhead and signature block stay fixed.',
+    `This is to certify that {{employeeName}}{{employeeCodeClause}} was employed with {{companyName}} as {{designation}}{{departmentClause}} from {{joiningDate}} to {{lastWorkingDay}}.
+
+The services of {{employeeName}} with {{companyName}} stand terminated, and {{employeeName}} is relieved of all duties with effect from the close of business on {{lastWorkingDay}}.
+
+**All company property has been returned and no dues remain outstanding as on the date of this letter.**`,
+    ['employeeName', 'employeeCode', 'employeeCodeClause', 'designation', 'department', 'departmentClause',
+      'companyName', 'joiningDate', 'lastWorkingDay']
+  ),
+
+  letter(
+    'relieving.retirement.letter',
+    'Relieving letter — retirement',
+    'People',
+    'The body of the relieving letter PDF issued to somebody who RETIRED, once their notice is served and no-dues clearance is complete. Page layout, letterhead and signature block stay fixed.',
+    `This is to certify that {{employeeName}}{{employeeCodeClause}} was employed with {{companyName}} as {{designation}}{{departmentClause}} from {{joiningDate}} to {{lastWorkingDay}}.
+
+{{employeeName}} has retired from the services of {{companyName}} and stands relieved of all duties with effect from the close of business on {{lastWorkingDay}}.
+
+**All company property has been returned and no dues remain outstanding as on the date of this letter.**
+
+During the tenure with us, {{employeeName}} was found to be sincere and diligent in the discharge of the responsibilities assigned.
+
+**We thank {{employeeName}} for the years of service given to {{companyName}} and wish a long, healthy and happy retirement.**`,
     ['employeeName', 'employeeCode', 'employeeCodeClause', 'designation', 'department', 'departmentClause',
       'companyName', 'joiningDate', 'lastWorkingDay']
   ),

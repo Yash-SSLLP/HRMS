@@ -403,8 +403,10 @@ export default function AdminExit() {
       note: "Review and edit the message below · it's emailed to the employee from the company mailbox.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
-      onSend: async ({ subject, body }) => {
-        const { data } = await api.post(`/exits/${exitId}/resend-email`, { subject, body });
+      // Anyone else to copy — a manager, accounts. The sender is copied anyway.
+      showCc: true,
+      onSend: async ({ subject, body, cc }) => {
+        const { data } = await api.post(`/exits/${exitId}/resend-email`, { subject, body, cc });
         setDetail(data.exit);
         setActionMsg('Exit email queued · the worker will attempt delivery within 30 seconds.');
       },
@@ -522,8 +524,9 @@ export default function AdminExit() {
         defaultSubject: data.subject,
         defaultBody: data.body,
         attachedNames: data.attachments || [],
-        onSend: async ({ subject, body }) => {
-          await api.post(`/exits/${detail._id}/relieving-letter/email`, { subject, body });
+        showCc: true,
+        onSend: async ({ subject, body, cc }) => {
+          await api.post(`/exits/${detail._id}/relieving-letter/email`, { subject, body, cc });
           toast.success('Relieving letter emailed');
           await load();
         },

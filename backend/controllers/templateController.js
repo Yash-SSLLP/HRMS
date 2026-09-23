@@ -111,6 +111,10 @@ const previewTemplate = asyncHandler(async (req, res) => {
     candidateName: 'Priya Sharma',
     employeeName: 'Priya Sharma',
     employeeCode: 'SSL 128',
+    // The relieving letters use these two; without them the preview showed the
+    // raw «employeeCodeClause» / «designation» placeholders.
+    employeeCodeClause: ' (Employee Code: SSL 128)',
+    designation: 'Senior Software Engineer',
     position: 'Senior Software Engineer',
     department: 'Engineering',
     departmentClause: ' in the Engineering department',

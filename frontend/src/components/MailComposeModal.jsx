@@ -109,6 +109,7 @@ export default function MailComposeModal({
                 placeholder="Add more emails, comma-separated"
                 className="block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
               />
+              <p className="text-[11px] text-gray-400 mt-1">You are copied automatically · a mistyped address stops the send so it can be fixed.</p>
             </div>
           )}
           <div>

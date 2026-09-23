@@ -24,8 +24,9 @@ const { buildDefaultSections } = require('../config/exitClearance');
 const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
 const { getBranding } = require('../services/branding');
 const AssetAssignment = require('../models/AssetAssignment');
+const { readCc } = require('../utils/ccList');
 const { openHoldingsFor, returnHolding, HOLDING_ASSET_FIELDS, withLegacySerial } = require('../services/assetHoldings');
-const { renderRelievingLetter, resolveLetterBody, longDate } = require('../services/letterPdf');
+const { renderRelievingLetter, resolveLetterBody, relievingKind, longDate } = require('../services/letterPdf');
 
 // Shared resolver — see config/appUrl.js. The exit-feedback link goes to a
 // leaver who no longer has a company login, so a localhost default is dead mail.
@@ -706,10 +707,14 @@ async function buildRelievingLetter(exit) {
     department: profile?.department,
     joiningDate: profile?.dateOfJoining,
     lastWorkingDay: exit.lastWorkingDay,
+    // Resignation / Termination / Retirement each have their own wording.
+    exitType: exit.type,
     brand: await getBranding(),
   };
-  // The org's edited template wins over the coded default (Admin → Templates).
-  data.body = await resolveLetterBody('relieving', data);
+  // The org's edited template wins over the coded default (Admin → Templates),
+  // looked up per exit type: relieving.letter / relieving.termination.letter /
+  // relieving.retirement.letter.
+  data.body = await resolveLetterBody(relievingKind(exit.type), data);
 
   const pdf = await renderRelievingLetter(data);
   const safeName = (data.employeeName || 'employee').replace(/[^\w.-]+/g, '-').toLowerCase();
@@ -884,11 +889,13 @@ const emailRelievingLetter = asyncHandler(async (req, res) => {
 
   const subject = String(req.body?.subject || '').trim() || rendered.subject;
   const body = String(req.body?.body || '').trim() ? String(req.body.body) : rendered.text;
+  const cc = readCc(req.body?.cc, [to], res);
 
   let info;
   try {
     info = await sendMail({
       to,
+      cc: cc.length ? cc : undefined,
       subject,
       text: body,
       from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,
@@ -1119,9 +1126,13 @@ const resendExitEmail = asyncHandler(async (req, res) => {
 
   const subject = String(req.body?.subject || '').trim() || msg.subject;
   const customBody = String(req.body?.body || '').trim();
+  // Anyone else HR wants copied (a manager, accounts). The sender is copied by
+  // services/email.js regardless.
+  const cc = readCc(req.body?.cc, [empEmail], res);
   const outboxRow = await enqueueMail(
     {
       to: empEmail,
+      cc: cc.length ? cc : undefined,
       subject,
       text: customBody || msg.text,
       // The branded HTML alternative is only safe when the body is unedited —

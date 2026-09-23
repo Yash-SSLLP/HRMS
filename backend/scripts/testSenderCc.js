@@ -110,7 +110,12 @@ const FEATURE = {
   emailRejectedDocuments: 'Recruitment — documents rejected, please resend',
   emailDocumentRequest: 'Recruitment — candidate document request',
   processOne: 'THE OUTBOX WORKER — re-sends a queued row (selfCopy: false)',
+  mailTo: 'Tasks — reminder from the task timer (a CRON: nobody signed in, selfCopy: false)',
 };
+
+// Background jobs have no signed-in sender, so opting out is correct there —
+// and ONLY there. A request-driven path that opts out is the bug this catches.
+const OPT_OUT_OK = new Set(['processOne', 'mailTo']);
 
 /* ------------------------------------------------- 1. the inventory sweep */
 
@@ -136,7 +141,7 @@ function sweep() {
       const fn = enclosing(lines, lineNo - 1);
       const args = callArgs(src, m.index + m[0].length - 1);
       const optOut = /selfCopy\s*:\s*false/.test(args);
-      if (optOut && fn !== 'processOne') optOuts += 1;
+      if (optOut && !OPT_OUT_OK.has(fn)) optOuts += 1;
       rows.push({ rel, lineNo, fn, kind: m[1], optOut });
     }
   }
@@ -153,7 +158,7 @@ function sweep() {
   }
 
   console.log(`\n  ${rows.length} mail paths found.`);
-  check('every path is covered by the rule (nothing but the worker opts out)', optOuts, 0);
+  check('every path is covered by the rule (only background workers opt out)', optOuts, 0);
   return rows.length;
 }
 

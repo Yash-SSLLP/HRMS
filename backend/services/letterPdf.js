@@ -661,15 +661,38 @@ function appointmentBody(data = {}, R = '₹') {
 }
 
 /**
- * The relieving letter's body, as editable blocks.
+ * Which relieving letter an exit gets. The wording depends on HOW the person
+ * left (user decision, 2026-09-23): a terminated employee was being issued the
+ * resignation text — "The resignation tendered has been accepted" and a line
+ * praising their conduct — which is a false statement on a signed certificate.
+ * Each kind is its own template (`<kind>.letter`), so HR edits them apart.
+ * @param {string} exitType - ExitRequest.type
+ * @returns {'relieving'|'relieving.termination'|'relieving.retirement'}
+ */
+function relievingKind(exitType) {
+  if (exitType === 'Termination') return 'relieving.termination';
+  if (exitType === 'Retirement') return 'relieving.retirement';
+  return 'relieving';
+}
+
+/**
+ * The relieving letter's body, as editable blocks — one wording per exit type.
  *
  * Written WITHOUT pronouns on purpose: the text is assembled from stored fields
  * and a certificate that guesses "he"/"she" from a gender field gets it wrong
  * for real people, while "they has been relieved" is broken grammar. Repeating
  * the name reads as correct, formal English for every employee.
  *
+ * A TERMINATION letter is deliberately plain: the facts of service, the date
+ * of relief and the no-dues statement, with no resignation clause and no
+ * remark on conduct — a relieving letter certifies what happened, and praise
+ * the company did not mean is the one thing it must not certify.
+ *
+ * Keep each text identical to its entry in services/templateRegistry.js — the
+ * registry is what the Templates page shows and resets to.
+ *
  * @param {Object} data - { employeeName, employeeCode, designation, department,
- *   joiningDate, lastWorkingDay }
+ *   joiningDate, lastWorkingDay, exitType }
  * @returns {{type: 'para'|'term', head?: string, text: string, bold?: boolean}[]}
  */
 function relievingBody(data = {}) {
@@ -677,17 +700,43 @@ function relievingBody(data = {}) {
   const code = data.employeeCode ? ` (Employee Code: ${data.employeeCode})` : '';
   const dept = data.department ? ` in the ${data.department} department` : '';
   const lwd = longDate(data.lastWorkingDay);
+  const kind = relievingKind(data.exitType);
+  const service = { type: 'para', text:
+    `This is to certify that ${who}${code} was employed with ${COMPANY.name} as `
+    + `${data.designation || '__________'}${dept} from ${longDate(data.joiningDate)} to ${lwd}.` };
+  const noDues = { type: 'para', bold: true, text:
+    'All company property has been returned and no dues remain outstanding as on the date of this letter.' };
+  const conduct = { type: 'para', text:
+    `During the tenure with us, ${who} was found to be sincere and diligent in the discharge of the responsibilities assigned.` };
+
+  if (kind === 'relieving.termination') {
+    return [
+      service,
+      { type: 'para', text:
+        `The services of ${who} with ${COMPANY.name} stand terminated, and ${who} is relieved of all duties `
+        + `with effect from the close of business on ${lwd}.` },
+      noDues,
+    ];
+  }
+  if (kind === 'relieving.retirement') {
+    return [
+      service,
+      { type: 'para', text:
+        `${who} has retired from the services of ${COMPANY.name} and stands relieved of all duties `
+        + `with effect from the close of business on ${lwd}.` },
+      noDues,
+      conduct,
+      { type: 'para', bold: true, text:
+        `We thank ${who} for the years of service given to ${COMPANY.name} and wish a long, healthy and happy retirement.` },
+    ];
+  }
   return [
-    { type: 'para', text:
-      `This is to certify that ${who}${code} was employed with ${COMPANY.name} as `
-      + `${data.designation || '__________'}${dept} from ${longDate(data.joiningDate)} to ${lwd}.` },
+    service,
     { type: 'para', text:
       `The resignation tendered has been accepted, and ${who} stands relieved of all duties `
       + `with effect from the close of business on ${lwd}.` },
-    { type: 'para', bold: true, text:
-      'All company property has been returned and no dues remain outstanding as on the date of this letter.' },
-    { type: 'para', text:
-      `During the tenure with us, ${who} was found to be sincere and diligent in the discharge of the responsibilities assigned.` },
+    noDues,
+    conduct,
     { type: 'para', bold: true, text:
       `We thank ${who} for the contribution made to ${COMPANY.name} and wish every success in the future.` },
   ];
@@ -701,7 +750,13 @@ function relievingBody(data = {}) {
  * @param {Object} data
  */
 function letterBodyDefaults(kind, data = {}) {
-  if (kind === 'relieving') return relievingBody(data);
+  // The kind carries the exit type ('relieving.termination'), so a caller that
+  // only passes the kind still gets that type's default text.
+  if (kind === 'relieving' || String(kind).startsWith('relieving.')) {
+    const exitType = kind === 'relieving.termination' ? 'Termination'
+      : kind === 'relieving.retirement' ? 'Retirement' : 'Resignation';
+    return relievingBody({ ...data, exitType: data.exitType || exitType });
+  }
   return kind === 'appointment' ? appointmentBody(data, '₹') : offerBody(data, '₹');
 }
 
@@ -714,7 +769,8 @@ function letterBodyDefaults(kind, data = {}) {
  * bodyOrDefault(), so a body HR typed into the compose modal still wins over
  * both the template and the default.
  *
- * @param {'offer'|'appointment'} kind
+ * @param {'offer'|'appointment'|'relieving'|'relieving.termination'|'relieving.retirement'} kind
+ *   — the template looked up is `<kind>.letter`
  * @param {Object} data - The same letter data the renderer receives.
  * @returns {Promise<Array>} Draw blocks for drawBlocks().
  */
@@ -1563,7 +1619,7 @@ async function renderRelievingLetter(data = {}) {
 
 module.exports = {
   renderOfferLetter, renderAppointmentLetter, renderRelievingLetter,
-  letterBodyDefaults, resolveLetterBody,
+  letterBodyDefaults, resolveLetterBody, relievingKind,
   // The letter's own date format ('21st July 2025'). Exported so a covering
   // EMAIL can print the same dates as the PDF attached to it, rather than each
   // send site inventing its own.

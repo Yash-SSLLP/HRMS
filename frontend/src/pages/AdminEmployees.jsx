@@ -704,8 +704,9 @@ export default function AdminEmployees() {
         note: "Review and edit the message below · it's emailed from the company mailbox.",
         defaultSubject: data.subject,
         defaultBody: data.body,
-        onSend: async ({ subject, body }) => {
-          await api.post(`/employees/${editingId}/documents/email`, { subject, body });
+        showCc: true,
+        onSend: async ({ subject, body, cc }) => {
+          await api.post(`/employees/${editingId}/documents/email`, { subject, body, cc });
           toast.success('Document link emailed');
         },
       });

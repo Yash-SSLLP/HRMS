@@ -67,6 +67,7 @@ const ImportFlag = require('../models/ImportFlag');
 const Shift = require('../models/Shift');
 const { purgePerson } = require('../services/purgePerson');
 const orgMasterSync = require('../services/orgMasterSync');
+const { readCc } = require('../utils/ccList');
 
 const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
@@ -2096,11 +2097,13 @@ const emailDocLink = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || rendered.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : rendered.text;
+  const cc = readCc(req.body.cc, [to], res);
 
   let info;
   try {
     info = await sendMail({
       to,
+      cc: cc.length ? cc : undefined,
       subject,
       text: body,
       from: req.user?.email ? `${req.user.fullName} <${req.user.email}>` : undefined,

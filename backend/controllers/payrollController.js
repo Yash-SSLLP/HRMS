@@ -44,6 +44,7 @@ const { enqueueMail } = require('../services/email');
 const { renderMail } = require('../services/templates');
 const COMPANY = require('../config/company');
 const ExcelJS = require('exceljs');
+const { readCc } = require('../utils/ccList');
 // exportPayrollSheet builds the company payroll register (.xlsx) via ExcelJS — see below.
 
 // Money as the payslip prints it, so all three surfaces show the same string.
@@ -2661,10 +2662,14 @@ const emailPayslip = asyncHandler(async (req, res) => {
 
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
+  // Extra recipients HR typed (a payslip carries salary, so this is theirs to
+  // decide per send — nobody is copied by default except the sender).
+  const cc = readCc(req.body.cc, [email], res);
   const buffer = await renderPayslip(payslip, await buildYtd(payslip));
   await enqueueMail(
     {
       to: email,
+      cc: cc.length ? cc : undefined,
       subject,
       text: body,
       replyTo: req.user?.email,
@@ -2674,7 +2679,7 @@ const emailPayslip = asyncHandler(async (req, res) => {
   );
   payslip.emailedAt = new Date();
   await payslip.save();
-  res.json({ mailed: [email] });
+  res.json({ mailed: [email], cc });
 });
 
 /**

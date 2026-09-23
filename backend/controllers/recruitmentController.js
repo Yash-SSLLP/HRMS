@@ -99,19 +99,9 @@ const DEFAULT_NEW_USER_PASSWORD = process.env.DEFAULT_NEW_USER_PASSWORD || 'Welc
 // localhost in production (these links go to candidates' personal inboxes).
 const { appBaseUrl: APP_BASE_URL } = require('../config/appUrl');
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// Parse an HR-typed Cc string (comma / semicolon / whitespace separated) into a
-// clean, de-duplicated list of valid addresses, excluding any already on `exclude`.
-function parseCcList(raw, exclude = []) {
-  const skip = new Set(exclude.filter(Boolean).map((e) => e.trim().toLowerCase()));
-  return [...new Set(
-    String(raw || '')
-      .split(/[\s,;]+/)
-      .map((e) => e.trim())
-      .filter((e) => e && EMAIL_RE.test(e))
-      .map((e) => e.toLowerCase())
-  )].filter((e) => !skip.has(e));
-}
+// HR-typed Cc lists — shared with every other editable mail (utils/ccList.js),
+// which refuses a mistyped address instead of silently dropping it.
+const { readCc } = require('../utils/ccList');
 
 // ===== Job locations =====
 // One requisition is routinely open in more than one place, so a job carries a
@@ -1398,7 +1388,7 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
   const attachment = resumeAttachment(candidate);
 
   // Optional extra Cc recipients typed by HR, excluding anyone already on To.
-  const cc = parseCcList(req.body.cc, to);
+  const cc = readCc(req.body.cc, to, res);
 
   await enqueueMail(
     { to, cc: cc.length ? cc : undefined, subject, text: body, replyTo: req.user?.email, attachments: attachment ? [attachment] : [] },
@@ -1659,7 +1649,7 @@ const sendLetterEmail = asyncHandler(async (req, res) => {
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
   // Exclude both the To recipient (candidate) and the acting sender so HR never
   // ends up Cc'd on their own outgoing mail.
-  const cc = parseCcList(req.body.cc, [candidate.email, req.user?.email]);
+  const cc = readCc(req.body.cc, [candidate.email, req.user?.email], res);
 
   // Make sure the attachment actually exists (regenerate from stored data if the
   // file was lost), then send SYNCHRONOUSLY through the shared company mailbox so
@@ -2491,7 +2481,7 @@ const emailDocumentRequest = asyncHandler(async (req, res) => {
   const subject = String(req.body.subject || '').trim() || defaults.subject;
   const body = String(req.body.body || '').trim() ? String(req.body.body) : defaults.body;
   // Never Cc the recipient or the sender onto their own mail.
-  const cc = parseCcList(req.body.cc, [candidate.email, req.user?.email]);
+  const cc = readCc(req.body.cc, [candidate.email, req.user?.email], res);
 
   // Sent synchronously (not queued) so HR sees the real outcome while they are
   // still looking at the candidate — this is the mail the whole step waits on.

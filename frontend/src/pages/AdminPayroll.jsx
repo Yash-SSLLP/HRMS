@@ -559,8 +559,9 @@ export default function AdminPayroll() {
         defaultSubject: data.subject,
         defaultBody: data.body,
         attachedNames: data.attachments || [],
-        onSend: async ({ subject, body }) => {
-          await api.post(`/payroll/${p._id}/email`, { subject, body });
+        showCc: true,
+        onSend: async ({ subject, body, cc }) => {
+          await api.post(`/payroll/${p._id}/email`, { subject, body, cc });
           await loadPayslips();
         },
       });
