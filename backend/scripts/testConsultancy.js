@@ -573,9 +573,9 @@ async function run(handler, req) {
 
   console.log('\n--- a consultancy signs in with its first name ---');
   {
-    const krishave = { _id: oid(), firstName: 'Krishave', role: 'HRConsultancy', isActive: true };
+    const krisave = { _id: oid(), firstName: 'Krisave', role: 'HRConsultancy', isActive: true };
     const talent = { _id: oid(), firstName: 'Talent Bridge', role: 'HRConsultancy', isActive: true };
-    let agencies = [krishave, talent];
+    let agencies = [krisave, talent];
     let codes = []; // employee codes on file
     User.find = (filter = {}) => {
       if (filter.role === 'HRConsultancy') return q(agencies);
@@ -593,34 +593,34 @@ async function run(handler, req) {
       const r = await resolveLoginUser(typed);
       return r.user ? String(r.user._id) : (r.ambiguous ? 'ambiguous' : null);
     };
-    check('"krishave" signs in as Krishave', await who('krishave'), String(krishave._id));
-    check('any case, stray spaces', [await who('KRISHAVE'), await who('  Krishave ')], [String(krishave._id), String(krishave._id)]);
+    check('"krisave" signs in as Krisave', await who('krisave'), String(krisave._id));
+    check('any case, stray spaces', [await who('KRISAVE'), await who('  Krisave ')], [String(krisave._id), String(krisave._id)]);
     check('a two-word name, with or without the space', [await who('talent bridge'), await who('TalentBridge')], [String(talent._id), String(talent._id)]);
     check('an unknown name signs in nobody', await who('nobody'), null);
 
-    agencies = [krishave, { ...krishave, _id: oid() }];
-    check('two consultancies with one name → refused as ambiguous, not guessed', await who('krishave'), 'ambiguous');
-    agencies = [krishave, { ...krishave, _id: oid(), isActive: false }];
-    check('…but a switched-off namesake does not block the live one', await who('krishave'), String(krishave._id));
-    agencies = [krishave, talent];
+    agencies = [krisave, { ...krisave, _id: oid() }];
+    check('two consultancies with one name → refused as ambiguous, not guessed', await who('krisave'), 'ambiguous');
+    agencies = [krisave, { ...krisave, _id: oid(), isActive: false }];
+    check('…but a switched-off namesake does not block the live one', await who('krisave'), String(krisave._id));
+    agencies = [krisave, talent];
 
     const staffId = oid();
-    codes = [{ _id: oid(), user: staffId, employeeCode: 'KRISHAVE' }];
+    codes = [{ _id: oid(), user: staffId, employeeCode: 'KRISAVE' }];
     User.find = (filter = {}) => {
       if (filter._id && String(filter._id) === String(staffId)) return q([{ _id: staffId, role: 'Employee', isActive: true }]);
       if (filter.role === 'HRConsultancy') return q(agencies);
       if (filter._id?.$in) return q(agencies.filter((a) => filter._id.$in.map(String).includes(String(a._id))));
       return q([]);
     };
-    check('an employee code always wins over a consultancy name', await who('krishave'), String(staffId));
+    check('an employee code always wins over a consultancy name', await who('krisave'), String(staffId));
 
     check('naming: a free name is fine', await consultancyLoginNameProblem('Brightpath'), null);
     check('naming: blank is refused', !!(await consultancyLoginNameProblem('  ')), true);
     check('naming: a role alias is refused', /reserved/.test(await consultancyLoginNameProblem('Admin') || ''), true);
     check('naming: an email is refused', /email/.test(await consultancyLoginNameProblem('a@b.co') || ''), true);
-    check("naming: another consultancy's name is refused", /already signs in/.test(await consultancyLoginNameProblem('krishave ') || ''), true);
+    check("naming: another consultancy's name is refused", /already signs in/.test(await consultancyLoginNameProblem('krisave ') || ''), true);
     check('naming: renaming an account to its own name is fine', await consultancyLoginNameProblem('Talent Bridge', talent._id), null);
-    check('naming: an employee code is refused', /employee code/.test(await consultancyLoginNameProblem('krishave', krishave._id) || ''), true);
+    check('naming: an employee code is refused', /employee code/.test(await consultancyLoginNameProblem('krisave', krisave._id) || ''), true);
     codes = [];
   }
 
@@ -658,6 +658,27 @@ async function run(handler, req) {
     const { requestRow } = jr.__test;
     const row = requestRow({ _id: oid(), title: 'Software Developer', status: 'Approved', job: jid, jobDeletedAt: new Date(), jobDeletedByName: 'Sequence Admin' }, { external: true, jobDoc: null });
     check('the agency row reads "job deleted", by whom', [row.jobState, row.jobDeletedByName, row.job], ['Deleted', 'Sequence Admin', null]);
+  }
+
+  console.log('\n--- renaming a consultancy renames its copies ---');
+  {
+    const { syncConsultancyName } = require('../services/consultancyNames');
+    const calls = [];
+    const origC = Candidate.updateMany; const origJ = JobRequest.updateMany;
+    Candidate.updateMany = async (filter, update, opts) => { calls.push({ model: 'Candidate', filter, update, opts }); return { modifiedCount: 1 }; };
+    JobRequest.updateMany = async (filter, update, opts) => { calls.push({ model: 'JobRequest', filter, update, opts }); return { modifiedCount: 1 }; };
+    const out = await syncConsultancyName(agencyId, 'Krisave HR');
+    Candidate.updateMany = origC; JobRequest.updateMany = origJ;
+    const sets = calls.map((c) => Object.keys(c.update.$set)[0]);
+    check('every copy of the name is rewritten', sets,
+      ['consultancy.name', 'rounds.$[r].interviewerName', 'rounds.$[r].decidedByName', 'rounds.$[].history.$[h].byName', 'rejection.byName', 'requestedByName', 'decidedByName']);
+    check('…to the new name', [...new Set(calls.map((c) => Object.values(c.update.$set)[0]))], ['Krisave HR']);
+    check('…matched on the account id, never on the old text',
+      calls.every((c) => JSON.stringify(c.filter).includes(String(agencyId)) && !/Krisave/.test(JSON.stringify(c.filter))), true);
+    check("…and only the agency's own rounds", calls.filter((c) => c.opts?.arrayFilters).map((c) => String(Object.values(c.opts.arrayFilters[0])[0])),
+      [String(agencyId), String(agencyId), String(agencyId)]);
+    check('counts come back per kind', out.candidates, 1);
+    check('a blank name changes nothing', await syncConsultancyName(agencyId, '  '), {});
   }
 
   console.log(`\n${passed} passed, ${failures.length} failed`);

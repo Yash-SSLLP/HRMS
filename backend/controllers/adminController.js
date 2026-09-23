@@ -8,6 +8,7 @@
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const { activeAccountWithEmail, consultancyLoginNameProblem } = require('../utils/loginIdentity');
+const { syncConsultancyName } = require('../services/consultancyNames');
 const { hasDeparted } = require('../utils/departed');
 // Editable in Settings -> Templates ('account.emailChanged').
 const { renderMail } = require('../services/templates');
@@ -399,6 +400,15 @@ const updateUser = asyncHandler(async (req, res) => {
     notifyEmailChanged(user, req.user).catch((err) => {
       console.error('[admin] Could not queue the email-change notice:', err.message);
     });
+  }
+
+  // An HR consultancy's name is copied onto its candidates, the Round 1 it took
+  // and its job requests — renaming the account must rename those copies too,
+  // or the boards go on showing the old name (services/consultancyNames).
+  // Best-effort: the account is already saved.
+  if (user.role === 'HRConsultancy' && identityAudits.some((c) => ['First Name', 'Last Name'].includes(c.meta.label))) {
+    syncConsultancyName(user._id, user.fullName).catch((err) =>
+      console.error('[admin] consultancy name sync failed:', err.message));
   }
 
   // Promoted to HR / L&D → ensure they have an employee profile. CEO/MD are not

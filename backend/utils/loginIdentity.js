@@ -12,7 +12,7 @@
  *   "admin"                           -> the SuperAdmin account
  *   "CEO" / "MD"                      -> the executive accounts
  *   "God"                             -> the view-only audit account
- *   "krishave"                        -> an HR consultancy, by its account's
+ *   "krisave"                         -> an HR consultancy, by its account's
  *                                        FIRST NAME (there can be several, so
  *                                        no single alias could name one)
  *   "someone@company.com"             -> kept working, but only while the
@@ -147,7 +147,7 @@ async function resolveLoginUser(rawIdentifier) {
 // ===== HR consultancy sign-in =====
 // An outside HR consultancy (User role HRConsultancy) has no employee code, and
 // there can be any number of them, so it signs in with its account's FIRST NAME
-// — the consultancy's name, e.g. "krishave" (user decision 2026-09-23). The
+// — the consultancy's name, e.g. "krisave" (user decision 2026-09-23). The
 // comparison is squashed like every other identifier here: case and spaces do
 // not matter.
 const CONSULTANCY_ROLE = 'HRConsultancy';
