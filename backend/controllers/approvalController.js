@@ -49,6 +49,7 @@ const { countOpenComplaints } = require('./complaintController');
 const { countOpenResetRequests } = require('./passwordResetRequestController');
 const { countMyOpenTasks } = require('./taskController');
 const { countDueConfirmations } = require('./lifecycleController');
+const { countPendingJobRequests } = require('./jobRequestController');
 const {
   hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip, canApproveAdvances,
 } = require('../middleware/authMiddleware');
@@ -889,12 +890,19 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     ? AssetAssignment.countDocuments(await scopeUserField(req, { 'returnRequest.status': 'Pending', returnedAt: null }))
     : NONE;
 
+  // GET /recruitment/consultancy/job-requests  (canDecideJobRequests)  walled by company
+  // Openings an outside HR consultancy asked for, waiting on HR / a CEO / MD /
+  // the Backend to accept or reject. Counted by its own controller with the
+  // decision gate its approve route uses — 0 for anybody who could only read
+  // them — so the number on the sidebar row is always one the reader can clear.
+  const jobRequestQ = countPendingJobRequests(req).catch(() => 0);
+
   const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip,
     payslipRequest, khata, khataConfirm, khataSanction, voucher, exit, complaint,
-    passwordReset, declaration, course, confirmation, taskApproval, assetReturn] = await Promise.all([
+    passwordReset, declaration, course, confirmation, taskApproval, assetReturn, jobRequest] = await Promise.all([
     leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ, selfPayslipQ,
     payslipRequestQ, khataQ, khataConfirmQ, khataSanctionQ, voucherQ, exitQ, complaintQ,
-    passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ, assetReturnQ,
+    passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ, assetReturnQ, jobRequestQ,
   ]);
   res.json({
     leave,
@@ -918,6 +926,7 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     confirmation,
     taskApproval,
     assetReturn,
+    jobRequest,
     // `total` is the APPROVALS SCREEN's tally and deliberately counts only the
     // categories that screen lists. Everything added after `selfPayslip` badges
     // its own module in the sidebar instead, so folding it in here would badge

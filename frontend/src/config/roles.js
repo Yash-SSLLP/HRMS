@@ -3,7 +3,9 @@
 // Learning & Development admin whose only admin power is the LMS/Courses module).
 // God = the portal's permanently view-only audit login: it reads the admin
 // portal for the companies a Super Admin assigns it and can change nothing.
-export const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'God', 'Employee'];
+// HRConsultancy = an OUTSIDE recruitment agency: it adds candidates to open
+// jobs and takes their Round 1, and sees nothing else of the portal.
+export const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'God', 'HRConsultancy', 'Employee'];
 
 export const ROLE_LABELS = {
   SuperAdmin: 'Super Admin',
@@ -14,6 +16,7 @@ export const ROLE_LABELS = {
   LDManager: 'HR L&D',
   AccountsManager: 'Account Manager',
   God: 'God',
+  HRConsultancy: 'HR Consultancy',
   Employee: 'Employee',
 };
 

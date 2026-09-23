@@ -91,6 +91,27 @@ export function averageRating(round) {
   return Math.round((given.reduce((s, n) => s + n, 0) / given.length) * 10) / 10;
 }
 
+/**
+ * The round NUMBER as a filled badge — the one fact every block on an interview
+ * page hangs off, so it is the loudest thing in its header. Accent-filled, with
+ * `on-accent` so the dark-mode ink flip in index.css reaches it.
+ * @param {{children: React.ReactNode, className?: string}} props
+ */
+export function RoundBadge({ children, className = '' }) {
+  return <span className={`round-badge accent-bg on-accent ${className}`}>{children}</span>;
+}
+
+/**
+ * The frame class for one earlier round's write-up (`.round-box` in index.css):
+ * its border says how that round went.
+ * @param {string} status - a round status
+ * @returns {string}
+ */
+export function roundBoxClass(status) {
+  const tone = { Cleared: 'is-cleared', Rejected: 'is-rejected', Scheduled: 'is-scheduled' }[status] || 'is-pending';
+  return `round-box ${tone}`;
+}
+
 /** The recommendation as a coloured chip (nothing when unset). */
 export function RecommendationChip({ value, className = '' }) {
   if (!value) return null;
@@ -427,13 +448,11 @@ export function PriorRejections({ flag, defaultOpen = false, className = '' }) {
               {p.rounds?.length ? (
                 <div className="mt-2 space-y-2">
                   {p.rounds.map((r) => (
-                    <div key={r.index} className="border border-gray-200 rounded-lg p-2.5">
+                    <div key={r.index} className={`${roundBoxClass(r.status)} p-2.5`}>
                       <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                        <span className="text-xs font-medium text-gray-700">
-                          {r.label}
-                          <span className="ml-2 font-normal text-gray-500">
-                            {r.interviewerName || r.decidedByName || 'Interviewer not recorded'}
-                          </span>
+                        <span className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                          <RoundBadge>{r.label || `Round ${r.index + 1}`}</RoundBadge>
+                          {r.interviewerName || r.decidedByName || 'Interviewer not recorded'}
                         </span>
                         <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>{r.status}</span>
                       </div>
@@ -458,33 +477,36 @@ export function PreviousRounds({ rounds = [], title = 'What the earlier rounds s
   const written = rounds.filter(hasAssessment).length;
 
   return (
-    <div className="border border-gray-200 rounded-lg bg-gray-50">
+    <section className="border border-gray-200 rounded-xl bg-gray-50">
+      {/* The section says what it is — somebody else's rounds, to read — so it
+          cannot be confused with the form you fill in further down. */}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left"
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left"
       >
-        <span className="text-xs font-semibold text-gray-700">
-          {title}
-          <span className="ml-2 font-normal text-gray-500">
-            {written} of {rounds.length} round{rounds.length === 1 ? '' : 's'} written up
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-gray-800">{title}</span>
+          <span className="block text-[11px] text-gray-500">
+            Read-only · {written} of {rounds.length} earlier round{rounds.length === 1 ? '' : 's'} written up
           </span>
         </span>
-        <span className="text-gray-400 text-xs">{open ? '▲' : '▼'}</span>
+        <span className="text-gray-400 text-xs shrink-0">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="px-3 pb-3 space-y-3">
           {rounds.map((r) => (
-            <div key={r.index} className="bg-white border border-gray-200 rounded-lg p-3">
+            <div key={r.index} className={`${roundBoxClass(r.status)} p-3`}>
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div className="text-sm font-medium text-gray-800">
-                  {r.label}
-                  <span className="ml-2 text-xs font-normal text-gray-500">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <RoundBadge>{r.label || `Round ${r.index + 1}`}</RoundBadge>
+                  <span className="text-xs text-gray-500">
                     {r.interviewerName || r.decidedByName || 'Interviewer not recorded'}
                     {r.decidedAt ? ` · ${formatDateTime12(r.decidedAt)}` : ''}
                   </span>
                 </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>
+                <span className={`text-[11px] font-medium px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>
                   {r.status}
                 </span>
               </div>
@@ -493,6 +515,6 @@ export function PreviousRounds({ rounds = [], title = 'What the earlier rounds s
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }

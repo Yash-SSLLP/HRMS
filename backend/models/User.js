@@ -20,7 +20,16 @@ const bcrypt = require('bcryptjs');
 // any single route remembering to gate itself. It is not a member of staff (no
 // employee profile, no payroll, no attendance) and is hidden from every listing
 // a non-SuperAdmin can see.
-const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'God', 'Employee'];
+//
+// HRConsultancy (displayed "HR Consultancy") = an OUTSIDE recruitment agency.
+// It adds candidates to the company's open jobs and takes their Round 1
+// interview, clearing or rejecting them; HR, CEO/MD and the Backend follow the
+// result on the Consultancy Candidates board. It is not staff (no employee
+// profile) and `protect` confines it to its own endpoints, so the rest of the
+// portal — people, pay, attendance, chat — does not exist as far as it can tell
+// (see utils/visibility EXTERNAL_ROLES). Its companies come from `companies`
+// below, like an exec's: the jobs it may recruit for.
+const ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager', 'God', 'HRConsultancy', 'Employee'];
 
 const userSchema = new mongoose.Schema(
   {
@@ -178,9 +187,9 @@ const userSchema = new mongoose.Schema(
     // "manager of every incentive" until scripts/migrateIncentiveRoles.js has
     // run, and nothing writes it any more.
     incentiveAccess: { type: Boolean, default: false },
-    // CEO/MD and God only. The set of companies this account may see (and, for
-    // an exec in edit mode, manage), set by the Backend (SuperAdmin) on the
-    // Permissions page. Semantics mirror the HRManager `permissions` default:
+    // CEO/MD, God and HR Consultancy only. The set of companies this account may
+    // see (and, for an exec in edit mode, manage; for a consultancy, recruit
+    // for), set by the Backend (SuperAdmin) on the Permissions page. Semantics mirror the HRManager `permissions` default:
     // `undefined`/`[]` → EVERY company (so the account is unrestricted until the
     // Backend narrows it), a non-empty list → only those companies. Ignored for
     // every other role — an HR Manager is scoped to their assigned employees,

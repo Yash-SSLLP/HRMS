@@ -17,7 +17,7 @@ import {
   FiFolder, FiList, FiPackage, FiFile,
   FiVolume2, FiPieChart, FiFlag, FiAward, FiHelpCircle,
   FiKey, FiLock, FiAlertTriangle, FiEdit3, FiLogOut, FiUser, FiTarget, FiBell, FiSmartphone,
-  FiRotateCw, FiVideo,
+  FiRotateCw, FiVideo, FiFilter, FiInbox,
 } from 'react-icons/fi';
 // Feather has no money-ledger glyph, and its only currency mark is a dollar sign
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
@@ -210,6 +210,18 @@ export const adminNav = [
   ] },
   { group: 'Hiring & Onboarding', icon: FiUserPlus, items: [
     { to: '/admin/recruitment', label: 'Recruitment', icon: FiUserPlus, anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'] },
+    // Candidates sent in by outside HR consultancies, split by the verdict of
+    // the Round 1 the agency takes itself. Same gate as Recruitment — CEO/MD,
+    // God and the Backend pass hasPermission, so they see it too.
+    { to: '/admin/consultancy', label: 'Consultancy Candidates', icon: FiFilter,
+      anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'],
+      keywords: ['consultancy', 'agency', 'placement', 'round 1', 'screening', 'shortlisted', 'cleared', 'rejected', 'candidate'] },
+    // Openings an HR consultancy asked the company to create. HR with job
+    // access, CEO/MD and the Backend accept (which opens the job) or reject;
+    // the badge counts what is waiting on the reader.
+    { to: '/admin/consultancy-jobs', label: 'Consultancy Job Requests', icon: FiInbox,
+      anyPerm: ['recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews'], badge: 'jobRequest',
+      keywords: ['consultancy', 'agency', 'job request', 'new opening', 'requested job', 'approve job'] },
     { to: '/admin/hiring-onboarding', label: 'Offers & Joining', icon: FiClipboard, perm: 'recruitment.candidates' },
     { to: '/admin/new-joinees', label: 'New Joinee Records', icon: FiUserCheck, perm: 'recruitment.candidates' },
     // The rounds HR assigned to THIS executive. CEO/MD have no employee portal,
@@ -348,6 +360,17 @@ export const accountsNav = [
   { to: '/admin/khata', label: 'Employee Cashbook', end: true, icon: TbReceipt,
     badge: ['khata', 'khataConfirm', 'khataSanction'],
     keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
+];
+
+// An HR Consultancy is an OUTSIDE agency: it enters the admin shell and sees one
+// page — its own candidates, where it adds them and takes their Round 1. The
+// server refuses it everything else, so nothing else is offered.
+export const consultancyNav = [
+  { to: '/admin/consultancy', label: 'My Candidates', end: true, icon: FiUserPlus,
+    keywords: ['candidate', 'candidates', 'add candidate', 'round 1', 'interview', 'shortlist', 'join'] },
+  // The company's open jobs, and the new openings this agency has asked for.
+  { to: '/admin/consultancy-jobs', label: 'Job Openings', end: true, icon: FiBriefcase,
+    keywords: ['jobs', 'openings', 'request job', 'new opening', 'vacancy'] },
 ];
 
 export const employeeNav = [

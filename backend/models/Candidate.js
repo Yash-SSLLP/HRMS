@@ -167,13 +167,31 @@ const candidateSchema = new mongoose.Schema(
       stageAt: { type: String, trim: true },
     },
 
-    // How the candidate entered the pipeline.
-    source: { type: String, enum: ['Portal', 'Application'], default: 'Portal' },
+    // How the candidate entered the pipeline. 'Consultancy' = sourced by an
+    // outside HR consultancy account (see `consultancy` below).
+    source: { type: String, enum: ['Portal', 'Application', 'Consultancy'], default: 'Portal' },
+
+    // ===== SOURCED BY AN HR CONSULTANCY =====
+    // Set when an HRConsultancy account (models/User.js) added this candidate.
+    // The consultancy owns ROUND 1 — it is booked as that round's interviewer at
+    // creation and records the verdict itself — and it is the only outside
+    // account that can see this row at all, and only its own rows. `name` is
+    // frozen at creation, so the board still says who sent the candidate after
+    // the agency's account is renamed or switched off.
+    consultancy: {
+      user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      name: { type: String, trim: true },
+      addedAt: { type: Date },
+    },
 
     // Extra details collected by the public application form.
     currentCompany: { type: String, trim: true },
     experienceYears: { type: Number, min: 0 },
     noticePeriod: { type: String, trim: true },
+    // What they take home NOW, beside what they are asking for. Free text like
+    // expectedCtc ("3.2 LPA", "₹25,000 / month") — asked on every way in: the
+    // public form, HR's Add Candidate and an HR consultancy's form.
+    currentCtc: { type: String, trim: true },
     expectedCtc: { type: String, trim: true },
     coverNote: { type: String, trim: true },
 
@@ -344,6 +362,8 @@ candidateSchema.plugin(require('./plugins/auditStatus'), { fields: ['stage'], la
 // not all of it, and a null-heavy index is wasted pages.
 candidateSchema.index({ email: 1, createdAt: -1 }, { sparse: true });
 candidateSchema.index({ phone: 1, createdAt: -1 }, { sparse: true });
+// The Consultancy Candidates board: one agency's own rows, newest first.
+candidateSchema.index({ 'consultancy.user': 1, createdAt: -1 }, { sparse: true });
 
 // ===== THE REAPPLY HOLD =====
 // A rejected application is HELD for this long: inside the window the same

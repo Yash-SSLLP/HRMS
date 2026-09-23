@@ -21,7 +21,7 @@ const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
 // Roles that deliberately have NO employee profile — they are not employees, so
 // their lack of one is correct and must not be read as import damage.
-const PROFILE_LESS_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+const PROFILE_LESS_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God', 'HRConsultancy'];
 
 const when = (d) => (d ? new Date(d).toISOString().slice(0, 16).replace('T', ' ') : '—');
 const name = (u) => `${u.firstName || ''} ${u.lastName || ''}`.trim() || '(no name)';

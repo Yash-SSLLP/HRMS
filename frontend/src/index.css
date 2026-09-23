@@ -526,6 +526,64 @@ a.plain-link:hover { text-decoration: underline; }
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
+/* ---------------------------------------------------------------------------
+   Interview rounds — components/InterviewAssessment.jsx, My Interviews, the
+   Recruitment write-up panel and the consultancy board (user ask 2026-09-23:
+   "make this page more clear which section is for which part").
+   Three marks, each saying one thing:
+     .round-badge     the round NUMBER, filled — pair it with `accent-bg
+                      on-accent` in the markup so the dark-mode ink flip above
+                      reaches it (a light accent carries onyx, not white);
+     .round-box       an EARLIER round's write-up, framed in the colour of how
+                      that round went, with a thick leading edge so each round
+                      reads as its own block;
+     .my-round-panel  the round YOU are writing up, framed in the portal accent
+                      so it cannot be mistaken for somebody else's round.
+   Colours are mixed into the theme's own --border / --surface, so the same
+   rules hold in light and dark without a second block.
+--------------------------------------------------------------------------- */
+.round-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.55rem;
+  border-radius: 0.45rem;
+  font-size: 0.72rem;
+  line-height: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.round-box {
+  border: 2px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 0.75rem;
+  background-color: var(--surface);
+}
+.round-box.is-cleared {
+  border-color: color-mix(in srgb, #16a34a 45%, var(--border));
+  border-left-color: #16a34a;
+}
+.round-box.is-rejected {
+  border-color: color-mix(in srgb, #dc2626 40%, var(--border));
+  border-left-color: #dc2626;
+}
+.round-box.is-scheduled {
+  border-color: color-mix(in srgb, #2563eb 38%, var(--border));
+  border-left-color: #3b82f6;
+}
+.round-box.is-pending {
+  border-left-color: #9ca3af;
+}
+.my-round-panel {
+  border: 2px solid color-mix(in srgb, var(--accent) 60%, var(--border));
+  border-radius: 0.9rem;
+  background-color: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+.my-round-panel-head {
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
 /* Star buttons — a small lift on hover/focus, and a visible focus ring since
    these replaced a native <select>. The two star colours are set here rather
    than with text-* utilities: the dark-mode block below remaps those utilities

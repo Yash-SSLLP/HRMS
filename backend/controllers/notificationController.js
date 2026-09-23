@@ -7,6 +7,7 @@
 const asyncHandler = require('express-async-handler');
 const Notification = require('../models/Notification');
 const EmployeeProfile = require('../models/EmployeeProfile');
+const { isExternalRole } = require('../utils/visibility');
 
 // Scope notifications to the portal a dual-role user is currently viewing.
 // 'admin' → admin + all; 'employee' → employee + all; anything else → no scoping.
@@ -29,6 +30,19 @@ async function joinCutoff(userId) {
   return { createdAt: { $gte: profile.dateOfJoining } };
 }
 
+// The notification types an OUTSIDE account (an HR consultancy — see
+// utils/visibility EXTERNAL_ROLES) may read. Company-wide broadcasts —
+// holidays, events, announcements, birthdays — are written to "every active
+// user" by queries that predate outside accounts, so an agency's inbox would
+// otherwise fill with the company's internal news. Filtering the read keeps
+// every one of those writers untouched.
+const EXTERNAL_NOTIFICATION_TYPES = ['consultancy'];
+
+/** `{ type: { $in } }` for an outside account, `{}` for everyone else. */
+function externalScope(user) {
+  return isExternalRole(user?.role) ? { type: { $in: EXTERNAL_NOTIFICATION_TYPES } } : {};
+}
+
 /**
  * List the caller's recent notifications (max 50) with an unread count.
  * @route GET /api/notifications?audience=admin|employee
@@ -42,6 +56,7 @@ const listNotifications = asyncHandler(async (req, res) => {
   // every notification written before swipe-to-delete existed still shows.
   const filter = {
     recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+    ...externalScope(req.user),
   };
   // Fifty is the ceiling AND the default: the alerts screen pages through
   // nothing, it just shows the recent ones. A home screen that renders five
@@ -81,6 +96,7 @@ const countNotifications = asyncHandler(async (req, res) => {
   // can clear, which is exactly the failure that note was written about.
   const filter = {
     recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+    ...externalScope(req.user),
   };
   const unreadCount = await Notification.countDocuments({ ...filter, readAt: null });
   res.json({ unreadCount });
@@ -100,7 +116,7 @@ const markAllRead = asyncHandler(async (req, res) => {
     // `deletedAt` here too: "mark all read" must mean the rows on screen. Without
     // it the sweep would silently touch alerts the person has thrown away — and
     // if one were ever restored it would come back already read.
-    { recipient: req.user._id, readAt: null, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)) },
+    { recipient: req.user._id, readAt: null, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)), ...externalScope(req.user) },
     { $set: { readAt: new Date() } }
   );
   res.json({ ok: true });

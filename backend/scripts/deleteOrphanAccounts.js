@@ -37,7 +37,7 @@ const ONLY = (argOf('--only') || '').split(',').map((s) => s.trim().toLowerCase(
 const MAX = Number(argOf('--max') || 50);
 
 // Roles that legitimately have no employee profile — never candidates.
-const PROFILE_LESS_ROLES = ['SuperAdmin', 'CEO', 'MD'];
+const PROFILE_LESS_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God', 'HRConsultancy'];
 
 // Every collection that points at a User, with the field to check. If any of
 // these has a row for an account, that account has history and is left alone.

@@ -17,17 +17,20 @@ import api, { signOut } from '../api/client';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar, FiVideo, FiList } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar, FiVideo, FiList, FiKey } from 'react-icons/fi';
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
-import { hasPermission, hasAnyPermission, hasExplicitPermission, isViewOnly, isViewOnlyAccount, canUseAdminPortal } from '../config/permissions';
+import { hasPermission, hasAnyPermission, hasExplicitPermission, isViewOnly, isViewOnlyAccount, isExternalAccount, canUseAdminPortal } from '../config/permissions';
+// The shared labels, so a role added in config/roles.js (HR Consultancy,
+// Account Manager, God) is named properly here instead of printing its key.
+import { ROLE_LABELS } from '../config/roles';
 import { useNavCountsStore } from '../store/navCountsStore';
 import { formatDateTime12 } from '../utils/time';
 
 const ChatDock = lazy(() => import('./ChatDock'));
 
-const ROLE_LABELS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', CEO: 'CEO', MD: 'MD', Manager: 'Manager', LDManager: 'HR L&D', Employee: 'Employee' };
+
 
 // Roles that never get an EmployeeProfile (see services/ensureProfile.js), so
 // they can never appear in employee search results. GlobalSearch looks these up
@@ -876,6 +879,9 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
   // have no employee profile page to link to — and no employee portal to reach
   // it through — so they get the admin-side account page instead.
   const profilePath = ['SuperAdmin', 'God'].includes(user?.role) ? '/admin/account' : '/employee/profile';
+  // An outside HR consultancy has no profile and no account page — the server
+  // refuses both — so its one self-service action is its password.
+  const external = isExternalAccount(user);
 
   useEffect(() => {
     const onClick = (e) => {
@@ -937,10 +943,17 @@ function ProfileMenu({ user, employeeCode, onLogout }) {
             </div>
           </div>
           <div className="p-1.5">
-            <Link to={profilePath} onClick={() => setOpen(false)}
-              className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-              <FiUser size={16} className="text-gray-400" /> My Profile
-            </Link>
+            {external ? (
+              <Link to="/change-password" onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+                <FiKey size={16} className="text-gray-400" /> Change password
+              </Link>
+            ) : (
+              <Link to={profilePath} onClick={() => setOpen(false)}
+                className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+                <FiUser size={16} className="text-gray-400" /> My Profile
+              </Link>
+            )}
             <Link to="/privacy" onClick={() => setOpen(false)}
               className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
               <FiLock size={16} className="text-gray-400" /> Privacy Policy
@@ -991,14 +1004,18 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // profile). Fetch it so the sidebar card can show the person's job title.
   const [designation, setDesignation] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
+  // An outside account has no employee record and the server refuses the
+  // lookup (see isExternalAccount) — skip the request rather than eat a 403.
+  const external = isExternalAccount(user);
   useEffect(() => {
+    if (external) { setDesignation(''); setEmployeeCode(''); return; }
     api.get('/employees/me')
       .then(({ data }) => {
         setDesignation(data?.profile?.designation || '');
         setEmployeeCode(data?.profile?.employeeCode || '');
       })
       .catch(() => { setDesignation(''); setEmployeeCode(''); });
-  }, [user?._id]);
+  }, [user?._id, external]);
 
   // signOut() tells the backend before clearing the session, so the server
   // console logs the sign-out; it clears the local session either way.
@@ -1029,7 +1046,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // Which portal is being viewed drives the colour theme (Admin vs My Portal),
   // so the same admin user gets a visibly different look in each. Applied to
   // <html> as data-portal; index.css maps it to the accent + surface palette.
-  const portal = sectionTitle === 'Admin' ? 'admin' : 'employee';
+  // Everything but "My Portal" is the admin shell — including the HR
+  // consultancy's, which is titled "Consultancy" but lives under /admin.
+  const portal = sectionTitle === 'My Portal' ? 'employee' : 'admin';
   // Quick top-bar shortcut targets — the current portal's Calendar & Attendance.
   const calendarPath = portal === 'admin' ? '/admin/calendar' : '/employee/calendar';
   const attendancePath = portal === 'admin' ? '/admin/attendance' : '/employee/attendance';
@@ -1081,7 +1100,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   const refreshNavCounts = useNavCountsStore((s) => s.refresh);
   const wantsHrTally = portal === 'admin' || hasPermission(user, 'assets.manage');
   useEffect(() => {
-    if (!user) return undefined;
+    // An outside account decides nothing and has no queues; every count behind
+    // this poll is an endpoint the server refuses it.
+    if (!user || external) return undefined;
     // THE FIRST FETCH IS NOT GATED ON VISIBILITY, only the poll is. A session
     // restored into a BACKGROUND tab — a reopened browser, a middle-clicked
     // link — starts life with document.hidden true, and a guard here meant the
@@ -1100,7 +1121,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [refreshNavCounts, wantsHrTally, user?._id, pathname]);
+  }, [refreshNavCounts, wantsHrTally, user?._id, pathname, external]);
 
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);
@@ -1122,7 +1143,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
     // right. (The mobile drawer's <aside> is a block, so it was unaffected.)
     <div className="flex flex-col h-full w-full min-w-0">
       <div className="brand-bar h-16 flex items-center gap-2 px-5 shrink-0">
-        <Link to={isAdmin ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
+        <Link to={isAdmin || external ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
           <BrandLockup />
         </Link>
       </div>
@@ -1171,7 +1192,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
   // the bar has room for the menu button and the account cluster and nothing
   // else. Each pill reads its own count from the shared store, so drawing the
   // set twice costs nothing and the two can never disagree.
-  const shortcuts = (
+  // None for an outside account: each pill (calendar, tasks, attendance, chat)
+  // leads to a module the server refuses it.
+  const shortcuts = external ? null : (
     <>
       <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
       {/* In the admin portal this leads to the org-wide attendance page,
@@ -1289,15 +1312,19 @@ export default function Layout({ navItems = [], sectionTitle }) {
               sideways and showed two of up to seven. `hidden sm:flex` rather
               than a width rule so the phone row and this one can never both
               show. */}
-          <div className="topbar-scroll hidden sm:flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
-            {shortcuts}
-          </div>
+          {shortcuts && (
+            <div className="topbar-scroll hidden sm:flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
+              {shortcuts}
+            </div>
+          )}
 
-          <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
+          {/* Neither for an outside account: its nav is one page, so search has
+              nothing to find, and it earns no points. */}
+          {!external && <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />}
 
           {/* Between the search and the account cluster — the gap that was there
               anyway. Renders nothing for the staff who earn no points. */}
-          <span className="ml-2 shrink-0"><PointsPill /></span>
+          {!external && <span className="ml-2 shrink-0"><PointsPill /></span>}
 
           {viewOnlyExec && (
             <span className="hidden xl:inline-flex items-center gap-1 ml-1 shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200"
@@ -1365,9 +1392,11 @@ export default function Layout({ navItems = [], sectionTitle }) {
             flex-wrap, not a scroller — every pill is visible at once, which
             is the whole point of moving them here (user report, 2026-09-23:
             the old strip showed two pills and hid the rest sideways). */}
-        <div className="sm:hidden flex flex-wrap items-center gap-2 px-3.5 pt-3">
-          {shortcuts}
-        </div>
+        {shortcuts && (
+          <div className="sm:hidden flex flex-wrap items-center gap-2 px-3.5 pt-3">
+            {shortcuts}
+          </div>
+        )}
 
         {/* The chat dock is now launched from the top bar and hidden until opened
             (no always-on bottom bar), so no extra bottom padding is needed here. */}
@@ -1427,7 +1456,9 @@ export default function Layout({ navItems = [], sectionTitle }) {
           sends messages perfectly well today and must keep the dock. Only God —
           whose every unsafe method `protect` itself refuses — has nothing to do
           in here. */}
-      {chatEnabled && !isViewOnlyAccount(user) && (
+      {/* Nor for an outside account (an HR consultancy): it is nobody's
+          colleague, and `protect` refuses it the chat routes. */}
+      {chatEnabled && !isViewOnlyAccount(user) && !external && (
         // No fallback: the dock is a floating launcher, so a spinner in the
         // corner while its chunk arrives would be noise, not progress.
         <Suspense fallback={null}><ChatDock /></Suspense>

@@ -140,7 +140,7 @@ export default function AdminDashboard() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get('/admin/users');
+      const { data } = await api.get('/admin/users', { params: { includeExternal: true } });
       setUsers(data.users);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load users');
@@ -378,9 +378,21 @@ This cannot be undone.`,
             <form onSubmit={onSave} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">First name</label>
+                  <label className="block text-sm text-gray-700">
+                    {form.role === 'HRConsultancy' ? 'Consultancy name' : 'First name'}
+                  </label>
                   <input required value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                  {/* An HR consultancy has no employee code: it signs in with
+                      this name (utils/loginIdentity on the server), so say so
+                      while it is being typed. */}
+                  {form.role === 'HRConsultancy' && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {form.firstName.trim()
+                        ? <>They sign in with <span className="font-mono font-medium text-gray-700">{form.firstName.trim().toLowerCase()}</span> (any case).</>
+                        : 'They sign in with this name, in any case.'}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Last name</label>

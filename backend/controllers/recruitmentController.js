@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const Job = require('../models/Job');
 const { jobLocations } = require('../models/Job');
 const Candidate = require('../models/Candidate');
+const JobRequest = require('../models/JobRequest');
 const {
   CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS,
   ASSESSMENT_RATINGS, ROUND_RECOMMENDATIONS,
@@ -413,8 +414,37 @@ const deleteJob = asyncHandler(async (req, res) => {
   // Cascade: remove the job's candidates first
   await Candidate.deleteMany({ job: job._id });
   await job.deleteOne();
+  // A job opened from an HR consultancy's request: the request has to stop
+  // saying "Approved — job opened", and the agency that asked for it is told.
+  markRequestedJobDeleted(job, req.user).catch((err) =>
+    console.error('job-request delete stamp failed:', err.message));
   res.json({ id: req.params.id, deleted: true });
 });
+
+/**
+ * Record on any consultancy job request that opened `job` that the job has been
+ * deleted, and tell each requesting agency. Best-effort — the job is already
+ * gone, and a notification must never fail that.
+ * @param {Object} job - the deleted job (needs _id, title)
+ * @param {Object} actor - req.user
+ */
+async function markRequestedJobDeleted(job, actor) {
+  const requests = await JobRequest.find({ job: job._id }).select('requestedBy title').lean();
+  if (!requests.length) return;
+  await JobRequest.updateMany(
+    { job: job._id },
+    { $set: { jobDeletedAt: new Date(), jobDeletedByName: actor?.fullName || '' } }
+  );
+  await Promise.all(requests.map((r) => notify({
+    recipient: r.requestedBy,
+    // The one type an outside account's inbox shows (notificationController).
+    type: 'consultancy',
+    audience: 'admin',
+    title: `Job opening removed: ${job.title || r.title}`,
+    body: 'The company has deleted this opening, so it no longer takes candidates.',
+    link: '/admin/consultancy-jobs?tab=requests',
+  }).catch(() => {})));
+}
 
 // ===== Public application form (no auth) =====
 
@@ -468,7 +498,7 @@ const submitApplication = asyncHandler(async (req, res) => {
     throw new Error('This position is no longer accepting applications.');
   }
 
-  const { name, email, phone, currentCompany, experienceYears, noticePeriod, expectedCtc, coverNote } = req.body;
+  const { name, email, phone, currentCompany, experienceYears, noticePeriod, currentCtc, expectedCtc, coverNote } = req.body;
   if (!name || !name.trim()) {
     res.status(400);
     throw new Error('Your name is required.');
@@ -520,6 +550,7 @@ const submitApplication = asyncHandler(async (req, res) => {
     currentCompany: currentCompany?.trim(),
     experienceYears: experienceYears ? Number(experienceYears) : undefined,
     noticePeriod: noticePeriod?.trim(),
+    currentCtc: currentCtc?.trim(),
     expectedCtc: expectedCtc?.trim(),
     coverNote: coverNote?.trim(),
     // Store the resume bytes in the DB so they persist across redeploys.
@@ -613,6 +644,8 @@ const createCandidate = asyncHandler(async (req, res) => {
     ? stampRejection({}, req.body.rejectionReason, req.user)
     : undefined;
   delete req.body.rejectionReason;
+  // Only the consultancy's own endpoint files a candidate as theirs.
+  delete req.body.consultancy;
   const candidate = await Candidate.create({
     ...req.body,
     ...(rejection ? { rejection } : {}),
@@ -636,6 +669,9 @@ const updateCandidate = asyncHandler(async (req, res) => {
     throw new Error('Candidate not found');
   }
   delete req.body.createdBy;
+  // Which consultancy sent the candidate is a fact of how they arrived, and it
+  // decides who may see them on the consultancy board — not an editable field.
+  delete req.body.consultancy;
   // Don't let a general update clobber the resume or rounds — those have
   // dedicated routes.
   delete req.body.resumePath;
@@ -708,6 +744,54 @@ const deleteCandidate = asyncHandler(async (req, res) => {
   await candidate.deleteOne();
   res.json({ id: req.params.id, deleted: true });
 });
+
+// ===== Rounds that belong to an HR consultancy =====
+// A candidate an outside HR consultancy sent in (Candidate.consultancy) has
+// Round 1 taken by the AGENCY: it interviews them and records the verdict from
+// its own portal (consultancyController decideRound1). The company books and
+// decides Rounds 2-4 only. The agency may JOIN those later rounds — it is on
+// their invites, and it is told when one is booked — but never writes one up.
+
+const CONSULTANCY_BOARD_LINK = '/admin/consultancy?tab=cleared';
+
+/**
+ * Refuse a company-side write to Round 1 of a consultancy-sourced candidate.
+ * @param {Object} candidate
+ * @param {number} idx - the round index being written
+ * @param {import('express').Response} res
+ * @throws 409
+ */
+function assertCompanyRound(candidate, idx, res) {
+  if (idx !== 0 || !candidate?.consultancy?.user) return;
+  res.status(409);
+  throw new Error(`Round 1 is taken by ${candidate.consultancy.name || 'the HR consultancy'}, who record it from their own portal. Schedule Round 2 onwards here.`);
+}
+
+/**
+ * Tell the agency behind a candidate that one of the later rounds has been
+ * booked (or re-booked), so it can join. Best-effort; silent for anyone else's
+ * candidate and for Round 1.
+ * @param {Object} candidate
+ * @param {Object} round
+ * @param {number} idx
+ */
+function tellAgencyOfRound(candidate, round, idx) {
+  const agency = candidate?.consultancy?.user;
+  if (!agency || idx < 1) return;
+  const label = round.label || `Round ${idx + 1}`;
+  const when = round.scheduledAt
+    ? `${new Date(round.scheduledAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST)`
+    : 'Time to be confirmed';
+  notify({
+    recipient: agency,
+    // The one type an outside account's inbox shows (notificationController).
+    type: 'consultancy',
+    audience: 'admin',
+    title: `${label} scheduled: ${candidate.name}`,
+    body: `${when}.${round.meetingLink ? ' Join from My Candidates.' : ' The meeting link will follow.'}`,
+    link: CONSULTANCY_BOARD_LINK,
+  }).catch(() => {});
+}
 
 // ===== The written assessment behind a round =====
 // Two paths write it: HR from Recruitment, and the assigned interviewer from
@@ -839,8 +923,13 @@ const setRound = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Invalid round index');
   }
+  // Round 1 of a consultancy candidate is the agency's to take and record.
+  assertCompanyRound(candidate, idx, res);
   const round = candidate.rounds[idx];
   const prevStatus = round.status;
+  // What the agency last heard about this slot — a change to either is news to
+  // it (tellAgencyOfRound below).
+  const prevSlot = `${round.scheduledAt ? new Date(round.scheduledAt).getTime() : ''}|${round.meetingLink || ''}`;
   const statusChanged = req.body.status !== undefined && req.body.status !== round.status;
   if (req.body.status !== undefined) {
     if (!ROUND_STATUS.includes(req.body.status)) {
@@ -937,6 +1026,10 @@ const setRound = asyncHandler(async (req, res) => {
   }
 
   await candidate.save();
+  // An agency candidate's later round has a new time or link: the agency joins
+  // those rounds, so it hears about it.
+  const nextSlot = `${round.scheduledAt ? new Date(round.scheduledAt).getTime() : ''}|${round.meetingLink || ''}`;
+  if (nextSlot !== prevSlot && (round.scheduledAt || round.meetingLink)) tellAgencyOfRound(candidate, round, idx);
   res.json({ candidate });
 });
 
@@ -1188,7 +1281,9 @@ function resumeAttachment(candidate) {
   return null;
 }
 
-// Recipients of the invite email: the candidate + the assigned interviewer.
+// Recipients of the invite email: the candidate + the assigned interviewer —
+// and, for a candidate an HR consultancy sent in, the agency, which sits in on
+// every round after its own (it may join, never write up).
 async function meetInviteRecipients(candidate, round) {
   const to = [];
   if (candidate.email) to.push(candidate.email);
@@ -1196,7 +1291,19 @@ async function meetInviteRecipients(candidate, round) {
     const iv = await User.findById(round.interviewer).select('email');
     if (iv?.email) to.push(iv.email);
   }
-  return to;
+  const agencyId = candidate.consultancy?.user;
+  if (agencyId && String(agencyId) !== String(round.interviewer || '')) {
+    const agency = await User.findById(agencyId).select('email isActive');
+    if (agency?.isActive && agency.email) to.push(agency.email);
+  }
+  // One copy each, whatever the capitalisation.
+  const seen = new Set();
+  return to.filter((e) => {
+    const key = String(e).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -1236,6 +1343,7 @@ const createRoundMeet = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Invalid round index');
   }
+  assertCompanyRound(candidate, idx, res);
   const round = candidate.rounds[idx];
 
   // Schedule: use the provided time, else the round's existing time, else start
@@ -1284,6 +1392,7 @@ const createRoundMeet = asyncHandler(async (req, res) => {
   round.scheduledAt = start;
   round.meetDurationMinutes = durationMin;
   await candidate.save();
+  tellAgencyOfRound(candidate, round, idx);
 
   // Portal notification (+ push) for the assigned interviewer with the link.
   if (round.interviewer) {
@@ -1361,6 +1470,7 @@ const sendRoundMeetEmail = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('Invalid round index');
   }
+  assertCompanyRound(candidate, idx, res);
   const round = candidate.rounds[idx];
   if (!round.meetingLink) {
     res.status(400);
@@ -2719,6 +2829,16 @@ module.exports = {
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
   letterDraft, previewLetter,
   candidateScopeGuard,
+  // Shared with controllers/consultancyController.js, which runs the HR
+  // consultancy's side of the same pipeline and must apply the very same
+  // company wall, location rule, rejection stamp and assessment merge — a copy
+  // of any of these would drift from the original. Not routed.
+  internals: {
+    jobCompanyFilter, jobOutOfScope, allowedJobIds,
+    resolveCandidateLocation, priorRejectionMap, recruitmentFlagRecipients,
+    stampRejection, notifyPriorRejection,
+    applyAssessment, roundSummary, SUGGESTED_REMARK_CHARS,
+  },
   // Internals exercised directly by the scratch tests; not routed.
   __test: { documentReviewSummary, cleanLetterBody },
 };

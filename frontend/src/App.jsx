@@ -6,7 +6,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useThemeStore } from './store/themeStore';
-import { adminNav, employeeNav, ldNav, accountsNav } from './config/nav';
+import { adminNav, employeeNav, ldNav, accountsNav, consultancyNav } from './config/nav';
 // Login stays eager: it is the first paint for every signed-out visitor, and
 // the one screen where a chunk round-trip would be felt.
 import Login from './pages/Login.jsx';
@@ -76,6 +76,12 @@ const AdminProjects = lazy(() => import('./pages/AdminProjects.jsx'));
 const Tasks = lazy(() => import('./pages/Tasks.jsx'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail.jsx'));
 const AdminRecruitment = lazy(() => import('./pages/AdminRecruitment.jsx'));
+// One page for both sides of the HR consultancy flow: the agency adds its
+// candidates and takes Round 1 there; HR, CEO/MD and the Backend follow them.
+const ConsultancyCandidates = lazy(() => import('./pages/ConsultancyCandidates.jsx'));
+// Same two-viewer shape: the agency's Job Openings (and its requests for new
+// ones), and the company's queue of those requests to accept or reject.
+const ConsultancyJobs = lazy(() => import('./pages/ConsultancyJobs.jsx'));
 const AdminAssets = lazy(() => import('./pages/AdminAssets.jsx'));
 const AdminPerformance = lazy(() => import('./pages/AdminPerformance.jsx'));
 const AdminTraining = lazy(() => import('./pages/AdminTraining.jsx'));
@@ -157,6 +163,8 @@ function AdminHome() {
   const role = useAuthStore((s) => s.user?.role);
   if (role === 'LDManager') return <Navigate to="courses" replace />;
   if (role === 'AccountsManager') return <Navigate to="cashbook" replace />;
+  // An outside HR consultancy has exactly one page.
+  if (role === 'HRConsultancy') return <Navigate to="consultancy" replace />;
   // A Manager's admin portal is their team's approvals; the dashboard API is
   // gated above them, so landing there showed a raw 403 as the first thing they
   // saw after signing in.
@@ -233,8 +241,11 @@ export default function App() {
         element={
           // Manager is listed, but `admin` makes the guard also require at least
           // one granted capability — the role alone opens nothing.
-          <ProtectedRoute admin roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'God', 'Manager']}>
-            <Layout navItems={role === 'LDManager' ? ldNav : role === 'AccountsManager' ? accountsNav : adminNav} sectionTitle="Admin" />
+          <ProtectedRoute admin roles={['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'God', 'HRConsultancy', 'Manager']}>
+            <Layout
+              navItems={role === 'LDManager' ? ldNav : role === 'AccountsManager' ? accountsNav : role === 'HRConsultancy' ? consultancyNav : adminNav}
+              sectionTitle={role === 'HRConsultancy' ? 'Consultancy' : 'Admin'}
+            />
           </ProtectedRoute>
         }
       >
@@ -295,6 +306,8 @@ export default function App() {
             the portal it was followed from. */}
         <Route path="tasks/:id" element={<TaskDetail base="/admin/tasks" />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
+        <Route path="consultancy" element={<ConsultancyCandidates />} />
+        <Route path="consultancy-jobs" element={<ConsultancyJobs />} />
         {/* CEO/MD take interview rounds too, and have no employee portal to
             record them from — same page as /employee/interviews, which
             authorises on identity rather than on a role. */}

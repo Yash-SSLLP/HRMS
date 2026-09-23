@@ -11,7 +11,7 @@ import BrandLockup from '../components/BrandLockup';
 
 const blank = {
   name: '', email: '', phone: '', currentCompany: '',
-  experienceYears: '', noticePeriod: '', expectedCtc: '', coverNote: '',
+  experienceYears: '', noticePeriod: '', currentCtc: '', expectedCtc: '', coverNote: '',
   // Which of the opening's locations they are applying to. One requisition is
   // routinely open in several places at once, and the branch is the applicant's
   // answer, not the posting's — see Job.locations / Candidate.location.
@@ -180,11 +180,15 @@ export default function ApplyForm() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Experience (years)</label>
             <input type="number" min="0" step="0.5" value={form.experienceYears} onChange={set('experienceYears')} className={input} />
           </div>
-          <div>
+          <div className="sm:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Notice period</label>
             <input value={form.noticePeriod} onChange={set('noticePeriod')} placeholder="e.g. 30 days" className={input} />
           </div>
-          <div className="sm:col-span-2">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Current in-hand CTC</label>
+            <input value={form.currentCtc} onChange={set('currentCtc')} placeholder="e.g. ₹8 LPA" className={input} />
+          </div>
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Expected CTC</label>
             <input value={form.expectedCtc} onChange={set('expectedCtc')} placeholder="e.g. ₹12 LPA" className={input} />
           </div>

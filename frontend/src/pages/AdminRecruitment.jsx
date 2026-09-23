@@ -13,6 +13,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import DesignationSelect from '../components/DesignationSelect';
 import DepartmentSelect from '../components/DepartmentSelect';
+import LocationsField from '../components/LocationsField';
 import MailComposeModal from '../components/MailComposeModal';
 import EmployeePicker from '../components/EmployeePicker';
 import { confirmDialog, promptDialog } from '../components/dialogs';
@@ -22,7 +23,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import { formatDateTime12 } from '../utils/time';
 import {
   AssessmentForm, AssessmentView, PreviousRounds, RecommendationChip,
-  PriorRejectionChip, PriorRejections,
+  PriorRejectionChip, PriorRejections, RoundBadge,
   assessmentOf, hasAssessment, averageRating,
 } from '../components/InterviewAssessment';
 
@@ -136,56 +137,8 @@ const jobLocationsOf = (j) => {
   return one ? [one] : [];
 };
 
-/**
- * The job-form locations editor: a chip per place, plus a box to add another.
- * A requisition open in Delhi, Indore and Raipur is one job with three
- * locations, and the applicant picks which one they are applying to.
- */
-function LocationsField({ value = [], onChange }) {
-  const [draft, setDraft] = useState('');
-  const add = () => {
-    const name = draft.trim();
-    if (!name) return;
-    // Case-insensitive, so "delhi" cannot join "Delhi" as a second branch.
-    if (!value.some((l) => l.toLowerCase() === name.toLowerCase())) onChange([...value, name]);
-    setDraft('');
-  };
-  return (
-    <div className="sm:col-span-2">
-      <label className="block text-xs text-gray-600 mb-1">Locations</label>
-      {value.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {value.map((l) => (
-            <span key={l} className="inline-flex items-center gap-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-lg pl-2.5 pr-1 py-1 min-h-[28px]">
-              {l}
-              <button type="button" aria-label={`Remove ${l}`} title={`Remove ${l}`}
-                onClick={() => onChange(value.filter((x) => x !== l))}
-                className="inline-flex items-center justify-center w-6 h-6 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">×</button>
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          // Enter adds a location; it must not submit the whole job form, which
-          // is what a bare Enter in a text input inside a <form> does.
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-          placeholder={value.length ? 'Add another location' : 'e.g. Indore'}
-          className="flex-1 border rounded-lg px-3 py-2"
-        />
-        <button type="button" onClick={add} disabled={!draft.trim()}
-          className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">Add</button>
-      </div>
-      <p className="text-[11px] text-gray-500 mt-1">
-        {value.length > 1
-          ? 'Applicants choose one of these on the application form.'
-          : 'Add every place this role is open in — applicants then choose which one they are applying to.'}
-      </p>
-    </div>
-  );
-}
+// The job-form locations editor lives in components/LocationsField.jsx — the
+// consultancy's request form and its approval form use the same one.
 
 /**
  * The interview the offer letter refers back to ("further to your interview
@@ -216,7 +169,7 @@ const ROUND_STYLES = {
 // the legacy single `location` is not in the form at all any more — the server
 // keeps it in step as the first entry.
 const blankJob = { title: '', department: '', locations: [], employmentType: 'FullTime', openings: 1, description: '', status: 'Open', company: '' };
-const blankCand = { name: '', email: '', phone: '', job: '', location: '', stage: 'Applied', rating: 0, notes: '' };
+const blankCand = { name: '', email: '', phone: '', job: '', location: '', stage: 'Applied', rating: 0, currentCtc: '', expectedCtc: '', notes: '' };
 
 export default function AdminRecruitment() {
   // A view-only account (the God audit login, a read-only CEO/MD) reads the
@@ -395,7 +348,7 @@ export default function AdminRecruitment() {
   };
   const openCandEdit = (c) => {
     setCandEditId(c._id);
-    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', location: c.location || '', stage: c.stage, rating: c.rating || 0, notes: c.notes || '' });
+    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', location: c.location || '', stage: c.stage, rating: c.rating || 0, currentCtc: c.currentCtc || '', expectedCtc: c.expectedCtc || '', notes: c.notes || '' });
     setCandModal(true);
   };
   const saveCand = async (e) => {
@@ -797,10 +750,20 @@ export default function AdminRecruitment() {
     return `${cleared}/${(c.rounds || []).length} cleared`;
   };
 
+  // Round 1 of a candidate an HR consultancy sent in belongs to the AGENCY: it
+  // takes the interview and records the verdict from its own portal, and the
+  // server refuses the company's writes to it (recruitmentController
+  // assertCompanyRound). So that one card is drawn read-only.
+  const isAgencyRound = (c, idx) => idx === 0 && !!c?.consultancy?.user;
+
   // The Candidates table shows only candidates who have been shortlisted (and
   // are therefore in the interview process). Applicants awaiting a decision
   // ('Applied') and rejected ones are handled in the per-job applicants modal.
-  const shortlistedCandidates = candidates.filter((c) => c.stage !== 'Applied' && c.stage !== 'Rejected');
+  // A consultancy's candidate joins only once the agency has SHORTLISTED them
+  // at Round 1 — before that there is nothing here for HR to schedule, and a
+  // Round 1 rejection is the agency's call (both live on Consultancy Candidates).
+  const shortlistedCandidates = candidates.filter((c) => c.stage !== 'Applied' && c.stage !== 'Rejected'
+    && !(c.consultancy?.user && c.rounds?.[0]?.status !== 'Cleared'));
 
   return (
     <div>
@@ -902,6 +865,14 @@ export default function AdminRecruitment() {
                     <div className="font-medium text-gray-900 flex flex-wrap items-center gap-2">
                       {c.name}
                       {c.source === 'Application' && <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">Applied online</span>}
+                      {/* Sent in by an outside HR consultancy, which takes Round 1
+                          itself — see the Consultancy Candidates page. */}
+                      {c.source === 'Consultancy' && (
+                        <span className="text-[10px] uppercase tracking-wide bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded"
+                          title="Added by an HR consultancy, which records Round 1">
+                          Via {c.consultancy?.name || 'consultancy'}
+                        </span>
+                      )}
                       {/* Turned down before. Expand the row for the reason and
                           the write-ups from that attempt. */}
                       <PriorRejectionChip flag={c.priorRejection} />
@@ -997,11 +968,12 @@ export default function AdminRecruitment() {
                         </div>
                       )}
                       {/* Application details */}
-                      {(c.currentCompany || c.experienceYears != null || c.noticePeriod || c.expectedCtc || c.coverNote) && (
+                      {(c.currentCompany || c.experienceYears != null || c.noticePeriod || c.currentCtc || c.expectedCtc || c.coverNote) && (
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 text-sm">
                           {c.currentCompany && <div><div className="text-xs text-gray-500">Current company</div><div className="text-gray-800">{c.currentCompany}</div></div>}
                           {c.experienceYears != null && <div><div className="text-xs text-gray-500">Experience</div><div className="text-gray-800">{c.experienceYears} yrs</div></div>}
                           {c.noticePeriod && <div><div className="text-xs text-gray-500">Notice period</div><div className="text-gray-800">{c.noticePeriod}</div></div>}
+                          {c.currentCtc && <div><div className="text-xs text-gray-500">Current in-hand CTC</div><div className="text-gray-800">{c.currentCtc}</div></div>}
                           {c.expectedCtc && <div><div className="text-xs text-gray-500">Expected CTC</div><div className="text-gray-800">{c.expectedCtc}</div></div>}
                           {c.coverNote && <div className="col-span-2 md:col-span-4"><div className="text-xs text-gray-500">Cover note</div><div className="text-gray-700">{c.coverNote}</div></div>}
                         </div>
@@ -1017,10 +989,56 @@ export default function AdminRecruitment() {
                         </div>
                       ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                        {(c.rounds || []).map((r, idx) => (
+                        {(c.rounds || []).map((r, idx) => (isAgencyRound(c, idx) ? (
+                          // The consultancy's own round: who took it and what
+                          // they wrote, nothing to schedule or change. Their
+                          // account is not in the interviewer picker (outside
+                          // accounts never are), which is why the picker used to
+                          // print it as "(inactive)".
                           <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-gray-800">{r.label || `Round ${idx + 1}`}</span>
+                              <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
+                              <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>
+                                {r.status === 'Cleared' ? 'Shortlisted' : r.status}
+                              </span>
+                            </div>
+                            <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-700 mb-2">
+                              <span className="block truncate">{c.consultancy?.name || r.interviewerName || 'HR consultancy'}</span>
+                              <span className="block text-[10px] text-gray-500">HR consultancy · takes this round</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => openFeedback(c, idx)}
+                              title={r.feedback || 'Read the consultancy\u2019s assessment'}
+                              className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
+                            >
+                              <span className="flex items-center justify-between gap-1">
+                                <span className="font-medium text-gray-700">Assessment</span>
+                                <span className="flex items-center gap-1">
+                                  <RecommendationChip value={assessmentOf(r).recommendation} />
+                                  {averageRating(r) != null && (
+                                    <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
+                                  )}
+                                </span>
+                              </span>
+                              <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
+                                {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
+                              </span>
+                            </button>
+                            <p className="mt-2 text-[11px] text-gray-500 leading-snug">
+                              Taken and recorded by the consultancy from their portal. Schedule Round 2 onwards here — they are on those invites and can join.
+                            </p>
+                            {r.decidedByName && (
+                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight">
+                                Recorded by <span className="font-medium text-gray-500">{r.decidedByName}</span>
+                                {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
                               <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
                             </div>
                             <select
@@ -1145,7 +1163,7 @@ export default function AdminRecruitment() {
                               </div>
                             )}
                           </div>
-                        ))}
+                        )))}
                       </div>
                       )}
                     </td>
@@ -1163,6 +1181,9 @@ export default function AdminRecruitment() {
         if (!c) return null;
         const idx = fbRound.index;
         const r = c.rounds?.[idx] || {};
+        // Read-only for a view-only account, and for everybody on the
+        // consultancy's own Round 1 (the server refuses the company's writes).
+        const readOnly = viewOnly || isAgencyRound(c, idx);
         const previous = (c.rounds || []).slice(0, idx).map((p, i) => ({
           index: i,
           label: p.label || `Round ${i + 1}`,
@@ -1178,7 +1199,10 @@ export default function AdminRecruitment() {
             <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-5 my-8">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{r.label || `Round ${idx + 1}`} · {c.name}</h3>
+                  <h3 className="text-lg font-semibold text-gray-900 flex flex-wrap items-center gap-2">
+                    <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
+                    {c.name}
+                  </h3>
                   <p className="text-xs text-gray-500 mt-0.5">
                     {[c.job?.title || 'No role', c.location].filter(Boolean).join(' · ')} · {r.interviewerName || 'No interviewer assigned'}
                     {r.decidedAt ? ` · decided ${fmtDateTime(r.decidedAt)}` : ''}
@@ -1198,11 +1222,18 @@ export default function AdminRecruitment() {
                 <div className="mt-4"><PreviousRounds rounds={previous} defaultOpen={false} /></div>
               )}
 
-              <div className="mt-4">
-                {viewOnly
-                  ? <AssessmentView round={r} />
-                  : <AssessmentForm value={fbDraft} onChange={setFbDraft} />}
-              </div>
+              <section className="my-round-panel mt-4">
+                <div className="my-round-panel-head flex flex-wrap items-center gap-2 px-4 py-2.5">
+                  <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
+                  <span className="text-sm font-semibold text-gray-900">Assessment</span>
+                  <span className="text-[11px] text-gray-500">{r.interviewerName || 'No interviewer assigned'}</span>
+                </div>
+                <div className="p-4">
+                  {readOnly
+                    ? <AssessmentView round={r} />
+                    : <AssessmentForm value={fbDraft} onChange={setFbDraft} />}
+                </div>
+              </section>
 
               {(r.history || []).length > 0 && (
                 <div className="mt-4 border-t border-gray-100 pt-3">
@@ -1221,13 +1252,13 @@ export default function AdminRecruitment() {
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-gray-500 max-w-md">
-                  {viewOnly
+                  {readOnly
                     ? 'Recorded by the interviewer. The next round sees this alongside their own form.'
                     : 'The next round\u2019s interviewer sees this before their call, and it stays on the candidate\u2019s record.'}
                 </p>
                 <div className="flex gap-2">
                   <button onClick={() => setFbRound(null)} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Close</button>
-                  {!viewOnly && (
+                  {!readOnly && (
                     <button onClick={saveFeedback} disabled={fbSaving}
                       className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
                       {fbSaving ? 'Saving…' : 'Save assessment'}
@@ -1314,6 +1345,8 @@ export default function AdminRecruitment() {
                 <select value={candForm.rating} onChange={(e) => setCandForm({ ...candForm, rating: Number(e.target.value) })} className="block w-full border rounded-lg px-3 py-2 sm:col-span-2">
                   {[0, 1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} star{r === 1 ? '' : 's'}</option>)}
                 </select>
+                <input placeholder="Current in-hand CTC" value={candForm.currentCtc} onChange={(e) => setCandForm({ ...candForm, currentCtc: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+                <input placeholder="Expected CTC" value={candForm.expectedCtc} onChange={(e) => setCandForm({ ...candForm, expectedCtc: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               </div>
               <textarea rows={3} placeholder="Notes" value={candForm.notes} onChange={(e) => setCandForm({ ...candForm, notes: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="flex justify-end gap-2 pt-2">

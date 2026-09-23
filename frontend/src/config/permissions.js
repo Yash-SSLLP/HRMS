@@ -253,6 +253,9 @@ export const canAdministerEmployee = (me, target) => {
 export function canUseAdminPortal(user) {
   if (!user) return false;
   if (['SuperAdmin', 'HRManager', 'CEO', 'MD', 'LDManager', 'AccountsManager', 'God'].includes(user.role)) return true;
+  // The outside HR consultancy lives in the admin shell with a one-page nav
+  // (consultancyNav) — it has no employee portal to fall back to.
+  if (isExternalAccount(user)) return true;
   if (user.role === 'Manager') return Array.isArray(user.permissions) && user.permissions.length > 0;
   return false;
 }
@@ -279,6 +282,17 @@ export const isEditingExec = (user) => isExecViewer(user) && user?.execEditAcces
  * @returns {boolean}
  */
 export const isViewOnlyAccount = (user) => user?.role === 'God';
+
+/**
+ * An OUTSIDE account — an HR consultancy. Mirrors isExternalAccount in the
+ * backend's authMiddleware, where `protect` refuses it everything but its own
+ * workspace (/recruitment/consultancy/*), the notification bell and its own
+ * account. Ask this before drawing any shell chrome that calls another module
+ * (search, chat, shortcuts, points): each would be a request the server refuses.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const isExternalAccount = (user) => user?.role === 'HRConsultancy';
 
 /**
  * Can this account change ANYTHING? The question every "should I offer this

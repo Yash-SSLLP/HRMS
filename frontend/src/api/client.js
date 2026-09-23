@@ -107,6 +107,10 @@ const EXEC_WRITE_PATHS = [
   // The backstop must not refuse it one step earlier than the server would.
   /\/leave\/requests\/[^/]+\/(approve|reject|amend)(\?|$)/,
   /\/leave\/emergency\/[^/]+\/(review|double-cut)(\?|$)/,
+  // JOB-OPENING REQUESTS from an HR consultancy. A CEO/MD may accept or reject
+  // one in either mode (jobRequestController canDecideJobRequests) — the request
+  // is addressed to them — so the backstop must let the decision through.
+  /\/recruitment\/consultancy\/job-requests\/[^/]+\/(approve|reject)(\?|$)/,
 ];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job

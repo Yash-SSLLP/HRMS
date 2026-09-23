@@ -12,6 +12,9 @@
  *   "admin"                           -> the SuperAdmin account
  *   "CEO" / "MD"                      -> the executive accounts
  *   "God"                             -> the view-only audit account
+ *   "krishave"                        -> an HR consultancy, by its account's
+ *                                        FIRST NAME (there can be several, so
+ *                                        no single alias could name one)
  *   "someone@company.com"             -> kept working, but only while the
  *                                        address still points at one account
  *
@@ -132,10 +135,84 @@ async function resolveLoginUser(rawIdentifier) {
   }
 
   const profile = profiles[0];
-  if (!profile || !profile.user) return { user: null, ambiguous: false, reason: null };
+  // Last: an HR consultancy's first name. Checked after the employee code so a
+  // code can never be shadowed by a name — and assertConsultancyLoginName keeps
+  // the two from colliding in the first place.
+  if (!profile || !profile.user) return resolveConsultancy(key);
 
   const found = pickOne(await withPassword({ _id: profile.user }));
   return { user: found.user, ambiguous: false, reason: null };
+}
+
+// ===== HR consultancy sign-in =====
+// An outside HR consultancy (User role HRConsultancy) has no employee code, and
+// there can be any number of them, so it signs in with its account's FIRST NAME
+// — the consultancy's name, e.g. "krishave" (user decision 2026-09-23). The
+// comparison is squashed like every other identifier here: case and spaces do
+// not matter.
+const CONSULTANCY_ROLE = 'HRConsultancy';
+
+/**
+ * The consultancy accounts whose first name squashes to `key`.
+ * Reads names only, then loads the password hash for the matches alone.
+ * @param {string} key - squashed identifier
+ * @param {*} [excludeUserId]
+ * @returns {Promise<Object[]>} lean rows {_id, isActive}
+ */
+async function consultanciesNamed(key, excludeUserId = null) {
+  if (!key) return [];
+  const rows = await User.find({ role: CONSULTANCY_ROLE }).select('_id firstName isActive').lean();
+  return rows.filter((u) => squash(u.firstName) === key
+    && (!excludeUserId || String(u._id) !== String(excludeUserId)));
+}
+
+/**
+ * Resolve a squashed identifier to an HR consultancy by first name.
+ * @param {string} key
+ * @returns {Promise<{user: Object|null, ambiguous: boolean, reason: string|null}>}
+ */
+async function resolveConsultancy(key) {
+  const matches = await consultanciesNamed(key);
+  if (!matches.length) return { user: null, ambiguous: false, reason: null };
+  const found = pickOne(await withPassword({ _id: { $in: matches.map((m) => m._id) } }));
+  if (found.ambiguous) {
+    return {
+      user: null,
+      ambiguous: true,
+      reason: 'More than one consultancy account has that name. Please sign in with your email address.',
+    };
+  }
+  return { user: found.user, ambiguous: false, reason: null };
+}
+
+/**
+ * Why `firstName` cannot be an HR consultancy's sign-in name, or null when it
+ * can. Called when a consultancy account is created, renamed, or given the role:
+ * the name must be something to type (not an address), must not be one of the
+ * role aliases ("admin", "CEO", "MD", "God"), must not be somebody's employee
+ * code, and must not be another consultancy's name — any of those would make
+ * the login ambiguous or, worse, sign in the wrong account.
+ * @param {string} firstName
+ * @param {*} [excludeUserId] - the account being edited
+ * @returns {Promise<string|null>}
+ */
+async function consultancyLoginNameProblem(firstName, excludeUserId = null) {
+  const key = squash(firstName);
+  if (!key) return 'An HR consultancy needs a first name — it is what they sign in with.';
+  if (looksLikeEmail(firstName)) return "An HR consultancy's first name is its sign-in name, so it cannot be an email address.";
+  if (ROLE_ALIASES[key]) return `"${String(firstName).trim()}" is reserved for another sign-in. Choose a different first name for the consultancy.`;
+  if ((await consultanciesNamed(key, excludeUserId)).length) {
+    return `Another HR consultancy already signs in as "${String(firstName).trim()}". Choose a different first name.`;
+  }
+  const codeTaken = await EmployeeProfile.findOne({ employeeCode: normalizeCode(firstName) }).select('_id').lean()
+    || (await EmployeeProfile.aggregate([
+      { $addFields: { _squashed: { $toUpper: { $replaceAll: { input: '$employeeCode', find: ' ', replacement: '' } } } } },
+      { $match: { _squashed: key } },
+      { $limit: 1 },
+      { $project: { _id: 1 } },
+    ]))[0];
+  if (codeTaken) return `"${String(firstName).trim()}" is an employee code. Choose a different first name for the consultancy.`;
+  return null;
 }
 
 /**
@@ -162,6 +239,7 @@ async function activeAccountWithEmail(email, excludeUserId = null) {
 module.exports = {
   resolveLoginUser,
   activeAccountWithEmail,
+  consultancyLoginNameProblem,
   ROLE_ALIASES,
   squash,
   normalizeCode,

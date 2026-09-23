@@ -61,6 +61,7 @@ const ROLE_TONES = {
   LDManager: 'bg-sky-50 text-sky-700 border-sky-200',
   AccountsManager: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   God: 'bg-slate-100 text-slate-700 border-slate-300',
+  HRConsultancy: 'bg-orange-50 text-orange-700 border-orange-200',
   Employee: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
@@ -107,6 +108,9 @@ function GrantRow({ label, aria, ...rest }) {
 }
 
 /** A cell for a grant that does not apply to this kind of account. */
+// Why an outside HR consultancy has nothing to grant in the module columns.
+const EXTERNAL_HINT = 'An HR consultancy is an outside account: it can only add candidates and take their Round 1, so no module grant applies to it.';
+
 const NotApplicable = ({ hint }) => (
   <span title={hint} className="text-gray-300 select-none">—</span>
 );
@@ -191,7 +195,10 @@ function AccessTab({ showGuide, setShowGuide }) {
     setLoading(true); setError('');
     try {
       const [u, c, o, comp] = await Promise.all([
-        api.get('/admin/users'),
+        // includeExternal: an HR consultancy is left out of /admin/users by
+        // default (it is nobody's picker option), but its company access is
+        // set on this page.
+        api.get('/admin/users', { params: { includeExternal: true } }),
         // A catalogue that fails to load is NOT a quiet degradation: the
         // capability dialog would render empty and its Save would write "no
         // capabilities" to whoever it was opened on. The rest of the page still
@@ -667,7 +674,13 @@ function AccessTab({ showGuide, setShowGuide }) {
               // mode to lift — but WHICH companies it may look at is a Backend
               // decision, made with the same picker the executives use.
               const isViewOnlyAcct = u.role === 'God';
-              const hasCompanyAccess = isExec || isViewOnlyAcct;
+              // An outside HR consultancy: the server confines it to its own
+              // workspace, so no module grant can reach it — a switch in those
+              // columns would be a control that does nothing. What IS decided
+              // here is which companies' openings it may recruit for.
+              const isExternal = u.role === 'HRConsultancy';
+              const hasCompanyAccess = isExec || isViewOnlyAcct || isExternal;
+              const outside = <NotApplicable hint={EXTERNAL_HINT} />;
               return (
                 <tr key={id}>
                   <td className="px-4 py-3">
@@ -690,28 +703,38 @@ function AccessTab({ showGuide, setShowGuide }) {
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.cashbookAccess} busy={isBusy('cashbookAccess')} label="Cashbook access"
-                      title={GRANT_HELP.cashbook} onChange={() => toggleCashbook(u)} />
+                    {isExternal ? outside : (
+                      <ToggleSwitch checked={!!u.cashbookAccess} busy={isBusy('cashbookAccess')} label="Cashbook access"
+                        title={GRANT_HELP.cashbook} onChange={() => toggleCashbook(u)} />
+                    )}
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.expensesAccess} busy={isBusy('expensesAccess')} label="Expenses access"
-                      title={GRANT_HELP.expenses} onChange={() => toggleExpenses(u)} />
+                    {isExternal ? outside : (
+                      <ToggleSwitch checked={!!u.expensesAccess} busy={isBusy('expensesAccess')} label="Expenses access"
+                        title={GRANT_HELP.expenses} onChange={() => toggleExpenses(u)} />
+                    )}
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.assetsAccess} busy={isBusy('assetsAccess')} label="Assets access"
-                      title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
+                    {isExternal ? outside : (
+                      <ToggleSwitch checked={!!u.assetsAccess} busy={isBusy('assetsAccess')} label="Assets access"
+                        title={GRANT_HELP.assets} onChange={() => toggleAssets(u)} />
+                    )}
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.loansAccess} busy={isBusy('loansAccess')} label="Loan approvals"
-                      title={GRANT_HELP.loans} onChange={() => toggleLoans(u)} />
+                    {isExternal ? outside : (
+                      <ToggleSwitch checked={!!u.loansAccess} busy={isBusy('loansAccess')} label="Loan approvals"
+                        title={GRANT_HELP.loans} onChange={() => toggleLoans(u)} />
+                    )}
                   </td>
 
                   <td className="px-4 py-3">
-                    <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="Training"
-                      title={GRANT_HELP.training} onChange={() => toggleTraining(u)} />
+                    {isExternal ? outside : (
+                      <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="Training"
+                        title={GRANT_HELP.training} onChange={() => toggleTraining(u)} />
+                    )}
                   </td>
 
                   {/* One dropdown per incentive tab. A second incentive adds a
@@ -719,7 +742,7 @@ function AccessTab({ showGuide, setShowGuide }) {
                       parameter. HR and the executives run every incentive by
                       role, so there is nothing to choose for them. */}
                   <td className="px-4 py-3">
-                    {['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(u.role) ? (
+                    {isExternal ? outside : ['SuperAdmin', 'HRManager', 'CEO', 'MD'].includes(u.role) ? (
                       <span className="text-xs text-gray-400" title="Runs every incentive by their role.">
                         By role
                       </span>
@@ -751,12 +774,14 @@ function AccessTab({ showGuide, setShowGuide }) {
                       shown even for roles that already hold the module, since
                       none of them can download without it. */}
                   <td className="px-4 py-3">
+                    {isExternal ? outside : (
                     <div className="flex flex-col gap-2">
                       <GrantRow label="Module" aria="Employee cashbook module access" checked={!!u.khataAccess} busy={isBusy('khataAccess')}
                         title={GRANT_HELP.khata} onChange={() => toggleKhata(u)} />
                       <GrantRow label="Export" aria="Employee cashbook spreadsheet download" checked={!!u.khataExportAccess} busy={isBusy('khataExportAccess')}
                         title={GRANT_HELP.khataExport} onChange={() => toggleKhataExport(u)} />
                     </div>
+                    )}
                   </td>
 
                   {/* Both attendance flags live on the employee profile, so an
@@ -786,6 +811,11 @@ function AccessTab({ showGuide, setShowGuide }) {
                                 {u.execEditAccess ? 'Edit mode' : 'View only'}
                               </span>
                             </>
+                          ) : isExternal ? (
+                            <span className="text-[11px] leading-tight font-semibold text-orange-600 whitespace-nowrap"
+                              title={EXTERNAL_HINT}>
+                              Consultancy workspace only
+                            </span>
                           ) : (
                             // No switch at all, rather than a disabled one: this
                             // is not a grant somebody has withheld, it is what
@@ -800,14 +830,16 @@ function AccessTab({ showGuide, setShowGuide }) {
                         <button type="button" onClick={() => openCompanies(u)}
                           title={isExec
                             ? 'Limit this executive to certain companies. With none chosen they see every company.'
-                            : 'Choose which companies this view-only account may see. With none chosen it sees every company.'}
+                            : isExternal
+                              ? "Choose which companies' open jobs this consultancy may add candidates to. With none chosen it sees every company's."
+                              : 'Choose which companies this view-only account may see. With none chosen it sees every company.'}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap self-start">
                           <FiHome size={12} />
                           {u.companies && u.companies.length ? `${u.companies.length} compan${u.companies.length === 1 ? 'y' : 'ies'}` : 'All companies'}
                         </button>
                       </div>
                     ) : (
-                      <NotApplicable hint="Only a CEO, MD or God account is scoped by company here." />
+                      <NotApplicable hint="Only a CEO, MD, God or HR Consultancy account is scoped by company here." />
                     )}
                   </td>
 
@@ -943,7 +975,7 @@ function AccessTab({ showGuide, setShowGuide }) {
         </div>
       )}
 
-      {/* Company access modal — CEO/MD, and the view-only God account */}
+      {/* Company access modal — CEO/MD, the view-only God account, and an HR consultancy */}
       {companyUser && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8"
           onClick={() => setCompanyUser(null)}>
@@ -958,7 +990,9 @@ function AccessTab({ showGuide, setShowGuide }) {
                 <h2 className="card-title">Company access</h2>
                 <p className="text-xs text-gray-500 mt-1">
                   {companyUser.firstName} {companyUser.lastName} ({roleLabel(companyUser.role)}){' '}
-                  {companyUser.role === 'God' ? 'sees the ticked companies, and nothing else' : 'sees and manages the ticked companies'}.
+                  {companyUser.role === 'God' ? 'sees the ticked companies, and nothing else'
+                    : companyUser.role === 'HRConsultancy' ? "may add candidates to the ticked companies' open jobs"
+                      : 'sees and manages the ticked companies'}.
                   Tick none to give access to every company.
                   {companyUser.role === 'God' && companySel.size === 1
                     ? ' With exactly one ticked, the portal drops its company filters — there is nothing to choose between.'

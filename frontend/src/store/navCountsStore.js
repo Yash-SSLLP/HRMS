@@ -68,6 +68,9 @@ const EMPTY = {
   // Items employees asked to hand back (assets.manage). The one HR-wide key a
   // My Portal row wears — see the poll in Layout.jsx.
   assetReturn: 0,
+  // Job openings an HR consultancy asked for, waiting on somebody who may
+  // accept them (HR with recruitment.jobs, CEO/MD, the Backend).
+  jobRequest: 0,
 };
 
 /** Read one key out of a server payload, defaulting anything odd to 0. */

@@ -162,7 +162,7 @@ export default function Login() {
               placeholder="SSL 120"
             />
             <p className="mt-1 text-xs text-gray-500">
-              Your employee code, or your email address. Not case-sensitive.
+              Your employee code, or your email address. An HR consultancy signs in with its name. Not case-sensitive.
             </p>
           </div>
           <div>

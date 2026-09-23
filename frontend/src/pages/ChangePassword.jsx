@@ -57,6 +57,10 @@ export default function ChangePassword() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
 
+  // Also reached voluntarily — it is the HR consultancy's only account page
+  // (see Layout's ProfileMenu) — in which case nobody asked for this and the
+  // person may go back without saving.
+  const forced = !!user?.mustChangePassword;
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -91,10 +95,16 @@ export default function ChangePassword() {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'var(--bg)' }}>
       <div className="bg-white shadow rounded-lg p-6 w-full max-w-md">
         <span className="stat-icon bg-amber-100 text-amber-600"><FiLock /></span>
-        <h1 className="text-lg font-semibold text-gray-900 mt-3">Choose your own password</h1>
+        <h1 className="text-lg font-semibold text-gray-900 mt-3">
+          {forced ? 'Choose your own password' : 'Change your password'}
+        </h1>
         <p className="text-sm text-gray-500 mt-1">
-          {user?.firstName ? `${user.firstName}, you have` : 'You have'} been asked to set a new password
-          before carrying on. Choose one only you know.
+          {forced ? (
+            <>
+              {user?.firstName ? `${user.firstName}, you have` : 'You have'} been asked to set a new password
+              before carrying on. Choose one only you know.
+            </>
+          ) : 'Choose a new password only you know.'}
         </p>
 
         <form onSubmit={submit} className="mt-5 space-y-3">
@@ -134,6 +144,15 @@ export default function ChangePassword() {
           >
             {busy ? 'Saving…' : 'Save and sign in again'}
           </button>
+          {!forced && (
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="w-full px-4 py-2.5 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          )}
         </form>
       </div>
     </div>

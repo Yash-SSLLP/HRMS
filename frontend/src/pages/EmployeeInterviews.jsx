@@ -24,7 +24,7 @@ import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { formatDateTime12 } from '../utils/time';
 import {
-  AssessmentForm, AssessmentView, PreviousRounds, PriorRejectionChip, PriorRejections,
+  AssessmentForm, AssessmentView, PreviousRounds, PriorRejectionChip, PriorRejections, RoundBadge,
   ROUND_STATUS_STYLES, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
 } from '../components/InterviewAssessment';
 
@@ -128,15 +128,18 @@ export default function EmployeeInterviews() {
     return (
       <div key={k} className="bg-white shadow rounded-lg p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <div className="font-semibold text-gray-900 flex flex-wrap items-center gap-2">
+              {/* Which round THIS card is — the number the whole card hangs
+                  off, so it leads, filled, before the name. */}
+              <RoundBadge>{iv.label}</RoundBadge>
               {iv.candidateName}
               {/* We have turned this person down before. The panel is the last to
                   hear it and the one about to repeat the questions. */}
               <PriorRejectionChip flag={iv.priorRejection} />
             </div>
-            <div className="text-xs text-gray-500">
-              {[iv.jobTitle || 'No role', iv.location].filter(Boolean).join(' · ')} · {iv.label}
+            <div className="text-xs text-gray-500 mt-0.5">
+              {[iv.jobTitle || 'No role', iv.location].filter(Boolean).join(' · ')}
               {iv.scheduledAt ? ` · ${fmtDateTime(iv.scheduledAt)}` : ''}
               {iv.durationMinutes ? ` · ${iv.durationMinutes} min` : ''}
             </div>
@@ -186,60 +189,79 @@ export default function EmployeeInterviews() {
           </div>
         )}
 
-        {/* The decided round as it stands, when the form is closed. */}
+        {/* The decided round as it stands, when the form is closed — framed as
+            YOUR round, like the form it was typed into. */}
         {!expanded && hasAssessment(iv) && (
-          <div className="mt-3 border-t border-gray-100 pt-3">
-            <AssessmentView round={iv} dense />
-          </div>
+          <section className="my-round-panel mt-3">
+            <div className="my-round-panel-head flex flex-wrap items-center gap-2 px-4 py-2.5">
+              <RoundBadge>{iv.label}</RoundBadge>
+              <span className="text-sm font-semibold text-gray-900">Your assessment</span>
+            </div>
+            <div className="p-4">
+              <AssessmentView round={iv} dense />
+            </div>
+          </section>
         )}
 
         {expanded && (
-          <div className="mt-4 border-t border-gray-100 pt-4">
-            <AssessmentForm
-              value={{ feedback: draft.feedback, assessment: draft.assessment }}
-              onChange={(v) => setDraft({ feedback: v.feedback, assessment: v.assessment })}
-              suggestChars={suggestChars}
-            />
-
-            <div className="mt-4">
-              <label className="block text-xs font-semibold text-gray-700 mb-1">Result of this round</label>
+          <section className="my-round-panel mt-4">
+            {/* The one part of the card that is yours to fill in. Everything
+                above it is what somebody else wrote; this frame is the portal
+                accent so the two can never be mistaken for each other. */}
+            <div className="my-round-panel-head flex flex-wrap items-center justify-between gap-2 px-4 py-3">
               <div className="flex flex-wrap items-center gap-2">
-                {ROUND_STATUS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setDraft({ status: s })}
-                    className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                      draft.status === s
-                        ? `${ROUND_STATUS_STYLES[s]} border-transparent ring-2 ring-offset-1 ring-gray-300`
-                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    {s}
-                  </button>
-                ))}
+                <RoundBadge>{iv.label}</RoundBadge>
+                <span className="text-sm font-semibold text-gray-900">Your assessment</span>
+              </div>
+              <span className="text-[11px] text-gray-500">Fill this in for {iv.candidateName} after the interview</span>
+            </div>
+            <div className="p-4">
+              <AssessmentForm
+                value={{ feedback: draft.feedback, assessment: draft.assessment }}
+                onChange={(v) => setDraft({ feedback: v.feedback, assessment: v.assessment })}
+                suggestChars={suggestChars}
+              />
+
+              <div className="mt-4">
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Result of {iv.label}</label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {ROUND_STATUS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setDraft({ status: s })}
+                      className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                        draft.status === s
+                          ? `${ROUND_STATUS_STYLES[s]} border-transparent ring-2 ring-offset-1 ring-gray-300`
+                          : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <p className={`text-[11px] max-w-xl ${short ? 'text-amber-600' : 'text-gray-500'}`}>
+                  {short
+                    ? 'Short remarks still save — but this is the whole record of the round for the next interviewer, for HR and for the CEO/MD.'
+                    : 'Saved against the candidate: HR, the next round’s interviewer and the CEO/MD see this write-up with your name on it.'}
+                </p>
+                {/* Never disabled except while it is saving. Nothing about the
+                    write-up gates recording the round: the interviewer has
+                    finished the call and chosen a verdict, and refusing the save
+                    loses the ratings and the recommendation along with it. */}
+                <button
+                  onClick={() => save(iv)}
+                  disabled={savingKey === k}
+                  className="text-sm font-medium px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {saveLabel}
+                </button>
               </div>
             </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-              <p className={`text-[11px] max-w-xl ${short ? 'text-amber-600' : 'text-gray-500'}`}>
-                {short
-                  ? 'Short remarks still save — but this is the whole record of the round for the next interviewer, for HR and for the CEO/MD.'
-                  : 'Saved against the candidate: HR, the next round’s interviewer and the CEO/MD see this write-up with your name on it.'}
-              </p>
-              {/* Never disabled except while it is saving. Nothing about the
-                  write-up gates recording the round: the interviewer has
-                  finished the call and chosen a verdict, and refusing the save
-                  loses the ratings and the recommendation along with it. */}
-              <button
-                onClick={() => save(iv)}
-                disabled={savingKey === k}
-                className="text-sm font-medium px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50"
-              >
-                {saveLabel}
-              </button>
-            </div>
-          </div>
+          </section>
         )}
 
         {iv.decidedAt && <div className="mt-2 text-[11px] text-gray-400">Decided {fmtDateTime(iv.decidedAt)}</div>}

@@ -21,6 +21,15 @@ const {
   downloadCandidateDocument, confirmDocuments, reviewCandidateDocument, emailDocumentRequest,
   candidateScopeGuard,
 } = require('../controllers/recruitmentController');
+const {
+  requireConsultancy, requireBoardAccess,
+  listConsultancyJobs, listConsultancyCandidates, addConsultancyCandidate,
+  updateConsultancyCandidate, decideRound1, downloadConsultancyResume,
+} = require('../controllers/consultancyController');
+const {
+  requireJobRequestApprover, listJobRequests, createJobRequest,
+  withdrawJobRequest, approveJobRequest, rejectJobRequest,
+} = require('../controllers/jobRequestController');
 const { protect, requirePermission, requireAnyPermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -85,6 +94,44 @@ router.get('/my-interviews/:id/resume', protect, downloadMyInterviewResume);
 //   recruitment.interviews  → schedule / assign interview rounds
 // Reads (lists, resume/letter downloads) need ANY of the three. -----
 router.use(protect);
+
+// ----- HR Consultancy workspace + the company's board of its candidates -----
+// The outside agency (role HRConsultancy) can reach nothing else in the app —
+// `protect` refuses it everywhere but /recruitment/consultancy/* — and inside
+// here `requireConsultancy` marks what only the agency does, while
+// `requireBoardAccess` also lets the company's recruiters, CEO/MD, the Backend
+// and God read the board. See controllers/consultancyController.js.
+// GET /consultancy/jobs — open jobs the agency may add candidates to.
+router.get('/consultancy/jobs', requireConsultancy, listConsultancyJobs);
+// GET /consultancy/candidates — the agency's own candidates, or every agency's for the company.
+// POST /consultancy/candidates — agency adds a candidate; multer single 'resume' (5MB PDF/Word).
+router.route('/consultancy/candidates')
+  .get(requireBoardAccess, listConsultancyCandidates)
+  .post(requireConsultancy, resumeUpload.single('resume'), addConsultancyCandidate);
+// PUT /consultancy/candidates/:id — agency corrects details while Round 1 is open; optional 'resume'.
+router.put('/consultancy/candidates/:id', requireConsultancy, resumeUpload.single('resume'), updateConsultancyCandidate);
+// PATCH /consultancy/candidates/:id/round1 — agency records Round 1 (status + assessment).
+router.patch('/consultancy/candidates/:id/round1', requireConsultancy, decideRound1);
+// GET /consultancy/candidates/:id/resume — résumé, for the agency (own) or a board viewer.
+router.get('/consultancy/candidates/:id/resume', requireBoardAccess, downloadConsultancyResume);
+
+// ----- Job-opening requests from HR consultancies -----
+// The agency asks for a new opening; HR (recruitment.jobs), a CEO/MD or the
+// Backend accepts it (which opens the job) or rejects it. The decision routes
+// use their own guard rather than requirePermission, because a read-only
+// CEO/MD may decide these and requirePermission refuses them every write.
+// See controllers/jobRequestController.js.
+// GET /consultancy/job-requests — the agency's own requests, or every agency's for the company.
+// POST /consultancy/job-requests — agency requests a new opening.
+router.route('/consultancy/job-requests')
+  .get(requireBoardAccess, listJobRequests)
+  .post(requireConsultancy, createJobRequest);
+// PATCH /consultancy/job-requests/:id/withdraw — agency takes back an undecided request.
+router.patch('/consultancy/job-requests/:id/withdraw', requireConsultancy, withdrawJobRequest);
+// PATCH /consultancy/job-requests/:id/approve — open the job (optionally corrected first).
+router.patch('/consultancy/job-requests/:id/approve', requireJobRequestApprover, approveJobRequest);
+// PATCH /consultancy/job-requests/:id/reject — turn it down with an optional note.
+router.patch('/consultancy/job-requests/:id/reject', requireJobRequestApprover, rejectJobRequest);
 
 const canView = requireAnyPermission('recruitment.jobs', 'recruitment.candidates', 'recruitment.interviews');
 

@@ -16,8 +16,9 @@ const SEEN_THROTTLE_MS = 2 * 60 * 1000;
 // Roles whose company wall comes from their own account (`User.companies`) or
 // who have none at all — everyone else's wall is their own profile's company.
 // God is here for the same reason CEO/MD are: it has no employee profile, so
-// there is no profile company to look up (see utils/visibility).
-const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God'];
+// there is no profile company to look up (see utils/visibility). So is the
+// outside HR consultancy account, whose companies are ticked on its account.
+const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God', 'HRConsultancy'];
 
 /**
  * Resolve which company this (non-exec, non-Backend) account belongs to and
@@ -85,11 +86,53 @@ function invalidateScopeCompany(userIds) {
 // added next year is covered without anybody remembering to gate it — which is
 // the whole promise of the account. Gating each router instead would make the
 // guarantee only as good as the newest route file.
-const { VIEW_ONLY_ROLES, isViewOnlyRole } = require('../utils/visibility');
+const { VIEW_ONLY_ROLES, isViewOnlyRole, isExternalRole } = require('../utils/visibility');
 const { ALL_MODULES, MODULE_KEYS } = require('../config/incentiveRoles');
 
 /** Is this the permanently view-only audit account? */
 const isViewOnlyAccount = (user) => isViewOnlyRole(user?.role);
+
+// ===== Outside accounts (an HR consultancy) ================================
+// An agency signs in to do ONE job — add candidates to open jobs and take their
+// Round 1 — and must learn nothing else about the company. The wall is here, in
+// `protect`, for the same reason the view-only wall is: dozens of routes are
+// gated on `protect` alone (the chat directory, celebrations, the holiday
+// calendar, task pickers…) because every signed-in person used to be staff, and
+// an allow-list that lives in one place cannot be undone by a route file that
+// forgets to gate itself. Anything not listed below is refused before a handler
+// runs. Matched against the path with the query string stripped.
+//
+//   /api/auth/me[/…]           own account: session, password, own photo
+//   /api/auth/logout           end the session
+//   /api/auth/users/<own id>/… own avatar/banner only (checked below)
+//   /api/notifications[/…]     own inbox (the controller narrows it further)
+//   /api/client-logs           browser error reports
+//   /api/recruitment/consultancy[/…]  the consultancy workspace itself
+const EXTERNAL_ALLOW = [
+  /^\/api\/auth\/me(\/.*)?$/,
+  /^\/api\/auth\/logout$/,
+  /^\/api\/notifications(\/.*)?$/,
+  /^\/api\/client-logs\/?$/,
+  /^\/api\/recruitment\/consultancy(\/.*)?$/,
+];
+
+/** Is this an outside (non-company) account, e.g. an HR consultancy? */
+const isExternalAccount = (user) => isExternalRole(user?.role);
+
+/**
+ * Refuse every request an outside account makes beyond its own workspace.
+ * @param {import('express').Request} req
+ * @returns {string|null} the refusal message, or null when the request may proceed
+ */
+function externalRefusal(req) {
+  if (!isExternalAccount(req.user)) return null;
+  const path = String(req.originalUrl || req.url || '').split('?')[0];
+  if (EXTERNAL_ALLOW.some((re) => re.test(path))) return null;
+  // Their OWN picture, which the top bar draws — nobody else's.
+  const own = path.match(/^\/api\/auth\/users\/([^/]+)\/(avatar|banner)$/);
+  if (own && own[1] === String(req.user._id)) return null;
+  return 'This account can only use the consultancy workspace.';
+}
 
 // HTTP methods that only READ. Everything else is a write as far as the block
 // below is concerned.
@@ -175,9 +218,10 @@ const protect = asyncHandler(async (req, res, next) => {
 
   await attachScopeCompany(user);
   req.user = user;
-  // The view-only wall (see viewOnlyRefusal above). Placed before anything is
-  // stamped or dispatched, so a God request cannot reach a handler at all.
-  const refusal = viewOnlyRefusal(req);
+  // The view-only wall (see viewOnlyRefusal above) and the outside-account wall
+  // (externalRefusal). Placed before anything is stamped or dispatched, so a
+  // refused request cannot reach a handler at all.
+  const refusal = viewOnlyRefusal(req) || externalRefusal(req);
   if (refusal) {
     res.status(403);
     throw new Error(refusal);
@@ -245,8 +289,9 @@ const protectMedia = asyncHandler(async (req, res, next) => {
   await attachScopeCompany(user);
   req.user = user;
   // Same view-only wall as `protect` — these routes are reads today, and this
-  // keeps that true if one ever grows a write.
-  const refusal = viewOnlyRefusal(req);
+  // keeps that true if one ever grows a write. Same outside-account wall too:
+  // a streamed file is still company data.
+  const refusal = viewOnlyRefusal(req) || externalRefusal(req);
   if (refusal) {
     res.status(403);
     throw new Error(refusal);
@@ -775,6 +820,7 @@ module.exports = {
   PORTAL_VIEWERS,
   isPortalViewer,
   isViewOnlyAccount,
+  isExternalAccount,
   hasPermission,
   hasExplicitPermission,
   requirePermission,
@@ -798,4 +844,7 @@ module.exports = {
   MANAGER_PROFILE_ROLES,
   isManagerProfileRole,
   canEditManagerProfiles,
+  // The two walls `protect` applies, exercised directly by
+  // scripts/testConsultancy.js; not middleware in their own right.
+  __test: { viewOnlyRefusal, externalRefusal },
 };

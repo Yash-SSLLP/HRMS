@@ -21,11 +21,29 @@ const VIEW_ONLY_ROLES = ['God'];
  */
 const isViewOnlyRole = (role) => VIEW_ONLY_ROLES.includes(role);
 
+// Accounts that belong to somebody OUTSIDE the company — today an HR
+// consultancy that sources candidates and takes their first interview. They
+// sign in to do one job, and `protect` (middleware/authMiddleware.js) refuses
+// every request they make outside that job's endpoints, so a module added next
+// year cannot leak the staff directory to an agency by forgetting to gate
+// itself. A role, not a flag, for the same reason God is one: the answer has to
+// exist before any route runs.
+const EXTERNAL_ROLES = ['HRConsultancy'];
+
+/**
+ * Is this an outside (non-company) account?
+ * @param {string} role
+ * @returns {boolean}
+ */
+const isExternalRole = (role) => EXTERNAL_ROLES.includes(role);
+
 // Accounts kept out of every people listing a non-SuperAdmin can see. The
 // Backend was always hidden; God joins it for the same reason — it is a system
 // login nobody but the Backend administers, and an audit account that shows up
-// in the directory invites questions it exists precisely to avoid.
-const HIDDEN_ROLES = ['SuperAdmin', ...VIEW_ONLY_ROLES];
+// in the directory invites questions it exists precisely to avoid. Outside
+// accounts are hidden too: an agency is nobody's colleague, interviewer,
+// reporting manager or chat contact.
+const HIDDEN_ROLES = ['SuperAdmin', ...VIEW_ONLY_ROLES, ...EXTERNAL_ROLES];
 
 /**
  * Mongo filter fragment for User queries — merge into the query's filter object.
@@ -60,7 +78,7 @@ async function hiddenUserIds(viewer) {
 // profile either, for as long as it takes HR to attach one — that is the first
 // half of the Add Employee flow — so profile-lessness alone would hide people
 // who very much belong in a picker.
-const NON_STAFF_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God'];
+const NON_STAFF_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God', ...EXTERNAL_ROLES];
 
 /**
  * Is this account an admin/service login rather than a member of staff?
@@ -84,7 +102,11 @@ const EXECUTIVE_ROLES = ['CEO', 'MD'];
 // is offered as an approver, whose birthday the celebrations widget carries and
 // who a picker may exclude. God is none of those — it is a pair of eyes, not a
 // person — so it joins the company rule and nothing else.
-const COMPANY_SCOPED_ROLES = [...EXECUTIVE_ROLES, ...VIEW_ONLY_ROLES];
+//
+// An HR consultancy joins it too: it has no profile either, and the companies
+// ticked for it are the ones whose openings it may recruit for (empty = every
+// company's, like everywhere else).
+const COMPANY_SCOPED_ROLES = [...EXECUTIVE_ROLES, ...VIEW_ONLY_ROLES, ...EXTERNAL_ROLES];
 
 /**
  * Whether a picker that opted into executive exclusion should hide CEO/MD.
@@ -120,6 +142,8 @@ module.exports = {
   isNonStaffRole,
   VIEW_ONLY_ROLES,
   isViewOnlyRole,
+  EXTERNAL_ROLES,
+  isExternalRole,
   EXECUTIVE_ROLES,
   COMPANY_SCOPED_ROLES,
   shouldExcludeExecutives,

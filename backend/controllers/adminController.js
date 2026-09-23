@@ -7,7 +7,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
-const { activeAccountWithEmail } = require('../utils/loginIdentity');
+const { activeAccountWithEmail, consultancyLoginNameProblem } = require('../utils/loginIdentity');
 const { hasDeparted } = require('../utils/departed');
 // Editable in Settings -> Templates ('account.emailChanged').
 const { renderMail } = require('../services/templates');
@@ -17,7 +17,7 @@ const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { purgePerson } = require('../services/purgePerson');
 const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
-const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
+const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES, HIDDEN_ROLES, EXTERNAL_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
 const { isEditingExec, canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
 const { enqueueMail } = require('../services/email');
@@ -89,8 +89,15 @@ const listUsers = asyncHandler(async (req, res) => {
   const excludedRoles = [];
   // God rides along with SuperAdmin here: it is a system login only the Backend
   // administers, and an audit account listed in the directory invites exactly
-  // the questions it exists to avoid. See utils/visibility HIDDEN_ROLES.
-  if (req.user.role !== 'SuperAdmin') excludedRoles.push('SuperAdmin', 'God');
+  // the questions it exists to avoid. An outside HR consultancy is hidden too —
+  // this list feeds the interviewer and reporting-manager pickers, and an
+  // agency is neither. See utils/visibility HIDDEN_ROLES.
+  if (req.user.role !== 'SuperAdmin') excludedRoles.push(...HIDDEN_ROLES);
+  // An outside account is nobody's interviewer, manager, approver or project
+  // member, and a dozen pickers read this list — so it is left out unless the
+  // caller is one of the two screens that ADMINISTER accounts (Users,
+  // Permissions), which ask for it with ?includeExternal=true.
+  else if (req.query.includeExternal !== 'true') excludedRoles.push(...EXTERNAL_ROLES);
   if (await shouldExcludeExecutives(req)) excludedRoles.push(...EXECUTIVE_ROLES);
   if (excludedRoles.length) {
     if (role) {
@@ -210,6 +217,16 @@ const createUser = asyncHandler(async (req, res) => {
   if (role !== 'Employee' && req.user.role !== 'SuperAdmin') {
     res.status(403);
     throw new Error('Only SuperAdmin may create admin accounts. You can only create Employee accounts.');
+  }
+
+  // An HR consultancy signs in with its first name (utils/loginIdentity), so the
+  // name has to be one only it answers to.
+  if (role === 'HRConsultancy') {
+    const problem = await consultancyLoginNameProblem(firstName);
+    if (problem) {
+      res.status(409);
+      throw new Error(problem);
+    }
   }
 
   // Only a LIVE account blocks the address. A resigned employee's account is
@@ -343,6 +360,16 @@ const updateUser = asyncHandler(async (req, res) => {
 
   if (isActive !== undefined) user.isActive = isActive;
   if (password) user.password = password; // pre-save hook re-hashes
+
+  // An HR consultancy signs in with its first name, so renaming one — or giving
+  // an account the role — must leave that name unambiguous (utils/loginIdentity).
+  if (user.role === 'HRConsultancy' && (user.isModified('firstName') || user.isModified('role'))) {
+    const problem = await consultancyLoginNameProblem(user.firstName, user._id);
+    if (problem) {
+      res.status(409);
+      throw new Error(problem);
+    }
+  }
 
   // CEO/MD celebration dates. Keyed on the role the account ENDS UP with, so
   // dates sent alongside a promotion to CEO are kept; they are not identity
@@ -788,7 +815,7 @@ const setExecCompanies = asyncHandler(async (req, res) => {
   }
   if (!COMPANY_SCOPED_ROLES.includes(user.role)) {
     res.status(400);
-    throw new Error('Company access applies to CEO, MD and God accounts only.');
+    throw new Error('Company access applies to CEO, MD, God and HR Consultancy accounts only.');
   }
   const ids = [...new Set((req.body.companyIds || []).map(String))].filter(Boolean);
   if (ids.length) {
