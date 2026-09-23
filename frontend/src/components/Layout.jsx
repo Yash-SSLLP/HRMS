@@ -1159,6 +1159,82 @@ export default function Layout({ navItems = [], sectionTitle }) {
     </div>
   );
 
+  // The top-bar shortcut pills. Rendered in TWO places: inside the bar from sm
+  // up, and on a row of their own under the bar on a phone (see below), where
+  // the bar has room for the menu button and the account cluster and nothing
+  // else. Each pill reads its own count from the shared store, so drawing the
+  // set twice costs nothing and the two can never disagree.
+  const shortcuts = (
+    <>
+      <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
+      {/* In the admin portal this leads to the org-wide attendance page,
+          which the server gates on attendance.manage — so an admin without
+          that capability was being offered a shortcut to a 403. In My
+          Portal it is the employee's own attendance and always applies. */}
+      {(portal === 'employee' || hasPermission(user, 'attendance.manage')) && (
+        <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
+      )}
+      {/* Approvals, for the roles that actually decide. Carries a live
+          pending count — see CountPill. */}
+      {showApprovals && (
+        <CountPill
+          to={approvalsPath}
+          label="Approvals"
+          icon={<FiCheckSquare size={16} strokeWidth={2.2} />}
+          countKey="mine"
+        />
+      )}
+      {/* The rounds booked with this person, badged the same way: an
+          interview is a commitment in somebody's diary, so "is there one
+          waiting on me" has to be answerable without opening the page. */}
+      {showOwnWork && (
+        <CountPill
+          to={interviewsPath}
+          label="Interviews"
+          icon={<FiVideo size={16} strokeWidth={2.2} />}
+          countKey="interviews"
+          waitingWord="waiting"
+        />
+      )}
+      {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
+          config/nav.jsx) and is reached often enough to earn a shortcut. */}
+      {user?.role === 'SuperAdmin' && (
+        <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
+      )}
+
+      {/* TASKS — everybody's, and LAST, so it sits against the search box
+          where it was asked for (user decision, 2026-09-22).
+
+          UNGATED, on purpose. /admin/tasks is one of the very few admin
+          routes with no capability behind it: the 2026-09-21 rework made
+          setting a task everybody's, narrowed only by the direction rule,
+          and what `tasks.manage` buys is the wide VIEW inside the page
+          (All Tasks, the team dashboard), which the page decides for
+          itself from GET /tasks/meta. Neither App.jsx's route nor either
+          sidebar entry gates it, so a gate here would only have hidden a
+          page the person is entitled to.
+
+          AND IT WEARS THE COUNT. This reverses the note that used to sit
+          here — that a task is "not a queue that empties" — because the
+          number is not a count of tasks: `taskApproval` is what is WAITING
+          ON YOU, which is your own unfinished rows plus anything somebody
+          has handed in for you to approve. Both empty, both are yours to
+          clear, and neither is visible without opening the page. It is the
+          same key the sidebar row already wears, read out of the same
+          one poll, so the pill and the row cannot disagree. */}
+      <CountPill
+        to={tasksPath}
+        label="Tasks"
+        icon={<FiList size={16} strokeWidth={2.2} />}
+        countKey="taskApproval"
+        waitingWord="waiting on you"
+      />
+
+      {/* Chat is an org-wide switch a SuperAdmin controls. */}
+      {chatEnabled && <ChatLauncher />}
+    </>
+  );
+
   return (
     <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
       {/* Brushed-gold top edge — the brand signature across every page. */}
@@ -1190,9 +1266,8 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </button>
 
           {/* Quick shortcuts — available to everyone, in both portals. One solid
-              colour for both; the label appears from sm up so each is
-              unmistakable. On a phone this strip is the first thing to run out
-              of room, so it scrolls sideways rather than shoving the account
+              colour for both. On a tablet this strip is the first thing to run
+              out of room, so it scrolls sideways rather than shoving the account
               cluster off the edge (min-w-0 is what lets it shrink at all). */}
           {/* The padding is not decoration: `overflow-x-auto` forces overflow-y
               to `auto` as well (CSS won't let one axis scroll while the other
@@ -1202,73 +1277,13 @@ export default function Layout({ navItems = [], sectionTitle }) {
               give that overhang room; -mx-1.5 cancels the horizontal padding so
               the pills sit exactly where they did. Same fix as the tab strip in
               ApprovalsBoard. */}
-          <div className="topbar-scroll flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
-            <NavPill to={calendarPath} label="Calendar" icon={<FiCalendar size={16} strokeWidth={2.2} />} />
-            {/* In the admin portal this leads to the org-wide attendance page,
-                which the server gates on attendance.manage — so an admin without
-                that capability was being offered a shortcut to a 403. In My
-                Portal it is the employee's own attendance and always applies. */}
-            {(portal === 'employee' || hasPermission(user, 'attendance.manage')) && (
-              <NavPill to={attendancePath} label="Attendance" icon={<FiClock size={16} strokeWidth={2.2} />} />
-            )}
-            {/* Approvals, for the roles that actually decide. Carries a live
-                pending count — see CountPill. */}
-            {showApprovals && (
-              <CountPill
-                to={approvalsPath}
-                label="Approvals"
-                icon={<FiCheckSquare size={16} strokeWidth={2.2} />}
-                countKey="mine"
-              />
-            )}
-            {/* The rounds booked with this person, badged the same way: an
-                interview is a commitment in somebody's diary, so "is there one
-                waiting on me" has to be answerable without opening the page. */}
-            {showOwnWork && (
-              <CountPill
-                to={interviewsPath}
-                label="Interviews"
-                icon={<FiVideo size={16} strokeWidth={2.2} />}
-                countKey="interviews"
-                waitingWord="waiting"
-              />
-            )}
-            {/* Permissions is SuperAdmin-only (same gate as its sidebar entry in
-                config/nav.jsx) and is reached often enough to earn a shortcut. */}
-            {user?.role === 'SuperAdmin' && (
-              <NavPill to="/admin/permissions" label="Permissions" icon={<FiShield size={16} strokeWidth={2.2} />} />
-            )}
-
-            {/* TASKS — everybody's, and LAST, so it sits against the search box
-                where it was asked for (user decision, 2026-09-22).
-
-                UNGATED, on purpose. /admin/tasks is one of the very few admin
-                routes with no capability behind it: the 2026-09-21 rework made
-                setting a task everybody's, narrowed only by the direction rule,
-                and what `tasks.manage` buys is the wide VIEW inside the page
-                (All Tasks, the team dashboard), which the page decides for
-                itself from GET /tasks/meta. Neither App.jsx's route nor either
-                sidebar entry gates it, so a gate here would only have hidden a
-                page the person is entitled to.
-
-                AND IT WEARS THE COUNT. This reverses the note that used to sit
-                here — that a task is "not a queue that empties" — because the
-                number is not a count of tasks: `taskApproval` is what is WAITING
-                ON YOU, which is your own unfinished rows plus anything somebody
-                has handed in for you to approve. Both empty, both are yours to
-                clear, and neither is visible without opening the page. It is the
-                same key the sidebar row already wears, read out of the same
-                one poll, so the pill and the row cannot disagree. */}
-            <CountPill
-              to={tasksPath}
-              label="Tasks"
-              icon={<FiList size={16} strokeWidth={2.2} />}
-              countKey="taskApproval"
-              waitingWord="waiting on you"
-            />
-
-            {/* Chat is an org-wide switch a SuperAdmin controls. */}
-            {chatEnabled && <ChatLauncher />}
+          {/* From sm up only. On a phone the same pills get a row of their
+              own under this bar (below) — squeezed in here they scrolled
+              sideways and showed two of up to seven. `hidden sm:flex` rather
+              than a width rule so the phone row and this one can never both
+              show. */}
+          <div className="topbar-scroll hidden sm:flex items-center gap-2 sm:gap-3 min-w-0 overflow-x-auto py-2 px-1.5 -mx-1.5">
+            {shortcuts}
           </div>
 
           <GlobalSearch navItems={navItems} user={user} isAdmin={isAdmin} />
@@ -1336,6 +1351,16 @@ export default function Layout({ navItems = [], sectionTitle }) {
             <ProfileMenu user={user} employeeCode={employeeCode} onLogout={() => setConfirmLogout(true)} />
           </div>
         </header>
+
+        {/* Phone only: the shortcuts on a row of their own. It sits OUTSIDE the
+            sticky bar on purpose, so it scrolls away with the page instead of
+            doubling the height of the chrome that never leaves the screen.
+            flex-wrap, not a scroller — every pill is visible at once, which
+            is the whole point of moving them here (user report, 2026-09-23:
+            the old strip showed two pills and hid the rest sideways). */}
+        <div className="sm:hidden flex flex-wrap items-center gap-2 px-3.5 pt-3">
+          {shortcuts}
+        </div>
 
         {/* The chat dock is now launched from the top bar and hidden until opened
             (no always-on bottom bar), so no extra bottom padding is needed here. */}

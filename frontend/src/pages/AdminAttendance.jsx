@@ -595,7 +595,7 @@ export default function AdminAttendance() {
         <div className="bg-white shadow rounded-lg mb-4 overflow-hidden">
           <button type="button" onClick={() => setDutyOpen((o) => !o)}
             className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50">
-            <span className="flex items-center gap-2">
+            <span className="flex flex-wrap sm:flex-nowrap items-center gap-2">
               <span className="font-semibold text-gray-800">Sunday &amp; comp-off duty</span>
               {duty.counts.pending > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">

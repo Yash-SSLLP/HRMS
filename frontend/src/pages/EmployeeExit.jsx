@@ -98,7 +98,7 @@ export default function EmployeeExit() {
         <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : exit ? (
         <div className="bg-white shadow rounded-lg p-6 space-y-4">
-          <div className="flex items-start justify-between">
+          <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-2 sm:gap-0">
             <div>
               <h2 className="card-title">Your exit request</h2>
               <p className="text-xs text-gray-500">Submitted {fmtDate(exit.resignationDate)}</p>
@@ -129,7 +129,7 @@ export default function EmployeeExit() {
                   : <span className="text-gray-400 italic">Not yet assigned</span>}
               </dd>
             </div>
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <dt className="text-xs text-gray-500">Reason</dt>
               <dd>{exit.reason || '-'}</dd>
             </div>

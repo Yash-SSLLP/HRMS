@@ -456,11 +456,17 @@ export default function Calendar() {
       <PageHeader title="Calendar">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <button onClick={goToday} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">Today</button>
-        <button onClick={prev} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">‹ Prev</button>
-        <span className="text-sm font-medium text-gray-800 w-40 text-center">
-          {MONTH_NAMES[month - 1]} {year}
-        </span>
-        <button onClick={next} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">Next ›</button>
+        {/* Prev · month · Next kept as one unit: on a phone it is a full-width
+            navigator row above Today/Reminder instead of wrapping apart, and the
+            month label takes the slack (flex-1) so a sub-360px phone never
+            orphans "Next" on a line of its own. */}
+        <div className="flex items-center gap-2 w-full justify-between order-first sm:w-auto sm:justify-start sm:order-none">
+          <button onClick={prev} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">‹ Prev</button>
+          <span className="text-sm font-medium text-gray-800 w-40 flex-1 sm:flex-initial text-center">
+            {MONTH_NAMES[month - 1]} {year}
+          </span>
+          <button onClick={next} className="px-3 py-1.5 border rounded-lg hover:bg-gray-50 text-sm">Next ›</button>
+        </div>
         <button
           onClick={() => openNewReminder(null)}
           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium"
@@ -763,7 +769,9 @@ export default function Calendar() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Stacked below sm for the same reason: a half-width select cannot
+                  show "Specific people" at the 16px phone input size. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
                   <select

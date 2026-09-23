@@ -294,6 +294,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
   // and the count travels in a chip rather than in dim parentheses. `bg-white`
   // and `bg-gray-100` both carry a dark-mode remap in index.css, and the active
   // chip uses the portal accent rather than a hardcoded hue.
+  // On a phone the three do not fit one line (~364px of pills in ~285px), so
+  // the track wraps (index.css) and each pill grows to share its row evenly —
+  // two over one — instead of leaving a ragged gap. From sm up: as before.
   const tabBtn = (key, label, count) => {
     const on = tab === key;
     return (
@@ -301,7 +304,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
         type="button"
         onClick={() => setTab(key)}
         aria-pressed={on}
-        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+        className={`inline-flex flex-auto justify-center sm:flex-initial sm:justify-start items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
           on
             ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
             : 'text-gray-500 hover:text-gray-800'
@@ -324,7 +327,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {/* Tabs: the actionable approval queue is kept separate from history. */}
-      <div className="inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
+      <div className="flex sm:inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
         {tabBtn('pending', 'To approve', pending.length)}
         {tabBtn('emergency', 'Emergency', emergency.length)}
         {tabBtn('history', 'History', others.length)}
@@ -356,7 +359,10 @@ export default function LeaveApprovalsInbox({ onCount }) {
                         not have to find that out afterwards. */}
                     <AmendTrail items={r.amendments} />
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  {/* shrink-0 from sm up only: on a phone the "Override & …"
+                      labels make this ~325px, and a cluster that refuses to
+                      shrink never wraps — it ran past the card's edge. */}
+                  <div className="flex gap-2 sm:shrink-0">
                     {/* Correcting the ask is a third answer alongside yes and
                         no: a request with the wrong dates or the wrong type does
                         not need rejecting, it needs fixing. */}
@@ -423,7 +429,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
                     )}
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
-                  <div className="flex flex-wrap gap-2 shrink-0">
+                  {/* sm:shrink-0 for the same reason as the queue above: four
+                      buttons ("Undo double cut") outgrow a phone row. */}
+                  <div className="flex flex-wrap gap-2 sm:shrink-0">
                     <button onClick={() => setAmending(r)} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                       Edit

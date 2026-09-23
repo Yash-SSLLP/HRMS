@@ -1098,7 +1098,7 @@ This cannot be undone.`,
       if (av && !bv) return -1;
       return sign * String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [profiles, query, filters, docStatus, sort]);
+  }, [profiles, query, filters, docStatus, sort, tab]);
 
   // What the employee declared instead of filing, in words. An experience letter
   // that is absent because they said it is their first job is a different fact

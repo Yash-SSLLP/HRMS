@@ -234,12 +234,15 @@ function PayslipDetail({ slip, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
       <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-        <div className="flex justify-between items-start gap-4 pb-3 border-b-2 border-amber-600">
+        {/* Wraps on a phone: "September 2026" beside Download PDF + × did not
+            fit ~290px, so the title broke in two and × fell under the button.
+            The actions now drop to their own line, kept right by ml-auto. */}
+        <div className="flex flex-wrap sm:flex-nowrap justify-between items-start gap-4 pb-3 border-b-2 border-amber-600">
           <div>
             <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-500">Salary Slip</p>
             <h2 className="card-title">{MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 ml-auto sm:ml-0">
             {/* The server refuses an unreleased download, so the button is only
                 offered once HR has finalised — the state, not the click, decides. */}
             {releaseOf(slip) === 'Finalised' ? (

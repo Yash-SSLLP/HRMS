@@ -722,7 +722,8 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
 
   return (
     <div className="border border-dashed border-gray-300 rounded-lg p-3 bg-white">
-      <div className="flex items-center justify-between">
+      {/* Wraps on a phone, where "+ Add question" was squeezed onto two lines. */}
+      <div className="flex flex-wrap items-center justify-between gap-1 sm:flex-nowrap sm:gap-0">
         <span className="text-xs font-medium text-gray-700">
           ❓ Questions in this video
           {checkpoints.length > 0 && <span className="text-gray-400 font-normal"> · {checkpoints.length}</span>}
@@ -756,7 +757,9 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                   focusIdx === i ? 'ring-2 ring-amber-400 border-amber-300' : ''
                 }`}
               >
-                <div className="flex items-center gap-2">
+                {/* Wraps on a phone: this row needs ~330px and the question
+                    card has ~215, which crushed the hint to one letter a line. */}
+                <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                   <span className="text-xs text-gray-500 shrink-0">Pause at</span>
                   <input
                     value={c._clock ?? fmtClock(c.atSec)}
@@ -792,7 +795,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                     {(c.options || []).map((o, oi) => (
                       <div key={oi} className="flex items-center gap-2">
                         <input value={o.text} onChange={(e) => patchOpt(i, oi, { text: e.target.value, correct: true })}
-                          placeholder="An answer you'd accept" className="flex-1 border rounded-lg px-3 py-1.5 text-sm" />
+                          placeholder="An answer you'd accept" className="flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-sm" />
                         <button type="button" onClick={() => patch(i, { options: c.options.filter((_, n) => n !== oi) })}
                           className="text-xs text-gray-400 hover:text-red-600">✕</button>
                       </div>
@@ -820,7 +823,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                             o.correct ? 'bg-green-600 border-green-600 text-white' : 'border-gray-300 text-transparent hover:border-green-400'
                           }`}>✓</button>
                         <input value={o.text} onChange={(e) => patchOpt(i, oi, { text: e.target.value })}
-                          placeholder={`Choice ${oi + 1}`} className="flex-1 border rounded-lg px-3 py-1.5 text-sm" />
+                          placeholder={`Choice ${oi + 1}`} className="flex-1 min-w-0 border rounded-lg px-3 py-1.5 text-sm" />
                         <button type="button" onClick={() => patch(i, { options: c.options.filter((_, n) => n !== oi) })}
                           className="text-xs text-gray-400 hover:text-red-600">✕</button>
                       </div>
@@ -942,8 +945,10 @@ function RosterModal({ course, onClose }) {
       ) : (
         <div className="max-h-96 overflow-y-auto divide-y">
           {rows.map((e) => (
-            <div key={e._id} className="py-2.5 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
+            // On a phone the name takes the first line and the progress + badge
+            // the second; beside them it was left ~85px.
+            <div key={e._id} className="py-2.5 flex flex-wrap items-center gap-3 sm:flex-nowrap">
+              <div className="min-w-0 flex-1 basis-full sm:basis-[0%]">
                 <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '-'}</div>
                 <div className="text-xs text-gray-400">Due {fmtDate(e.dueDate)} · {e.source}</div>
                 {e.feedback?.rating && (
@@ -1103,8 +1108,10 @@ function AnswersModal({ course, onClose }) {
               <div key={a._id} className="py-2.5">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-900 truncate">{who(a)}</span>
-                  {a.audience === 'public' && <span className="text-[11px] bg-emerald-50 text-emerald-700 rounded px-1.5 py-0.5">Public</span>}
-                  {a.attempt > 1 && <span className="text-[11px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">attempt {a.attempt}</span>}
+                  {/* shrink-0 on a phone: squeezed, these chips broke mid-word
+                      ("Pub-lic"); the name is the one that truncates. */}
+                  {a.audience === 'public' && <span className="shrink-0 sm:shrink text-[11px] bg-emerald-50 text-emerald-700 rounded px-1.5 py-0.5">Public</span>}
+                  {a.attempt > 1 && <span className="shrink-0 sm:shrink text-[11px] bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">attempt {a.attempt}</span>}
                   <span className={`ml-auto shrink-0 text-xs rounded px-2 py-0.5 ${
                     !a.graded ? 'bg-gray-100 text-gray-600' : a.correct ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'
                   }`}>{!a.graded ? 'Recorded' : a.correct ? '✓ Correct' : '✗ Wrong'}</span>
@@ -1157,8 +1164,10 @@ function ApprovalsModal({ onClose, onChange }) {
       ) : (
         <div className="max-h-96 overflow-y-auto divide-y">
           {rows.map((e) => (
-            <div key={e._id} className="py-3 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
+            // Same phone split as the roster: the two buttons beside the text
+            // cut the course being asked for down to a few characters.
+            <div key={e._id} className="py-3 flex flex-wrap items-center gap-3 sm:flex-nowrap">
+              <div className="min-w-0 flex-1 basis-full sm:basis-[0%]">
                 <div className="text-sm text-gray-900 truncate">{e.employee ? `${e.employee.firstName || ''} ${e.employee.lastName || ''}`.trim() || e.employee.email : '-'}</div>
                 <div className="text-xs text-gray-400 truncate">wants “{e.course?.title || 'a course'}”</div>
               </div>

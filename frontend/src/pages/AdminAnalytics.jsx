@@ -21,8 +21,10 @@ import { FiUsers, FiUserPlus, FiTrendingDown, FiLogOut } from 'react-icons/fi';
 const PIE_COLORS = CHART_SERIES;
 
 function StatCard({ icon, tint, iconColor, value, label }) {
+  // Icon above the figure below sm: beside it, a ~158px phone tile left the
+  // label ~54px and "Attrition" broke mid-word (same fix as AdminOverview).
   return (
-    <div className="bg-white shadow rounded-lg p-5 h-full flex items-center gap-4">
+    <div className="bg-white shadow rounded-lg p-5 h-full flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
       <span className={`stat-icon ${tint} ${iconColor || ''}`}>{icon}</span>
       <div className="min-w-0">
         <div className="text-2xl font-semibold text-gray-900">{value}</div>

@@ -389,7 +389,9 @@ function BalancesTab({ onRefreshing }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      {/* Stacked on a phone: side by side, the note squeezed the Year box down
+          to the input's own width and pushed its label onto a line of its own. */}
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-0 mb-3">
         <div>
           <label className="text-xs text-gray-600 mr-2">Year</label>
           <input type="number" value={year}

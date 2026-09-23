@@ -169,7 +169,10 @@ export default function CategoryManager({ open, onClose, onChanged }) {
             <ul className="space-y-1.5">
               {rows.map((cat) => (
                 <li key={cat._id} className="rounded-xl border border-gray-200 px-3 py-2">
-                  <div className="flex items-center gap-2">
+                  {/* Phone: the name takes the first line and the count and the
+                      buttons the second — beside three buttons it was left
+                      about 60px at 360px. From sm up, one row as before. */}
+                  <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
                     {editing === cat._id ? (
                       <>
                         <input
@@ -194,7 +197,7 @@ export default function CategoryManager({ open, onClose, onChanged }) {
                       </>
                     ) : (
                       <>
-                        <span className="min-w-0 flex-1 truncate text-sm text-gray-800">{cat.name}</span>
+                        <span className="min-w-0 flex-1 basis-full truncate text-sm text-gray-800 sm:basis-[0%]">{cat.name}</span>
                         <span className={`shrink-0 text-xs ${cat.taskCount ? 'text-gray-500' : 'text-gray-300'}`}>
                           {cat.taskCount
                             ? `${cat.taskCount} task${cat.taskCount === 1 ? '' : 's'}`

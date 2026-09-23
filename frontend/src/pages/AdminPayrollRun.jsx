@@ -341,7 +341,10 @@ export default function AdminPayrollRun() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Stacked on a phone for the same reason as the pair above: a
+                  half-width select has no room left for "September" at the
+                  16px the phone forces on form controls. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">Effective month</label>
                   <select value={hike.effectiveMonth} onChange={(e) => setHike({ ...hike, effectiveMonth: Number(e.target.value) })}
@@ -376,8 +379,10 @@ export default function AdminPayrollRun() {
                 const cur = Number(setup.annualCtc) || 0;
                 const down = hikePreviewCtc < cur;
                 const pct = cur > 0 ? Math.round((hikePreviewCtc / cur - 1) * 100) : 0;
+                // Wraps on a phone: a lakh-plus "₹12,00,000 → ₹13,20,000 (+10%)"
+                // beside the label is wider than the modal's ~267px row.
                 return (
-                  <div className={`border rounded-lg px-3 py-2 text-sm flex justify-between ${
+                  <div className={`border rounded-lg px-3 py-2 text-sm flex flex-wrap sm:flex-nowrap justify-between gap-x-2 sm:gap-x-0 ${
                     down ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
                     <span>New CTC</span>
                     <span className="font-semibold">

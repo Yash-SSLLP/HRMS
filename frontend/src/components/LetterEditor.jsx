@@ -158,11 +158,13 @@ export default function LetterEditor({ candidateId, kind, form, value, onChange,
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                         {b.type === 'term' ? 'Numbered term' : 'Paragraph'}
                       </span>
+                      {/* min-w-0: an input will not shrink below its default
+                          ~150px, which on a phone crushed the label beside it. */}
                       {b.type === 'term' && (
                         <input
                           value={b.head || ''} onChange={(e) => edit(i, { head: e.target.value })}
                           placeholder="Heading"
-                          className="flex-1 border rounded px-2 py-1 text-xs font-medium"
+                          className="flex-1 min-w-0 border rounded px-2 py-1 text-xs font-medium"
                         />
                       )}
                       <button type="button" onClick={() => removeAt(i)} title="Remove this block"

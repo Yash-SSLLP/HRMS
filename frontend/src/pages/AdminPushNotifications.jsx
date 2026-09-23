@@ -133,7 +133,9 @@ function CustomReminders({ canEdit }) {
 
   return (
     <div className="mt-8">
-      <div className="flex items-center justify-between gap-3 mb-3">
+      {/* Stacked below sm: beside the button the title and its line of help
+          were squeezed into a narrow column on a phone. */}
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
         <div>
           <h2 className="card-title">Custom reminders</h2>
           <p className="text-sm text-gray-500 mt-0.5">

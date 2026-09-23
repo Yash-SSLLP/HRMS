@@ -40,7 +40,9 @@ function Fact({ label, value }) {
   return (
     <div className="min-w-0">
       <dt className="text-[11px] uppercase tracking-wide text-gray-400">{label}</dt>
-      <dd className="text-sm text-gray-900 font-medium truncate">{value || '—'}</dd>
+      {/* Wraps on phones: at two narrow columns `truncate` cut a designation or
+          a manager's name off — the very values this panel is there to check. */}
+      <dd className="text-sm text-gray-900 font-medium sm:truncate">{value || '—'}</dd>
     </div>
   );
 }

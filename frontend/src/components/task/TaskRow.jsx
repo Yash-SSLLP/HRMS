@@ -226,7 +226,11 @@ export default function TaskRow({
         </div>
 
         {/* ── The state, as chips ────────────────────────────── */}
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+        {/* max-w-full: a shrink-0 flex item is as wide as ALL its chips on one
+            line, so on a phone the row of chips ran off the right edge instead
+            of wrapping — capping it at the row's width is what lets its own
+            flex-wrap happen. */}
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
           {/* Two derived states matter more than the stored status does.
               Declined wins: a task everybody has refused is not usefully
               described as "Pending". */}
@@ -270,7 +274,7 @@ export default function TaskRow({
 
         {/* ── What can be done about it ──────────────────────── */}
         {!viewOnly && can && (
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
             {/* ACCEPT AND DECLINE COME FIRST, and only while the handover is
                 unanswered — they are the first thing somebody handed work has
                 to decide, and burying them behind the detail page is how a task

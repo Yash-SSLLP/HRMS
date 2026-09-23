@@ -870,8 +870,9 @@ export default function AdminRecruitment() {
         </table>
       </div>
 
-      {/* Candidates */}
-      <div className="flex items-center justify-between mb-2">
+      {/* Candidates. Wraps on a phone: filtered, the title is long enough to
+          squeeze "+ Add Candidate" into two lines, so the button drops below. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2 sm:flex-nowrap sm:gap-0">
         <h2 className="card-title">
           Candidates {selectedJob && <span className="text-sm text-gray-500">· filtered by job <button onClick={() => setSelectedJob('')} className="text-blue-600 hover:underline">(clear)</button></span>}
         </h2>
@@ -1628,7 +1629,9 @@ export default function AdminRecruitment() {
                 }
                 return pending.map((c) => (
                   <div key={c._id} className="border border-gray-100 rounded-lg p-3">
-                    <div className="flex items-center justify-between gap-3">
+                    {/* Stacked on a phone: the three buttons beside the text
+                        left the applicant's name ~30px to live in. */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-gray-900 truncate">{c.name}</span>
@@ -1676,7 +1679,7 @@ export default function AdminRecruitment() {
               })()}
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between gap-3 sm:gap-0">
               <p className="text-xs text-gray-400">Only shortlisted candidates move forward to the interview process.</p>
               <button type="button" onClick={() => setJobCandJob(null)}
                 className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>

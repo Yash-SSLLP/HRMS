@@ -27,7 +27,9 @@ function ImageDrop({ label, hint, url, version, onPick, onRemove, busy, hasImage
   const inputRef = useRef(null);
   return (
     <div className="border border-gray-200 rounded-xl p-4">
-      <div className="flex items-start justify-between gap-3 mb-3">
+      {/* Wraps on a phone: a long hint beside Replace/Remove was squeezed into
+          an ~80px column, so it drops above the buttons instead. */}
+      <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-3 mb-3">
         <div>
           <div className="text-sm font-semibold text-gray-800">{label}</div>
           {hint && <div className="text-xs text-gray-500 mt-0.5">{hint}</div>}

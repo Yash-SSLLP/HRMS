@@ -281,7 +281,9 @@ export default function EmployeeDashboard() {
 
       {/* Stat cards */}
       {/* No salary figures here by design — see the file header. */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+      {/* One per row on a phone: two-up left each tile's text ~52px beside its
+          icon, and "requests" / department names broke mid-word. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
         <StatCard icon={<FiUmbrella />} tint="bg-emerald-100" iconColor="text-emerald-600"
           value={balance ? monthly.remaining : '-'}
           label="Paid leave left" sub="of 2 / month · extra = LOP" to="/employee/leave" />
@@ -388,12 +390,14 @@ export default function EmployeeDashboard() {
         {/* Payslips — amounts intentionally live on the Payslips page only. */}
         <div className="lg:col-span-2 bg-white shadow rounded-lg p-5">
           <h2 className="card-title mb-3">My Payslips</h2>
-          <div className="flex items-end justify-between">
+          {/* Stacked on a phone, where the link beside it squeezed the sentence
+              into a 140px column. */}
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-0">
             <p className="text-sm text-gray-500">
               Salary details are kept off the dashboard — open My Payslips to view
               and download them.
             </p>
-            <Link to="/employee/payslips" className="text-sm text-blue-600 hover:underline whitespace-nowrap ml-4">
+            <Link to="/employee/payslips" className="text-sm text-blue-600 hover:underline whitespace-nowrap sm:ml-4">
               View payslips →
             </Link>
           </div>

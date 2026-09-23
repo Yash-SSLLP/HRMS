@@ -58,9 +58,12 @@ export default function SalarySetupAlert() {
       </p>
       <div className="space-y-1.5">
         {listed.map((e) => (
+          // On a phone the "No salary structure or CTC" tag left the name ~80px,
+          // so code/designation/department were clipped off the edge: the tag
+          // drops below and the line wraps instead of truncating (sm: restores).
           <Link key={e.id} to={fixLink(e.id)}
-            className="salert-row flex items-center justify-between gap-3 px-3 py-2">
-            <span className="min-w-0 truncate">
+            className="salert-row flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 px-3 py-2">
+            <span className="min-w-0 sm:truncate">
               <span className="salert-name text-sm font-medium">{e.name}</span>
               <span className="salert-meta text-xs">
                 {e.employeeCode ? ` · ${e.employeeCode}` : ''}

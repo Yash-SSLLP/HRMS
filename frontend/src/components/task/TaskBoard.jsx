@@ -286,9 +286,12 @@ export default function TaskBoard({
           )}
 
           {/* ── The four columns ───────────────────────────────
-              Below 1024px the row scrolls sideways rather than wrapping: two
-              columns over two lines is not a board. */}
-          <div className="mt-4 flex gap-4 overflow-x-auto pb-1 lg:grid lg:grid-cols-4 lg:overflow-visible">
+              From sm to lg the row scrolls sideways rather than wrapping: two
+              columns over two lines is not a board. On a phone there is room
+              for less than one column, so a sideways board showed a single
+              column and hid three; there the columns stack, full width, each
+              still scrolling its own cards (user report, 2026-09-23). */}
+          <div className="mt-4 flex flex-col gap-4 pb-1 sm:flex-row sm:overflow-x-auto lg:grid lg:grid-cols-4 lg:overflow-visible">
             {columns.map((col) => {
               const droppable = Boolean(draggingId) && canDropOn(col.key);
               const isOver = droppable && over === col.key;
@@ -312,7 +315,7 @@ export default function TaskBoard({
                     if (over === col.key) setOver('');
                   }}
                   onDrop={(e) => handleDrop(col.key, e)}
-                  className={`flex w-[17rem] shrink-0 flex-col rounded-2xl border transition lg:w-auto
+                  className={`flex w-full sm:w-[17rem] shrink-0 flex-col rounded-2xl border transition lg:w-auto
                     ${isOver ? 'border-dashed border-gray-400 bg-gray-100'
                       : droppable ? 'border-dashed border-gray-300 bg-gray-50'
                         : 'border-gray-200 bg-gray-50'}`}

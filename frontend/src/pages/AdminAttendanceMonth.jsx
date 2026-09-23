@@ -256,7 +256,7 @@ export default function AdminAttendanceMonth() {
             ) : sortedRecords.map((r) => {
               const d = new Date(r.date);
               return (
-                <div key={r._id} className="flex items-center gap-3 py-2.5 border-t border-gray-100">
+                <div key={r._id} className="flex flex-wrap sm:flex-nowrap items-center gap-3 py-2.5 border-t border-gray-100">
                   <div className="w-10 text-center shrink-0">
                     <div className="text-sm font-bold text-indigo-600">{d.getDate()}</div>
                     <div className="text-[10px] text-gray-400">{d.toLocaleString([], { month: 'short' })}</div>
@@ -280,7 +280,10 @@ export default function AdminAttendanceMonth() {
                     {distBadge(r)}
                     {r.remarks && <span className="text-[11px] text-gray-400 italic truncate max-w-[260px]" title={r.remarks}>{r.remarks}</span>}
                   </div>
-                  <div className="flex gap-1 shrink-0">
+                  {/* Phone: Edit / Regularize get their own line under the punches,
+                      indented past the date (w-10 + gap-3); beside them the punch
+                      details were squeezed into a ~115px column. */}
+                  <div className="flex gap-1 shrink-0 w-full sm:w-auto pl-[52px] sm:pl-0">
                     <button onClick={() => openEdit(r)} className="text-[11px] px-2 py-1 rounded border border-gray-300 hover:bg-gray-50">Edit</button>
                     <button onClick={() => openReg(r)} className="text-[11px] px-2 py-1 rounded border border-gray-300 hover:bg-gray-50">Regularize</button>
                   </div>

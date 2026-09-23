@@ -82,7 +82,7 @@ export default function TaskFilters({ open, onClose, meta, value = {}, onApply }
 
         <div className="flex min-h-[20rem] flex-col sm:flex-row">
           {/* Tabs */}
-          <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-gray-100 p-2 sm:w-40 sm:flex-col sm:border-b-0 sm:border-r">
+          <div className="flex shrink-0 flex-wrap gap-1 border-b border-gray-100 p-2 sm:w-40 sm:flex-col sm:flex-nowrap sm:overflow-x-auto sm:border-b-0 sm:border-r">
             {TABS.map(([key, label]) => (
               <button
                 key={key}
@@ -100,8 +100,11 @@ export default function TaskFilters({ open, onClose, meta, value = {}, onApply }
             ))}
           </div>
 
-          {/* Choices */}
-          <div className="flex min-w-0 flex-1 flex-col">
+          {/* Choices. `min-h-0`: on a short phone the height-capped panel
+              squeezes this column, and without it the list overflowed onto
+              the Clear / Filter footer instead of scrolling. (Cross axis at
+              sm+, where it changes nothing.) */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {(tab === 'assignedTo' || tab === 'assignedBy' || tab === 'category') && (
               <div className="border-b border-gray-100 p-2">
                 <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-2">

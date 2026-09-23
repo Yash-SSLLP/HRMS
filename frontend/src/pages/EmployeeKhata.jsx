@@ -919,7 +919,9 @@ export default function EmployeeKhata() {
           <h2 className="text-sm font-semibold text-gray-700 mb-3">How this adds up</h2>
 
           <dl className="divide-y divide-gray-100 text-sm">
-            <div className="flex items-center justify-between py-2">
+            {/* gap-3 is for a phone, where the label wraps right up against the
+                figure; sm:gap-0 keeps wider screens exactly as they were. */}
+            <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
               <dt className="text-gray-600">
                 Advanced to you
                 <span className="block text-xs text-gray-400">Money paid into your wallet, confirmed</span>
@@ -927,7 +929,7 @@ export default function EmployeeKhata() {
               <dd className="font-medium text-emerald-700 whitespace-nowrap">+ {money(totals.advanced)}</dd>
             </div>
 
-            <div className="flex items-center justify-between py-2">
+            <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
               <dt className="text-gray-600">
                 Spent, across all books
                 <span className="block text-xs text-gray-400">Expenses the company has confirmed, less anything refunded</span>
@@ -935,7 +937,7 @@ export default function EmployeeKhata() {
               <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.spent)}</dd>
             </div>
 
-            <div className="flex items-center justify-between py-2">
+            <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
               <dt className="text-gray-600">
                 Returned
                 <span className="block text-xs text-gray-400">Unspent cash handed back, and payroll recoveries</span>
@@ -943,7 +945,7 @@ export default function EmployeeKhata() {
               <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.returned)}</dd>
             </div>
 
-            <div className="flex items-center justify-between py-2.5 border-t-2 border-gray-200">
+            <div className="flex items-center justify-between gap-3 sm:gap-0 py-2.5 border-t-2 border-gray-200">
               <dt className="font-medium text-gray-800">
                 {display.label}
                 <span className="block text-xs text-gray-400">{style.hint}</span>
@@ -1413,8 +1415,11 @@ export default function EmployeeKhata() {
             ) : (
               <ul className="divide-y divide-gray-100 mb-4">
                 {members.rows.map((m) => (
-                  <li key={m._id} className="flex items-center gap-2 py-2">
-                    <div className="min-w-0 flex-1">
+                  // On a phone the name takes its own line and the pill, role
+                  // select and ✕ drop below it: side by side they left the name
+                  // ~16px wide. From sm up it is the one-line row it always was.
+                  <li key={m._id} className="flex flex-wrap sm:flex-nowrap items-center gap-2 py-2">
+                    <div className="min-w-0 flex-1 basis-full sm:basis-0">
                       <p className="text-sm text-gray-800 truncate">
                         {m.name || m.email}
                         {String(m._id) === myId && <span className="text-gray-400"> (you)</span>}

@@ -15,8 +15,11 @@ function Chip({ name, note, dot }) {
   return (
     <span className="inline-flex items-center gap-1.5 max-w-full bg-gray-50 border border-gray-200 rounded-full px-2.5 py-1 text-xs text-gray-700">
       {dot && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dot }} />}
-      <span className="truncate">{name}</span>
-      {note ? <span className="text-gray-400 shrink-0">· {note}</span> : null}
+      {/* On a phone the note ("· Designation · Department") is what gives way,
+          not the name: it left an absent person's name as "Pri…". sm: puts
+          back the original shrink behaviour. */}
+      <span className="truncate shrink-0 sm:shrink">{name}</span>
+      {note ? <span className="text-gray-400 truncate sm:shrink-0">· {note}</span> : null}
     </span>
   );
 }

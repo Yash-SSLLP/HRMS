@@ -276,8 +276,10 @@ export function AssessmentView({ round, dense = false }) {
 
       {rated.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
+          {/* Wraps on a phone, like the form's rows: nested in a round card the
+              label and the stars do not both fit, and the stars drop below. */}
           {rated.map((f) => (
-            <div key={f.key} className="flex items-center justify-between gap-2">
+            <div key={f.key} className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2">
               <span className="text-xs text-gray-600">{f.label}</span>
               <StarRow value={a.ratings[f.key]} disabled size="text-sm" />
             </div>

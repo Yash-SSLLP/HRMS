@@ -603,7 +603,9 @@ export default function AdminIncentiveDashboard() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* One column below sm: half of this dialog is ~140px on a phone,
+                  too tight for a date field and its hint underneath. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Points each *</label>
                   {/* Focused only when the person is already chosen (the form was

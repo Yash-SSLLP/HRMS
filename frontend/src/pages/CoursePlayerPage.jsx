@@ -103,7 +103,10 @@ export default function CoursePlayerPage() {
   }
 
   return (
-    <div className="-m-4 sm:-m-6">
+    // Cancels main's gutter exactly at each of its three stops (p-3.5 / sm:p-5 /
+    // lg:p-6 in Layout). A single sm:-m-6 overhung a tablet's 20px gutter by 4px
+    // a side, which the page's overflow-x:hidden then clipped off the player.
+    <div className="-m-3.5 sm:-m-5 lg:-m-6">
       {/* Top bar */}
       <div className="bg-gray-900 text-white px-4 sm:px-6 py-3">
         <div className="flex items-center justify-between gap-3">
@@ -172,7 +175,9 @@ export default function CoursePlayerPage() {
 
           {/* Report an issue */}
           {active && (
-            <div className={`px-4 sm:px-6 py-3 flex items-center gap-2 text-sm ${videoFailed ? 'bg-amber-50 border-t border-amber-200' : 'bg-gray-50 border-t border-gray-200'}`}>
+            // Wraps on a phone: text + button did not fit, and the button's label
+            // was squeezed onto two lines. The button drops below, right-aligned.
+            <div className={`px-4 sm:px-6 py-3 flex flex-wrap sm:flex-nowrap items-center gap-2 text-sm ${videoFailed ? 'bg-amber-50 border-t border-amber-200' : 'bg-gray-50 border-t border-gray-200'}`}>
               <span className="text-gray-500">{videoFailed ? 'Trouble with this lesson?' : 'Something wrong with this lesson?'}</span>
               <button onClick={() => setReportOpen(true)}
                 className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-white text-gray-700">

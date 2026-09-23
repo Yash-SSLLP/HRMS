@@ -97,7 +97,10 @@ export default function ChildTaskList({ children = [], onChanged, onOpen }) {
                   onOpen ? 'cursor-pointer hover:brightness-[.98]' : 'cursor-default'
                 }`}
               >
-                <div className="flex items-start gap-2">
+                {/* Phone: Claim drops to a full-width line of its own, so the
+                    title and chips keep the row's width instead of being
+                    squeezed beside it. From sm up, one row as before. */}
+                <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap">
                   <span className="mt-0.5 shrink-0 text-[11px] font-semibold tabular-nums text-gray-500">
                     {piece.serial || i + 1}.
                   </span>
@@ -127,7 +130,7 @@ export default function ChildTaskList({ children = [], onChanged, onOpen }) {
                       type="button"
                       onClick={(e) => { e.stopPropagation(); claim(piece); }}
                       disabled={working}
-                      className="min-h-[36px] inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-gray-300 bg-white/80 px-3 text-xs font-medium text-gray-700 transition hover:border-green-500 hover:text-green-700 disabled:opacity-50"
+                      className="min-h-[36px] inline-flex basis-full shrink-0 items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white/80 px-3 text-xs font-medium text-gray-700 transition hover:border-green-500 hover:text-green-700 disabled:opacity-50 sm:basis-auto"
                     >
                       <FiDownloadCloud size={13} />
                       {working ? 'Taking…' : 'Claim'}

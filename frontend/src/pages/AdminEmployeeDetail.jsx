@@ -36,9 +36,9 @@ function initials(p) {
   return (a + b).toUpperCase() || 'E';
 }
 
-function Field({ label, value }) {
+function Field({ label, value, className }) {
   return (
-    <div>
+    <div className={className}>
       <dt className="text-xs uppercase tracking-wide text-gray-400">{label}</dt>
       <dd className="text-sm text-gray-800 mt-0.5">{value || <span className="text-gray-400">-</span>}</dd>
     </div>
@@ -258,7 +258,9 @@ export default function AdminEmployeeDetail() {
 
       {/* Document submission link + verification */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">
-        <div className="flex items-center justify-between gap-2 mb-3">
+        {/* On a phone the action links take their own line under the heading;
+            sharing the row squeezed the heading to ~100px and stacked the links. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
           <h2 className="card-title">Document Submission</h2>
           <div className="flex items-center gap-3 shrink-0">
             {/* An appointment letter for somebody already on the payroll. The
@@ -299,7 +301,9 @@ export default function AdminEmployeeDetail() {
         ) : (
           <ul className="divide-y divide-gray-100">
             {docs.map((d) => (
-              <li key={d._id} className="py-2 flex items-center justify-between gap-3">
+              // Phone: the badge + View/Verify/Reject go on their own line under
+              // the file name instead of a one-per-line column beside it.
+              <li key={d._id} className="py-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <div className="min-w-0">
                   <div className="text-sm text-gray-800 truncate">
                     <span className="text-gray-500">{humanize(d.category)}:</span> {d.fileName}
@@ -348,8 +352,11 @@ export default function AdminEmployeeDetail() {
         </Card>
 
         <Card title="Personal & Contact">
-          <Field label="Phone" value={u.phone} />
-          <Field label="Email" value={u.email} />
+          {/* Email takes both columns on a phone — an address has no break
+              point, and a half-width cell split it mid-word. Phone spans too,
+              or the grid would leave an empty cell beside it. */}
+          <Field label="Phone" value={u.phone} className="col-span-2 sm:col-span-1" />
+          <Field label="Email" value={u.email} className="col-span-2 sm:col-span-1" />
           <Field label="Date of birth" value={fmtDate(profile.dateOfBirth)} />
           <Field label="Gender" value={profile.gender} />
           <Field label="Marital status" value={profile.maritalStatus} />

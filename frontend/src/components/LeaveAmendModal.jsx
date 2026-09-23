@@ -153,14 +153,16 @@ export default function LeaveAmendModal({ request, onClose, onSaved }) {
             </select>
           </>
         ) : (
-          <div className="flex gap-3 mb-3">
-            <div className="flex-1">
+          // Stacked on a phone: side by side, each native date picker got ~138px
+          // at 360px, and its value clipped on anything narrower.
+          <div className="flex flex-col sm:flex-row gap-3 mb-3">
+            <div className="sm:flex-1">
               <label className="block text-sm text-gray-700 mb-1">From</label>
               <input type="date" required value={form.startDate}
                 onChange={(e) => set({ startDate: e.target.value })}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
             </div>
-            <div className="flex-1">
+            <div className="sm:flex-1">
               <label className="block text-sm text-gray-700 mb-1">To</label>
               <input type="date" required value={form.endDate}
                 onChange={(e) => set({ endDate: e.target.value })}

@@ -80,20 +80,23 @@ export default function DocPreviewModal({ doc, url, onClose }) {
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
       <div className="docfield-preview w-full max-w-4xl max-h-[92vh] rounded-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-3 px-4 py-3 docfield-preview-bar">
-          <span className="min-w-0 flex-1">
+        {/* Phone: Download + New tab left the filename a ~50px sliver, so they
+            wrap to a second row (order-last) while the filename keeps the close
+            button beside it; the basis leaves room for the X and no more. */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 px-4 py-3 docfield-preview-bar">
+          <span className="min-w-0 flex-1 basis-[calc(100%-3rem)] sm:basis-0">
             <span className="block truncate text-sm font-semibold">{fileName}</span>
             <span className="block text-[11px] docfield-meta">
               {doc.category}{doc.sizeBytes ? ` · ${prettySize(doc.sizeBytes)}` : ''}{doc.status ? ` · ${doc.status}` : ''}
             </span>
           </span>
           <button type="button" onClick={download} disabled={!blobUrl}
-            className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold docfield-action px-2.5 py-1.5 rounded-md disabled:opacity-50">
+            className="order-last sm:order-none shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold docfield-action px-2.5 py-1.5 rounded-md disabled:opacity-50">
             <FiDownload size={13} /> Download
           </button>
           {blobUrl && (
             <a href={blobUrl} target="_blank" rel="noreferrer"
-              className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold docfield-action px-2.5 py-1.5 rounded-md">
+              className="order-last sm:order-none shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold docfield-action px-2.5 py-1.5 rounded-md">
               <FiExternalLink size={13} /> New tab
             </a>
           )}

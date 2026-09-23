@@ -329,7 +329,9 @@ export default function EmployeeDocuments() {
               You already have a {humanize(category)} awaiting verification — uploading here replaces it.
             </p>
           )}
-          <div className="flex items-center justify-between">
+          {/* Stacked on a phone: beside the button the note ran as a narrow
+              column right up against it (the row has no gap). */}
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-0">
             <p className="text-xs text-gray-500">
               Documents like Offer Letter, Appraisal etc. ({hrOnly.join(', ')}) are uploaded by HR.
             </p>

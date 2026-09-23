@@ -30,8 +30,11 @@ import { TbSitemap } from 'react-icons/tb';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
 function StatCard({ icon, tint, iconColor, value, label, to }) {
+  // On a phone the tile is ~158px wide, and the 48px icon beside the text left
+  // the label ~54px — "Employees" broke mid-word. Below sm the icon sits above
+  // the figure instead, giving the label the tile's full width.
   const body = (
-    <div className="bg-white shadow rounded-lg p-5 h-full flex items-center gap-4">
+    <div className="bg-white shadow rounded-lg p-5 h-full flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
       <span className={`stat-icon ${tint} ${iconColor || ''}`}>{icon}</span>
       <div className="min-w-0">
         <div className="text-2xl font-semibold text-gray-900">{value}</div>
@@ -142,12 +145,15 @@ export default function AdminOverview() {
         <AttendanceHeatmap org={hasPermission(user, 'attendance.manage')} />
       </div>
 
-      {/* Per-day attendance trends */}
+      {/* Per-day attendance trends.
+          Every card header below: on a phone the "… →" link keeps its one line
+          (shrink-0) and the title wraps beside it instead — shrinking both had
+          squeezed "Attendance →" into a two-line ~118px button. sm: restores. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Avg login hours / day</h2>
-            <Link to="/admin/attendance-report" className="text-sm text-blue-600 hover:underline">Report →</Link>
+            <Link to="/admin/attendance-report" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Report →</Link>
           </div>
           {avgHoursBars.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No attendance data yet</p>
@@ -156,9 +162,9 @@ export default function AdminOverview() {
           )}
         </div>
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Present employees / day</h2>
-            <Link to="/admin/attendance" className="text-sm text-blue-600 hover:underline">Attendance →</Link>
+            <Link to="/admin/attendance" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Attendance →</Link>
           </div>
           {presentBars.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No attendance data yet</p>
@@ -180,9 +186,9 @@ export default function AdminOverview() {
             height is steady (~510px) whatever the headcount; `flex-1` on the
             chart row still takes the leftover and centres the donut in it. */}
         <div className="bg-white shadow rounded-lg p-5 flex flex-col">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Today's Attendance</h2>
-            <Link to="/admin/attendance" className="text-sm text-blue-600 hover:underline">Attendance →</Link>
+            <Link to="/admin/attendance" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Attendance →</Link>
           </div>
           {(c.totalEmployees ?? 0) === 0 ? (
             <p className="text-sm text-gray-400 italic">No employees yet</p>
@@ -195,9 +201,9 @@ export default function AdminOverview() {
 
         {/* Active employees by department */}
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Employees by Department</h2>
-            <Link to="/admin/departments" className="text-sm text-blue-600 hover:underline">Departments →</Link>
+            <Link to="/admin/departments" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Departments →</Link>
           </div>
           {deptBars.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No employees yet</p>
@@ -208,9 +214,9 @@ export default function AdminOverview() {
 
         {/* Daily login / logout report (compact) */}
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Daily Login / Logout</h2>
-            <Link to="/admin/attendance-report" className="text-sm text-blue-600 hover:underline">Full report →</Link>
+            <Link to="/admin/attendance-report" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Full report →</Link>
           </div>
           <AttendanceReportWidget compact height={150} />
         </div>
@@ -220,9 +226,9 @@ export default function AdminOverview() {
 
         {/* Pending leave requests */}
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Pending Leave Requests</h2>
-            <Link to="/admin/leave" className="text-sm text-blue-600 hover:underline">Manage →</Link>
+            <Link to="/admin/leave" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Manage →</Link>
           </div>
           {(data?.pendingLeaveRequests || []).length === 0 ? (
             <p className="text-sm text-gray-400 italic">Nothing awaiting approval 🎉</p>
@@ -245,9 +251,9 @@ export default function AdminOverview() {
 
         {/* Upcoming holidays */}
         <div className="bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Upcoming Holidays</h2>
-            <Link to="/admin/calendar" className="text-sm text-blue-600 hover:underline">Calendar →</Link>
+            <Link to="/admin/calendar" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Calendar →</Link>
           </div>
           {(data?.nextHolidays || []).length === 0 ? (
             <p className="text-sm text-gray-400 italic">No holidays in the next 30 days</p>

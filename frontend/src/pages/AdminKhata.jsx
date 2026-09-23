@@ -1699,7 +1699,9 @@ export default function AdminKhata() {
               </>
             )}
 
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            {/* One column below sm, like the direction pills above: half of this
+                modal is ~138px on a phone, too tight for a date field. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
                 <input type="number" min="0.01" step="0.01" required value={entryForm.amount}
@@ -1751,7 +1753,7 @@ export default function AdminKhata() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
               placeholder="e.g. site material purchase" />
 
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Mode</label>
                 <select value={entryForm.paymentMode}
@@ -1770,9 +1772,12 @@ export default function AdminKhata() {
 
             <label className="block text-sm text-gray-700 mb-1">Receipt (optional)</label>
             <div className="flex flex-wrap items-center gap-2 mb-4">
+              {/* Full width below sm. A file input is as wide as ~34 characters of
+                  its font, and at the 16px phone font floor that is ~300px — past
+                  the edge of this panel's 288px content box. */}
               <input type="file" accept="image/*,application/pdf"
                 onChange={(e) => setEntryModal({ ...entryModal, file: e.target.files?.[0] || null })}
-                className="text-sm" />
+                className="text-sm w-full sm:w-auto" />
               {/* A real camera rather than an `<input capture>` hint, which does
                   nothing at all on a desktop — see components/CameraCapture. */}
               <button type="button" onClick={() => setCamera('entry')}
@@ -1948,7 +1953,7 @@ export default function AdminKhata() {
               </label>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">From</label>
                 <input type="date" value={statementModal.from}
@@ -2004,7 +2009,9 @@ export default function AdminKhata() {
               ))}
             </select>
 
-            <div className="grid grid-cols-2 gap-3">
+            {/* gap-x only: each field below carries its own mb-3, which is what
+                spaces them once they stack into one column on a phone. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
                 <input type="number" min="0.01" step="0.01" required value={expenseEdit.data.amount}
@@ -2024,7 +2031,7 @@ export default function AdminKhata() {
               onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, purpose: e.target.value } })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
               <div>
                 <label className="block text-sm text-gray-700 mb-1">Paid by</label>
                 <select value={expenseEdit.data.paymentMode}
@@ -2045,7 +2052,7 @@ export default function AdminKhata() {
             <div className="flex flex-wrap items-center gap-2 mb-2">
               <input type="file" accept="image/*,application/pdf"
                 onChange={(e) => setExpenseEdit({ ...expenseEdit, file: e.target.files?.[0] || null })}
-                className="text-sm" />
+                className="text-sm w-full sm:w-auto" />
               <button type="button" onClick={() => setCamera('edit')}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                 Take photo

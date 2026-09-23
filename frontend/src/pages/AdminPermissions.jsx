@@ -111,10 +111,14 @@ const NotApplicable = ({ hint }) => (
   <span title={hint} className="text-gray-300 select-none">—</span>
 );
 
-/** One org-wide setting: what it does on the left, the switch on the right. */
+/**
+ * One org-wide setting: what it does on the left, the switch on the right.
+ * On a phone the switch drops BELOW the text — beside it, a three-line
+ * description was squeezed into a ~150px column a dozen lines tall.
+ */
 function SettingRow({ title, description, checked, onChange, busy, onLabel, offLabel }) {
   return (
-    <div className="flex items-start justify-between gap-6 py-4">
+    <div className="flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-6 py-4">
       <div className="min-w-0">
         <div className="text-sm font-medium text-gray-900">{title}</div>
         <p className="text-xs text-gray-500 mt-1 leading-relaxed max-w-3xl">{description}</p>
@@ -980,9 +984,11 @@ function AccessTab({ showGuide, setShowGuide }) {
                 </div>
               )}
             </div>
-            <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100">
+            {/* Wraps on a phone: the count plus both buttons need ~282px and a
+                360px screen leaves this footer 280, so the pair used to split. */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 px-6 py-4 border-t border-gray-100">
               <span className="text-xs text-gray-500">{companySel.size === 0 ? 'All companies' : `${companySel.size} selected`}</span>
-              <div className="flex gap-2">
+              <div className="flex gap-2 ml-auto sm:ml-0">
                 <button type="button" onClick={() => setCompanyUser(null)}
                   className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="button" onClick={saveCompanies} disabled={companySaving}

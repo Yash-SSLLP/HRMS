@@ -804,9 +804,11 @@ input:focus, textarea:focus, select:focus {
   -webkit-backdrop-filter: blur(3px);
   animation: overlay-in .16s ease both;
 }
-.fixed.inset-0[class*="bg-black/40"] > div,
-.fixed.inset-0[class*="bg-black/50"] > div,
-.fixed.inset-0[class*="bg-black/60"] > div {
+/* `:not(.fixed)` — a dialog that opens ANOTHER overlay inside its own (the task
+   modal's category manager) must not have that backdrop treated as its panel. */
+.fixed.inset-0[class*="bg-black/40"] > div:not(.fixed),
+.fixed.inset-0[class*="bg-black/50"] > div:not(.fixed),
+.fixed.inset-0[class*="bg-black/60"] > div:not(.fixed) {
   animation: modal-in .22s cubic-bezier(.16, 1, .3, 1) both;
 }
 
@@ -2177,7 +2179,11 @@ html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255
 /* Modal dialogs (full-screen overlay → inner panel): keep the panel inside the
    viewport and let it scroll, so tall forms like the employee editor are fully
    reachable and the action buttons aren't pushed off-screen on phones. */
-.fixed.inset-0 > div {
+/* `:not(.fixed)`: an overlay nested directly inside another (AssignTaskModal
+   renders CategoryManager's full-screen backdrop inside its own) is a backdrop,
+   not a panel — capping it cut its bottom off and, on a phone, left a strip of
+   page uncovered down its right edge. */
+.fixed.inset-0 > div:not(.fixed) {
   /* min(): 92vh on a short laptop left the panel taller than the space the page
      chrome leaves it, so the modal scrolled inside a window that was already
      scrolling. */
@@ -2198,7 +2204,7 @@ html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255
    scroll too put sticky footers in the wrong scrollport. The :has() guard is
    what keeps this safe: a flex-col panel with no inner scroller keeps the
    92vh outer scroll above instead of getting hard-clipped. */
-.fixed.inset-0 > div.flex-col:has(.overflow-y-auto, .overflow-auto, iframe) { overflow-y: hidden; }
+.fixed.inset-0 > div.flex-col:not(.fixed):has(.overflow-y-auto, .overflow-auto, iframe) { overflow-y: hidden; }
 
 /* Tighter gutters on phones so cards get more usable width, and nothing with a
    hard-coded width may exceed the screen.
@@ -2211,11 +2217,11 @@ html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255
    leaving a dead declaration here would just re-teach the same wrong lesson to
    whoever reads it next. */
 @media (max-width: 640px) {
-  .fixed.inset-0 > div { padding: 1.1rem; max-width: calc(100vw - 1.5rem); }
+  .fixed.inset-0 > div:not(.fixed) { padding: 1.1rem; max-width: calc(100vw - 1.5rem); }
   /* A panel that lays itself out as a flex column with its own scroller already
      owns its padding (header, body, footer each have their own); adding 1.1rem
      around the outside double-padded the header and pushed the footer in. */
-  .fixed.inset-0 > div.flex-col:has(.overflow-y-auto, .overflow-auto, iframe) { padding: 0; }
+  .fixed.inset-0 > div.flex-col:not(.fixed):has(.overflow-y-auto, .overflow-auto, iframe) { padding: 0; }
   .fixed.inset-0.chat-fullscreen > div { padding: 0; max-width: none; }
   .menu-pop { max-width: calc(100vw - 1.5rem); }
 }
@@ -2401,6 +2407,88 @@ html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255
      tighter keeps the card crisp without going square. */
   .rounded-3xl { border-radius: 1rem; }
   .rounded-2xl { border-radius: 0.85rem; }
+}
+
+/* ---------------------------------------------------------------------------
+   NO SIDEWAYS BUTTON STRIPS ON A PHONE (user report, 2026-09-23)
+
+   "Many of the buttons became horizontal." Every tab strip in the portal was
+   written as a single-line row inside `overflow-x-auto`, and the segmented
+   control scrolled sideways by design. On a 360px phone that turned the row
+   into a hidden-scrollbar carousel: measured, the Tasks strip showed 3 of its
+   6 tabs, Cashbook 3 of 6, Khata 3 of 6, and nothing on screen said the rest
+   existed. A control you cannot see is a control you do not have.
+
+   Below 640px every such strip now WRAPS, so every option is on screen at
+   once. Tables, charts and the org tree still scroll inside their own box —
+   those are wide by nature; a row of buttons is not.
+
+   Nothing here applies from 640px up, so the tablet and desktop strips are
+   exactly what they were.
+--------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* 1. Underline tabs. The house shape is a `border-b` row of buttons each
+        carrying `border-b-2 -mb-px`. Wrapped as-is, the first line's
+        underlines would float between the lines, so on a phone each tab
+        becomes a chip: one hairline border in every state (the box never
+        changes size on selection — see layout-stability) and the selected one
+        tinted in the portal accent. `!important` on overflow beats the
+        `overflow-x-auto` utility the strips carry. */
+  main :is(div, nav):has(> :is(button, a)[class~="border-b-2"][class~="-mb-px"]) {
+    flex-wrap: wrap;
+    overflow: visible !important;
+    gap: 0.375rem;
+    border-bottom-width: 0;
+  }
+  main :is(div, nav) > :is(button, a)[class~="border-b-2"][class~="-mb-px"] {
+    margin-bottom: 0;
+    border-width: 1px;
+    border-style: solid;
+    border-color: var(--border);
+    border-radius: 0.6rem;
+    padding-inline: 0.8rem;
+    background-color: var(--surface);
+  }
+  main :is(div, nav) > :is(button, a)[class~="border-b-2"][class~="-mb-px"]:not(.border-transparent) {
+    border-color: var(--accent) !important;
+    background-color: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  }
+
+  /* 2. The segmented control. Its track and pill are one surface, so it wraps
+        INSIDE the track — the recessed rail simply grows a second row — and
+        the pills stretch to share each row evenly instead of leaving a ragged
+        gap at the end. */
+  .seg-track {
+    display: flex;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .seg-track > .seg-btn {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+
+  /* 3. Any row of two or more buttons wraps. The segmented tracks built by
+        hand (`inline-flex … bg-gray-100` around three buttons — the approval
+        inboxes, Holidays) and the toolbars are single-line flex rows, so
+        when they did not fit, the buttons SHRANK instead: measured on the
+        leave inbox at 360px, "To approve" / "Emergency" / "History" came out
+        as "To appro-ve", "Emerge-ncy", "Hist-ory". A row that fits is
+        untouched — wrapping only ever moves an item that would not fit. */
+  main :is(.flex, .inline-flex):not(.flex-nowrap):has(> :is(button, a[href], [role="button"]) ~ :is(button, a[href], [role="button"])) {
+    flex-wrap: wrap;
+  }
+
+  /* 4. …and a label only ever breaks between words. The long-string rule at
+        the top of this block (`overflow-wrap: anywhere` on every span/div in
+        main) is right for a pasted URL in a paragraph and wrong inside a
+        button, where it let a squeezed tab split its word mid-letter instead
+        of forcing the row to wrap. The class selector in `:is()` lifts this
+        above that rule's (0,0,2). */
+  main :is(button, [role="button"], [role="tab"], .seg-btn),
+  main :is(button, [role="button"], [role="tab"], .seg-btn) :is(span, div, p) {
+    overflow-wrap: normal;
+  }
 }
 
 /* ---------------------------------------------------------------------------

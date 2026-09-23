@@ -108,7 +108,7 @@ export default function AdminChatExport() {
 
       {result && (
         <div className="bg-white shadow rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-0 mb-3">
             <div className="text-sm text-gray-700">
               <span className="font-medium">{result.meta?.a?.fullName}</span> ↔ <span className="font-medium">{result.meta?.b?.fullName}</span>
               <span className="text-gray-400"> · {result.messages.length} messages</span>

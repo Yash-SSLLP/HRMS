@@ -162,7 +162,9 @@ export default function PublicVideoPlayer({
         onError={() => onError?.()}
       />
       {locked && !activeCp && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
+        // w-max on a phone: from left-1/2 the hint only had half the video's
+        // width to lay out in (same fix as CourseVideoPlayer).
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 w-max max-w-[calc(100%-1.5rem)] sm:w-auto sm:max-w-none bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
           🔒 You can’t skip ahead - finish watching first
         </div>
       )}

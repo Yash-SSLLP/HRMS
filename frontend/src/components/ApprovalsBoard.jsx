@@ -136,8 +136,11 @@ export default function ApprovalsBoard() {
   return (
     <div>
       {/* ---- Subtabs: one per approval type ------------------------------- */}
-      {/* Scrolls sideways on a phone rather than wrapping into a ragged block;
-          `.topbar-scroll` is index.css's hidden-scrollbar helper. */}
+      {/* On a phone the five types are a one-column list, all on screen at
+          once. They used to scroll sideways there too, which showed one card
+          and hid four — the red count on a queue you cannot see is no signal at
+          all (user report, 2026-09-23). From sm up it is the sideways strip it
+          always was; `.topbar-scroll` is index.css's hidden-scrollbar helper. */}
       <div
         role="tablist"
         aria-label="Approval types"
@@ -149,7 +152,9 @@ export default function ApprovalsBoard() {
         // hangs 6px past the tab plus a 2px ring, and `overflow-x:auto` clips the
         // OTHER axis too, so 6px of side padding sheared the ring off the last
         // tab's badge and 8px of top padding grazed its top edge.
-        className="topbar-scroll flex items-stretch gap-2 overflow-x-auto px-2.5 py-2.5 -mx-2.5 -mt-2.5 mb-4"
+        // The phone list does not scroll, so it clips nothing and needs none of
+        // that padding — the badge overhangs freely.
+        className="topbar-scroll grid grid-cols-1 gap-2 mb-4 sm:flex sm:items-stretch sm:overflow-x-auto sm:px-2.5 sm:py-2.5 sm:-mx-2.5 sm:-mt-2.5"
       >
         {SECTIONS.map((s) => {
           const active = s.key === open.key;
@@ -161,7 +166,7 @@ export default function ApprovalsBoard() {
               role="tab"
               aria-selected={active}
               onClick={() => setOpenKey(s.key)}
-              className={`group relative flex-1 min-w-[11.5rem] text-left rounded-2xl border px-4 py-3.5 transition-all ${
+              className={`group relative min-w-0 sm:flex-1 sm:min-w-[11.5rem] text-left rounded-2xl border px-3.5 py-2.5 sm:px-4 sm:py-3.5 transition-all ${
                 active
                   ? 'bg-white border-transparent shadow-md ring-2 ring-inset ring-current accent-text'
                   : 'bg-gray-50 border-gray-200 hover:bg-white hover:border-gray-300 hover:shadow-sm'

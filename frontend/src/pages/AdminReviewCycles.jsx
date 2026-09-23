@@ -296,7 +296,9 @@ export default function AdminReviewCycles() {
                   {RELATIONSHIPS.map((r) => <option key={r} value={r}>{REL_LABELS[r]}</option>)}
                 </select>
               </div>
-              <div className="flex items-center justify-end gap-3 mt-3">
+              {/* Wraps on a phone so a warning beside the button cannot squeeze
+                  "Assign review" onto two lines; the button drops below it. */}
+              <div className="flex flex-wrap sm:flex-nowrap items-center justify-end gap-3 mt-3">
                 {alreadyAssigned && (
                   <span className="text-xs text-amber-700 mr-auto">Already assigned in this cycle.</span>
                 )}

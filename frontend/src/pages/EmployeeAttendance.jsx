@@ -437,7 +437,7 @@ export default function EmployeeAttendance() {
       })()}
 
       <div className="bg-white shadow rounded-lg p-5 mb-6">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 mb-3">
           <h2 className="text-sm font-semibold text-gray-700">Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long' })}</h2>
           {today?.status && (
             <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[today.status]}`}>{today.status}</span>
@@ -500,8 +500,10 @@ export default function EmployeeAttendance() {
             {today.workOnLeave.note ? ` Note: ${today.workOnLeave.note}` : ''}
           </div>
         )}
+        {/* Wraps on a phone: the 30px clock plus "Checked out at 06:30 PM" is
+            ~300px against ~258px of room, so the note sat squeezed beside it. */}
         {today?.checkIn && (
-          <div className={`mb-4 flex items-center justify-between rounded-lg px-4 py-3 border ${
+          <div className={`mb-4 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-1 sm:gap-0 rounded-lg px-4 py-3 border ${
             running ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
             <div>
               <div className={`text-xs font-medium ${running ? 'text-green-700' : 'text-gray-500'}`}>
@@ -539,7 +541,9 @@ export default function EmployeeAttendance() {
             <div className="text-lg font-mono">{formatHours(today?.hoursWorked)}</div>
           </div>
         </div>
-        <div className="flex gap-2 items-center">
+        {/* On a phone the hint takes its own line under the two buttons: beside
+            them it was squeezed into a narrow column of wrapped text. */}
+        <div className="flex flex-wrap sm:flex-nowrap gap-2 items-center">
           <button onClick={() => openCapture('checkin')} disabled={!canCheckIn || busy}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm">
             📷 Check In
@@ -548,7 +552,7 @@ export default function EmployeeAttendance() {
             className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 text-sm">
             📷 Check Out
           </button>
-          <span className="text-xs text-gray-500">A photo is required for each punch.</span>
+          <span className="basis-full sm:basis-auto text-xs text-gray-500">A photo is required for each punch.</span>
         </div>
       </div>
 

@@ -523,14 +523,16 @@ export default function Tasks({ base = '/employee/tasks' }) {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <RangeChips ranges={RANGES} value={range} onChange={setRange} />
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2 rounded-xl border border-gray-200 px-2">
+            {/* Phone: the controls take a line of their own and the search spans
+                it; from sm up they sit beside the range chips as before. */}
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+              <div className="flex w-full items-center gap-2 rounded-xl border border-gray-200 px-2 sm:w-auto">
                 <FiSearch className="shrink-0 text-gray-400" size={14} />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search tasks…"
-                  className="w-36 min-w-0 border-0 p-0 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-0 sm:w-48 min-h-[38px]"
+                  className="w-full min-w-0 border-0 p-0 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-0 sm:w-48 min-h-[38px]"
                 />
                 {search && (
                   <button type="button" onClick={() => setSearch('')} className="text-gray-400 hover:text-gray-600" aria-label="Clear search">

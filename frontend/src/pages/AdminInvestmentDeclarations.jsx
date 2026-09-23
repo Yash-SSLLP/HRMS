@@ -203,9 +203,10 @@ export default function AdminInvestmentDeclarations() {
 
             <div className="divide-y divide-gray-100 border rounded-lg">
               {SECTION_FIELDS.map((f) => (
-                <div key={f.key} className="flex items-center justify-between px-3 py-2 text-sm">
+                <div key={f.key} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
                   <span className="text-gray-700">{f.label}</span>
-                  <span className="text-gray-900">{inr.format(Number(viewing.sections?.[f.key]) || 0)}</span>
+                  {/* shrink-0: on a phone the label wraps, never the rupee figure. */}
+                  <span className="text-gray-900 shrink-0">{inr.format(Number(viewing.sections?.[f.key]) || 0)}</span>
                 </div>
               ))}
               <div className="flex items-center justify-between px-3 py-2 text-sm font-semibold bg-gray-50">

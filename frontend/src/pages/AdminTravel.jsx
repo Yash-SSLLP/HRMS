@@ -156,7 +156,9 @@ export default function AdminTravel() {
                 <td className="px-4 py-3">
                   {t.reimbursementRequested ? (
                     <div>
-                      <div className="flex items-center gap-2">
+                      {/* Wraps on phones: the cell is capped at 11rem there, and a
+                          nowrap row crushed "paid by employee" to a 17px sliver. */}
+                      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                         <span className="font-medium">{inr.format(t.reimbursementAmount || 0)}</span>
                         <span className="text-xs text-gray-400">paid by employee</span>
                         <span className={`text-xs px-2 py-0.5 rounded-lg ${REIMB_STYLES[t.reimbursementStatus] || 'bg-gray-100 text-gray-700'}`}>

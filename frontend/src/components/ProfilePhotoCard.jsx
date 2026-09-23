@@ -63,7 +63,9 @@ export default function ProfilePhotoCard() {
   return (
     <div className="bg-white shadow rounded-lg p-5 mb-4">
       <h2 className="card-title mb-3">Profile Photo</h2>
-      <div className="flex items-center gap-5">
+      {/* Photo above the text on a phone: beside a 96px avatar the copy and the
+          two buttons were squeezed into a ~175px column, one button per line. */}
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
         <div className="relative shrink-0">
           {user?.photo ? (
             <AuthImage

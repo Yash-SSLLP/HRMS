@@ -178,7 +178,11 @@ export default function AdminSurveys() {
               <tr key={s._id}>
                 <td className="px-4 py-3 font-medium text-gray-900">
                   {s.title}
-                  {s.anonymous && <span className="ml-2 text-xs px-2 py-0.5 rounded-lg bg-purple-100 text-purple-800">anonymous</span>}
+                  {/* max-sm: so the word stops splitting ("anony-mous") in the
+                      phone's narrow title cell without touching >=640px — a bare
+                      whitespace-nowrap would also flip index.css's overflow-wrap
+                      hook there. */}
+                  {s.anonymous && <span className="ml-2 text-xs px-2 py-0.5 rounded-lg bg-purple-100 text-purple-800 max-sm:whitespace-nowrap">anonymous</span>}
                   {s.description && <div className="text-xs text-gray-500">{s.description}</div>}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{(s.questions || []).length}</td>
@@ -259,12 +263,15 @@ export default function AdminSurveys() {
                 </div>
                 {form.questions.map((q, qi) => (
                   <div key={qi} className="border rounded-lg p-3 space-y-2">
-                    <div className="flex items-start gap-2">
+                    {/* On a phone the question text takes the whole line and the
+                        type select + remove button drop below it — side by side
+                        they left the question box ~75px wide at 360px. */}
+                    <div className="flex flex-wrap sm:flex-nowrap items-start gap-2">
                       <input required placeholder={`Question ${qi + 1} *`} value={q.text}
                         onChange={(e) => setQuestion(qi, { text: e.target.value })}
                         className="block w-full border rounded-lg px-3 py-2" />
                       <select value={q.type} onChange={(e) => setQuestion(qi, { type: e.target.value })}
-                        className="border rounded-lg px-2 py-2 text-sm">
+                        className="flex-1 sm:flex-initial border rounded-lg px-2 py-2 text-sm">
                         {QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                       </select>
                       {form.questions.length > 1 && (

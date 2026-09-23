@@ -16,7 +16,7 @@ import MailComposeModal from '../components/MailComposeModal';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { ChainProgress } from '../components/LeaveApprovalsInbox';
 import SearchableSelect from '../components/SearchableSelect';
-import { peopleOptions } from '../utils/peopleOptions';
+import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { formatDateTime12 } from '../utils/time';
 
 // ---- Notice period ↔ last working day sync (calendar days) ----
@@ -555,7 +555,7 @@ export default function AdminExit() {
       {detail && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
-            <div className="flex justify-between items-start mb-4">
+            <div className="flex justify-between items-start gap-3 sm:gap-0 mb-4">
               <div>
                 <h2 className="card-title">
                   Exit · {detail.employee?.user?.firstName} {detail.employee?.user?.lastName}
@@ -615,7 +615,7 @@ export default function AdminExit() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
                 <p className="text-xs text-gray-400 mt-1">Synced with the last working day (from the resignation date).</p>
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-500">Handled By (HR)</label>
                 <SearchableSelect disabled={isFinal}
                   value={detail.handledBy?._id || detail.handledBy || ''}
@@ -630,7 +630,7 @@ export default function AdminExit() {
                 </SearchableSelect>
                 <p className="text-xs text-gray-500 mt-1">This person's name signs the exit email; replies route to their address.</p>
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-500">Reason / notes</label>
                 <textarea rows={2} disabled={isFinal} value={detail.reason || ''}
                   onChange={(e) => setDetail({ ...detail, reason: e.target.value })}
@@ -730,9 +730,9 @@ export default function AdminExit() {
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   <div><dt className="text-xs text-gray-500">Primary reason</dt><dd>{detail.feedback.primaryReason || '-'}</dd></div>
                   <div><dt className="text-xs text-gray-500">Would recommend</dt><dd>{detail.feedback.recommendScore ?? '-'} / 5</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '-'}</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Could improve</dt><dd>{detail.feedback.couldImprove || '-'}</dd></div>
-                  <div className="col-span-2"><dt className="text-xs text-gray-500">Open feedback</dt><dd>{detail.feedback.openFeedback || '-'}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-gray-500">Liked most</dt><dd>{detail.feedback.likedMost || '-'}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-gray-500">Could improve</dt><dd>{detail.feedback.couldImprove || '-'}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-gray-500">Open feedback</dt><dd>{detail.feedback.openFeedback || '-'}</dd></div>
                 </dl>
               </div>
             )}

@@ -1204,13 +1204,15 @@ export default function AdminBoysIncentive() {
                 </div>
               )}
 
-              <div className="flex justify-between items-center gap-2 pt-2">
+              {/* On a phone the two buttons wrap under the template link rather
+                  than squeezing it into a wrapped sliver; ml-auto keeps them right. */}
+              <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-2 pt-2">
                 <button type="button"
                   onClick={() => downloadFile('/incentives/template.xlsx', 'incentive-sheets-template.xlsx')}
                   className="text-sm text-blue-600 hover:underline">
                   Download the template
                 </button>
-                <span className="flex gap-2">
+                <span className="flex gap-2 ml-auto">
                   <button type="button" onClick={closeImport}
                     className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
                     {importResult && !importResult.errorBanner ? 'Done' : 'Cancel'}

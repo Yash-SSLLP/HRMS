@@ -259,7 +259,10 @@ export default function EmployeeTeam() {
               <div className="divide-y divide-gray-100">
                 {duty.claims.map((c) => (
                   <div key={c._id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <span className="flex items-center gap-2">
+                    {/* Wraps below sm: name, date, chip and times need more than
+                        a phone card's width, and squeezed on one line the chip
+                        split mid-word. */}
+                    <span className="flex flex-wrap sm:flex-nowrap items-center gap-2">
                       <span className="font-medium text-gray-800">{c.employee?.name || '-'}</span>
                       <span className="text-gray-500">{fmtDate(c.date)}</span>
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${

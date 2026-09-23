@@ -72,7 +72,9 @@ export default function EmployeeOnboarding() {
               const isDone = t.status === 'Done';
               return (
                 <li key={t._id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
+                  {/* Own line on a phone — sharing it with the chip, due date and
+                      status select left the title ~60px wide. */}
+                  <div className="flex-1 basis-full sm:basis-0 min-w-0">
                     <div className={`font-medium ${isDone ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
                       {isDone && <span className="mr-1 text-green-600">✓</span>}{t.title}
                     </div>

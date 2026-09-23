@@ -593,7 +593,10 @@ export default function AssignTaskModal({
                 {form.repeat.frequency === 'WEEKLY' && (
                   <div>
                     <p className="mb-1 text-[11px] text-gray-500">On these days</p>
-                    <div className="flex gap-1">
+                    {/* Seven equal cells on a phone: seven 32px pills do not fit
+                        the ~227px this box has at 360px and left Saturday alone
+                        on a second line. From sm up, the row it always was. */}
+                    <div className="grid grid-cols-7 gap-1 sm:flex">
                       {WEEKDAYS.map((d, i) => {
                         const on = (form.repeat.weekdays || []).includes(i);
                         return (
@@ -609,7 +612,7 @@ export default function AssignTaskModal({
                                   : [...(form.repeat.weekdays || []), i].sort(),
                               },
                             })}
-                            className={`min-h-[32px] min-w-[32px] rounded-lg border text-xs font-medium transition ${
+                            className={`min-h-[32px] min-w-0 sm:min-w-[32px] rounded-lg border text-xs font-medium transition ${
                               on ? 'accent-border accent-bg on-accent' : 'border-gray-200 bg-white text-gray-500'
                             }`}
                           >
@@ -622,7 +625,7 @@ export default function AssignTaskModal({
                 )}
 
                 {['MONTHLY', 'YEARLY'].includes(form.repeat.frequency) && (
-                  <label className="flex items-center gap-2 text-xs text-gray-600">
+                  <label className="flex flex-wrap items-center gap-2 text-xs text-gray-600 sm:flex-nowrap">
                     Day of the month
                     <input
                       type="number"

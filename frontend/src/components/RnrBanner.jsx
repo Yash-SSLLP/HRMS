@@ -89,7 +89,9 @@ export default function RnrBanner() {
       </button>
 
       <div className="p-5">
-        <div className="flex items-center gap-2 mb-4">
+        {/* Phone: the heading fills the row, so it wraps (the month chip drops
+            below) and keeps clear of the absolutely-placed close button. */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 mb-4 pr-7 sm:pr-0">
           <FiAward className="rnr-ink" size={20} />
           <h2 className="font-semibold text-gray-900">Rewards &amp; Recognition</h2>
           <span className="rnr-chip text-xs font-medium rounded-full px-2 py-0.5">

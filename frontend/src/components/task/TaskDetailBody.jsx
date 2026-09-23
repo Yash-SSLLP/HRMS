@@ -983,7 +983,10 @@ export default function TaskDetailBody({
 
         {/* ── The facts ───────────────────────────────────────────── */}
         <section className={`${CARD} px-4 py-4 sm:px-5`}>
-          <div className="flex items-center justify-between">
+          {/* Wraps on a phone: in the task modal (portalled outside <main>, so
+              index.css's button-row wrap never reaches it) Cancel + Save
+              changes beside the heading is right at the card's width. */}
+          <div className="flex flex-wrap items-center justify-between gap-y-2 sm:flex-nowrap">
             <h2 className={SECTION}><FiFlag size={12} /> Details</h2>
             {editing && (
               <div className="flex gap-2">
@@ -1268,8 +1271,11 @@ export default function TaskDetailBody({
                 type="button"
                 onClick={() => setTab(key)}
                 /* Weight and the border live on the BASE class — selecting a tab
-                   must not re-measure it and shuffle the strip sideways. */
-                className={`min-h-[40px] inline-flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2 text-xs font-semibold transition ${
+                   must not re-measure it and shuffle the strip sideways.
+                   Tighter padding/gap on a phone: in the modal (outside <main>,
+                   so no global wrap) three tabs with two-digit counts sat right
+                   at the card's width and the last count got clipped. */
+                className={`min-h-[40px] inline-flex flex-1 items-center justify-center gap-1 border-b-2 px-1.5 text-xs font-semibold transition sm:gap-1.5 sm:px-2 ${
                   tab === key
                     ? 'accent-border accent-text'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -1403,7 +1409,10 @@ export default function TaskDetailBody({
                 </ul>
               )}
 
-              <div className="mt-2 flex items-center gap-1.5">
+              {/* flex-wrap on a phone: while recording, the compact recorder
+                  becomes a full-width red bar (meter, Stop, Cancel) and pushed
+                  the Send button out of the clipped card in the modal. */}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
                 {!voice && <VoiceRecorder value={voice} onChange={setVoice} compact />}
                 <button
                   type="button"
@@ -1889,9 +1898,14 @@ function FeedRow({ update, task, me, onOpenFile }) {
                 key={f._id}
                 type="button"
                 onClick={() => onOpenFile(f._id)}
-                className="min-h-[32px] inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 text-[11px] text-gray-600 transition hover:border-gray-400"
+                /* Capped and ellipsed on a phone only: a long unbroken file
+                   name made the chip wider than the feed column. `max-sm:`
+                   rather than `truncate` / `whitespace-nowrap`, because
+                   index.css keys desktop rules off those two class names. */
+                className="min-h-[32px] inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 text-[11px] text-gray-600 transition hover:border-gray-400 max-sm:max-w-full"
               >
-                <FiPaperclip size={10} /> {f.name}
+                <FiPaperclip size={10} />
+                <span className="max-sm:min-w-0 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap">{f.name}</span>
               </button>
             ))}
           </div>

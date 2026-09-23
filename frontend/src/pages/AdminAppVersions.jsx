@@ -87,8 +87,10 @@ function VersionCell({ r, latest }) {
     );
   }
   const behind = latest && r.appVersionCode != null && r.appVersionCode < latest.versionCode;
+  // Wraps on a phone, where the cell is capped at 11rem: a nowrap row there
+  // crushed "(code)" and "out of date" into slivers a letter wide.
   return (
-    <span className={`inline-flex items-center gap-1.5 text-sm font-medium tabular-nums ${behind ? 'text-amber-700' : 'text-gray-900'}`}>
+    <span className={`inline-flex flex-wrap sm:flex-nowrap items-center gap-1.5 text-sm font-medium tabular-nums ${behind ? 'text-amber-700' : 'text-gray-900'}`}>
       <FiSmartphone size={13} />
       {r.appVersion}
       {r.appVersionCode != null && <span className="text-gray-400 font-normal">({r.appVersionCode})</span>}

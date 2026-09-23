@@ -947,30 +947,39 @@ export default function ChatDock() {
                     const isMe = String(m._id) === String(me?._id);
                     const canRemove = canManage && !isMe && m.role !== 'owner' && (isOwner || m.role !== 'admin');
                     const canToggleRole = isOwner && !isMe && m.role !== 'owner' && m.status === 'accepted';
+                    // On a phone the badge + "Remove admin" + ✕ left an admin's
+                    // name ~66px, so the cluster drops to its own line (right-
+                    // aligned) once the name would go under 7rem. From sm up the
+                    // wrapper spaces its children exactly as the row did.
+                    const hasActions = m.role === 'owner' || m.role === 'admin' || canToggleRole || canRemove;
                     return (
-                      <div key={m._id} className="flex items-center gap-3 py-1.5">
+                      <div key={m._id} className="flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1 sm:gap-3 py-1.5">
                         <Avatar name={m.fullName} size={36} photoUrl={userPhotoUrl(m._id, m.hasPhoto, bust)} />
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-[7rem] sm:min-w-0 flex-1">
                           <div className="text-sm truncate" style={{ color: wa.text }}>
                             {m.fullName}{isMe ? ' (You)' : ''}
                             {m.status === 'invited' && <span className="text-[11px] ml-1" style={{ color: wa.sub }}>· invited</span>}
                           </div>
                           <div className="text-[11px] truncate" style={{ color: wa.sub }}>{m.email}</div>
                         </div>
-                        {(m.role === 'owner' || m.role === 'admin') && (
-                          <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-                            style={{ background: m.role === 'owner' ? '#fde68a' : '#bfdbfe', color: '#1f2937' }}>
-                            {m.role === 'owner' ? 'Owner' : 'Admin'}
-                          </span>
-                        )}
-                        {canToggleRole && (
-                          <button onClick={() => setRole(m._id, m.role === 'admin' ? 'member' : 'admin')}
-                            className="text-[11px] px-2 py-1 rounded shrink-0" style={{ border: `1px solid ${wa.border}`, color: wa.sub }}>
-                            {m.role === 'admin' ? 'Remove admin' : 'Make admin'}
-                          </button>
-                        )}
-                        {canRemove && (
-                          <button onClick={() => removeMember(m._id)} title="Remove" className="text-sm px-1.5 shrink-0" style={{ color: '#dc2626' }}>✕</button>
+                        {hasActions && (
+                          <div className="flex items-center gap-3 shrink-0 ml-auto sm:ml-0">
+                            {(m.role === 'owner' || m.role === 'admin') && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
+                                style={{ background: m.role === 'owner' ? '#fde68a' : '#bfdbfe', color: '#1f2937' }}>
+                                {m.role === 'owner' ? 'Owner' : 'Admin'}
+                              </span>
+                            )}
+                            {canToggleRole && (
+                              <button onClick={() => setRole(m._id, m.role === 'admin' ? 'member' : 'admin')}
+                                className="text-[11px] px-2 py-1 rounded shrink-0" style={{ border: `1px solid ${wa.border}`, color: wa.sub }}>
+                                {m.role === 'admin' ? 'Remove admin' : 'Make admin'}
+                              </button>
+                            )}
+                            {canRemove && (
+                              <button onClick={() => removeMember(m._id)} title="Remove" className="text-sm px-1.5 shrink-0" style={{ color: '#dc2626' }}>✕</button>
+                            )}
+                          </div>
                         )}
                       </div>
                     );

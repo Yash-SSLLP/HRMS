@@ -504,7 +504,7 @@ export default function AdminCashbook() {
       {entryModal && (
         <Modal title={entryModal.mode === 'create' ? 'Add Entry' : 'Edit Entry'} onClose={() => setEntryModal(null)}>
           <form onSubmit={saveEntry} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Type"><select value={entryModal.data.type} onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryModal.data, type: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="out">Out (payment)</option><option value="in">In (receipt)</option></select></Field>
               <Field label="Account *"><SearchableSelect required value={entryModal.data.account} onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryModal.data, account: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Select…</option>{activeAccounts.map((a) => <option key={a._id} value={a._id}>{a.name}</option>)}</SearchableSelect></Field>
               <Field label="Amount *"><input required type="number" min="0" step="0.01" value={entryModal.data.amount} onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryModal.data, amount: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
@@ -547,7 +547,7 @@ export default function AdminCashbook() {
         <Modal title={accountModal.mode === 'create' ? 'Add Account' : 'Edit Account'} onClose={() => setAccountModal(null)}>
           <form onSubmit={saveAccount} className="space-y-3">
             <Field label="Name *"><input required value={accountModal.data.name} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, name: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Type"><select value={accountModal.data.type} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, type: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm">{ACCOUNT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field>
               <Field label="Opening balance"><input type="number" step="0.01" value={accountModal.data.openingBalance} onChange={(e) => setAccountModal({ ...accountModal, data: { ...accountModal.data, openingBalance: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
             </div>
@@ -588,7 +588,7 @@ export default function AdminCashbook() {
       {transferOpen && (
         <Modal title="Transfer between accounts" onClose={() => setTransferOpen(false)}>
           <form onSubmit={doTransfer} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="From *"><SearchableSelect required value={transfer.fromAccount} onChange={(e) => setTransfer({ ...transfer, fromAccount: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Select…</option>{activeAccounts.map((a) => <option key={a._id} value={a._id}>{a.name}</option>)}</SearchableSelect></Field>
               <Field label="To *"><SearchableSelect required value={transfer.toAccount} onChange={(e) => setTransfer({ ...transfer, toAccount: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Select…</option>{activeAccounts.map((a) => <option key={a._id} value={a._id}>{a.name}</option>)}</SearchableSelect></Field>
               <Field label="Amount *"><input required type="number" min="0" step="0.01" value={transfer.amount} onChange={(e) => setTransfer({ ...transfer, amount: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>

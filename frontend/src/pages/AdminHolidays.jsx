@@ -564,7 +564,9 @@ export default function AdminHolidays() {
 
               {importResult?.created && (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                  {/* One tile a row on a phone: three across leaves ~68px of
+                      text, and "Celebrations" alone is wider than that. */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
                     {[
                       ['Holidays', importResult.created.holidays],
                       ['Comp off days', importResult.created.compOffs],
@@ -605,13 +607,17 @@ export default function AdminHolidays() {
                 </div>
               )}
 
-              <div className="flex justify-between items-center gap-2 pt-2">
+              {/* On a phone the link and the button pair do not fit one line, and
+                  squeezed together the pair stacked one-per-line in a ~114px box.
+                  So the row wraps there, with the pair kept right-aligned on its
+                  own line (ml-auto); from sm up it is the original single row. */}
+              <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-2 pt-2">
                 <button type="button"
                   onClick={() => downloadFile('/holidays/template.xlsx', 'calendar-import-template.xlsx')}
                   className="text-sm text-blue-600 hover:underline">
                   Download the template
                 </button>
-                <span className="flex gap-2">
+                <span className="flex gap-2 ml-auto sm:ml-0">
                   <button type="button" onClick={closeImport}
                     className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
                     {importResult?.created ? 'Done' : 'Cancel'}

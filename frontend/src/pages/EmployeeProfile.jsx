@@ -127,7 +127,9 @@ export default function EmployeeProfile() {
       <div className="bg-white shadow rounded-lg p-6 space-y-6">
         <section>
           <h2 className="card-title mb-3">Personal</h2>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {/* One column on a phone (all three lists): two 134px columns split
+              emails, account and PF numbers across lines mid-string. */}
+          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <Field label="Employee Code" value={profile.employeeCode} mono />
             <Field label="Name" value={`${u.firstName || ''} ${u.lastName || ''}`} />
             <Field label="Email" value={u.email} />
@@ -145,7 +147,7 @@ export default function EmployeeProfile() {
 
         <section>
           <h2 className="card-title mb-3">Statutory IDs</h2>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <Field label="PAN" value={profile.pan} mono />
             <Field label="UAN" value={profile.uan} mono />
             <Field label="PF Number" value={profile.pfNumber} mono />
@@ -156,7 +158,7 @@ export default function EmployeeProfile() {
 
         <section>
           <h2 className="card-title mb-3">Bank</h2>
-          <dl className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <dl className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <Field label="Bank" value={bank.bankName} />
             <Field label="Branch" value={bank.branch} />
             <Field label="Account Holder" value={bank.accountHolderName} />
