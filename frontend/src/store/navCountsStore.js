@@ -65,6 +65,9 @@ const EMPTY = {
   course: 0,
   confirmation: 0,
   taskApproval: 0,
+  // Items employees asked to hand back (assets.manage). The one HR-wide key a
+  // My Portal row wears — see the poll in Layout.jsx.
+  assetReturn: 0,
 };
 
 /** Read one key out of a server payload, defaulting anything odd to 0. */
@@ -79,7 +82,8 @@ const n = (v) => Number(v) || 0;
 // `taskApproval` joined them on 2026-09-22, when the top bar got a Tasks pill
 // for everybody. It is answered by BOTH endpoints (see countMyApprovals), and
 // listing it here is what makes the personal answer win — which is the whole
-// point, because the HR-wide one is never even asked for in My Portal.
+// point, because the HR-wide one is not asked for in My Portal (bar an
+// assets.manage holder, for the Manage Assets count — see Layout.jsx).
 const PERSONAL = ['mine', 'interviews', 'taskApproval'];
 
 export const useNavCountsStore = create((set) => ({
@@ -88,8 +92,9 @@ export const useNavCountsStore = create((set) => ({
   /**
    * Fetch the counts.
    * @param {{admin?: boolean, force?: boolean}} [opts] - `admin` adds the
-   *   HR-wide tally (skip it in the employee portal: there is no row to badge
-   *   with it, and it would be a request per poll for numbers nobody reads).
+   *   HR-wide tally (skip it in the employee portal unless the account holds
+   *   assets.manage — "Manage Assets" is the only row there that wears one; for
+   *   anyone else it would be a request per poll for numbers nobody reads).
    *   `force` ignores the freshness window — the poll passes it, and so should
    *   anything that just changed a queue.
    * @returns {Promise<void>}

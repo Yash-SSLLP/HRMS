@@ -256,8 +256,12 @@ export const adminNav = [
         { id: 'all', label: 'All Tasks' }, { id: 'requests', label: 'Requests' },
         { id: 'kanban', label: 'Kanban' }, { id: 'dashboard', label: 'Dashboard' }] },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
+    // Items employees asked to hand back from My Assets, waiting on an answer.
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
-      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' }] },
+      badge: 'assetReturn',
+      keywords: ['asset return', 'return request', 'hand back', 'take back'],
+      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' },
+        { id: 'returns', label: 'Return requests' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
     { to: '/admin/calendar', label: 'Calendar', icon: FiCalendar, highlight: true,
@@ -447,8 +451,13 @@ export const employeeNav = [
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     // The register, for holders of the standalone Assets grant with no admin
     // portal. Named apart from the self-service "Assets" row above, which
-    // lists only what is allotted to me.
-    { to: '/employee/assets-manage', label: 'Manage Assets', icon: FiPackage, perm: 'assets.manage' },
+    // lists only what is allotted to me. Wears the same return-request count as
+    // the admin row: Layout asks for the HR-wide tally in My Portal for exactly
+    // this grant (see the nav-count poll there).
+    { to: '/employee/assets-manage', label: 'Manage Assets', icon: FiPackage, perm: 'assets.manage',
+      badge: 'assetReturn',
+      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' },
+        { id: 'returns', label: 'Return requests' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
     { to: '/employee/calendar', label: 'Calendar', icon: FiCalendar, highlight: true },

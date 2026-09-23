@@ -47,6 +47,14 @@ const clearanceSectionSchema = new mongoose.Schema(
     completed: { type: Boolean, default: false },
     completedAt: Date,
     completedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // The assigned manager's sign-off: what they want HR to know ("laptop
+    // returned with a cracked screen", "SIM still with the employee") and when
+    // they pressed Submit. Submitting is allowed with items still unticked —
+    // the section then stays pending and the remarks say why.
+    remarks: String,
+    submittedAt: Date,
+    submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    submittedByName: String,
   },
   { _id: false }
 );

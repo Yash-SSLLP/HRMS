@@ -355,6 +355,11 @@ function NotificationBell({ isAdmin, portal }) {
       if (n.link === '/admin/cashbook') return '/employee/cashbook-manage';
       if (n.link === '/admin/khata') return '/employee/khata-manage';
       if (n.link === '/admin/loans') return '/employee/loans-manage';
+      // Asset return requests land on /admin/assets?tab=returns; the query is
+      // kept so a standalone Assets-grant holder opens the same tab here.
+      if (/^\/admin\/assets(?=[/?#]|$)/.test(n.link)) {
+        return n.link.replace(/^\/admin\/assets/, '/employee/assets-manage');
+      }
     }
     return n.link;
   };
@@ -1068,32 +1073,34 @@ export default function Layout({ navItems = [], sectionTitle }) {
    * inside a 5s window, so a burst of navigation is still one request.
    *
    * `admin` decides whether the HR-wide tally is asked for at all. In My Portal
-   * there is no row that wears one, so it would be a request per tick for
-   * numbers nothing reads.
+   * the one row that wears an HR-wide key is "Manage Assets" (return requests),
+   * so it is asked for there only when the account holds assets.manage — the
+   * same test that shows that row. For anyone else it would be a request per
+   * tick for numbers nothing reads.
    */
   const refreshNavCounts = useNavCountsStore((s) => s.refresh);
+  const wantsHrTally = portal === 'admin' || hasPermission(user, 'assets.manage');
   useEffect(() => {
     if (!user) return undefined;
-    const isAdminPortal = portal === 'admin';
     // THE FIRST FETCH IS NOT GATED ON VISIBILITY, only the poll is. A session
     // restored into a BACKGROUND tab — a reopened browser, a middle-clicked
     // link — starts life with document.hidden true, and a guard here meant the
     // sidebar sat badge-less until the tab happened to be focused. It is one
     // request; the repeat is what needs a gate. Same shape as the bell above.
-    refreshNavCounts({ admin: isAdminPortal });
+    refreshNavCounts({ admin: wantsHrTally });
     const t = setInterval(() => {
-      if (!document.hidden) refreshNavCounts({ admin: isAdminPortal, force: true });
+      if (!document.hidden) refreshNavCounts({ admin: wantsHrTally, force: true });
     }, NOTIF_POLL_MS);
     // Coming back to the tab is the moment the numbers are most likely stale.
     const onVisibility = () => {
-      if (!document.hidden) refreshNavCounts({ admin: isAdminPortal, force: true });
+      if (!document.hidden) refreshNavCounts({ admin: wantsHrTally, force: true });
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [refreshNavCounts, portal, user?._id, pathname]);
+  }, [refreshNavCounts, wantsHrTally, user?._id, pathname]);
 
   // Close the mobile drawer whenever the route changes.
   const closeMobile = () => setMobileOpen(false);

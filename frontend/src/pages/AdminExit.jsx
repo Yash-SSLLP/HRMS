@@ -5,9 +5,16 @@
  * completes (PATCH /exits/:id/complete — deactivates login, prepares feedback
  * email) or cancels (PATCH /exits/:id/cancel). The exit email is sent from the
  * company mailbox via POST /exits/:id/resend-email.
+ *
+ * Company assets: picking an employee in the Initiate form lists what they hold
+ * (GET /exits/employee-assets/:profileId); an open exit shows what is still out
+ * and what came back (GET /exits/:id/assets), pops up an "Assets to recover"
+ * dialog while anything is still out, and takes items back one at a time
+ * (PATCH /exits/:id/assets/:assignmentId/return).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
+import { FiPackage } from 'react-icons/fi';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
@@ -60,6 +67,101 @@ const blankNew = {
   handledBy: '',
 };
 
+// ---- Company assets a leaver holds ----
+// An asset is a KIND ("Laptop"); what this person actually has lives on their
+// holding ("MacBook i5"), so an item reads as the two together.
+const holdingTitle = (h) => [h.asset?.name || 'Asset', h.details].filter(Boolean).join(' — ');
+const holdingIds = (h) => [
+  h.serialNumber && `S/N ${h.serialNumber}`,
+  h.unitTag && `Sticker ${h.unitTag}`,
+].filter(Boolean).join(' · ');
+const holdingMeta = (h) => [holdingIds(h), h.assignedAt && `issued ${fmtDate(h.assignedAt)}`].filter(Boolean).join(' · ');
+const personName = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '');
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// A return dated today is sent as "now", an earlier day as the END of that day,
+// never as midnight. The exit lists what was handed back since it was RAISED,
+// so a laptop returned on the day an exit was raised at 11 AM (recorded then or
+// the morning after) would otherwise be dated before the exit and drop out of
+// both lists — no longer held, never "handed back".
+const returnStamp = (ymd) => (ymd === toYmd(new Date())
+  ? new Date().toISOString()
+  : new Date(`${ymd}T23:59:59`).toISOString());
+
+/**
+ * One item a leaver still holds, with an inline "Mark returned" that opens to
+ * the return date and the condition it came back in. Shared by the exit's
+ * Company assets section and the Assets-to-recover popup, so an item is taken
+ * back the same way from either.
+ * @param {Object} props
+ * @param {Object} props.holding - an open AssetAssignment with `asset` populated
+ * @param {boolean} props.canReturn - false renders the item read-only
+ * @param {(h: Object, v: {date: string, note: string}) => Promise<boolean>} props.onReturn
+ */
+function HeldAssetItem({ holding, canReturn, onReturn }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(() => toYmd(new Date()));
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const meta = holdingMeta(holding);
+
+  // On success the item leaves `held` and this row unmounts; on failure it
+  // stays open with what was typed, and onReturn has already said why.
+  const submit = async () => {
+    // `max` only steers the picker; a date typed past it still arrives, and the
+    // server takes a return dated next week without a word.
+    if (date > toYmd(new Date())) {
+      toast.error('The return date cannot be in the future.');
+      return;
+    }
+    setBusy(true);
+    const ok = await onReturn(holding, { date, note });
+    if (!ok) setBusy(false);
+  };
+
+  return (
+    <div className="bg-white border rounded-lg p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-800 break-words">{holdingTitle(holding)}</p>
+          {meta && <p className="text-xs text-gray-500 mt-0.5 break-words">{meta}</p>}
+        </div>
+        {canReturn && !open && (
+          <button type="button" onClick={() => setOpen(true)} className="text-emerald-700 hover:underline">
+            Mark returned
+          </button>
+        )}
+      </div>
+      {canReturn && open && (
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div>
+            <label className="block text-xs text-gray-500">Returned on</label>
+            <input type="date" value={date} max={toYmd(new Date())}
+              min={holding.assignedAt ? toYmd(new Date(holding.assignedAt)) : undefined}
+              onChange={(e) => setDate(e.target.value)}
+              className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs text-gray-500">Condition (optional)</label>
+            <input type="text" value={note} maxLength={500}
+              placeholder="e.g. Good · charger missing · screen scratched"
+              onChange={(e) => setNote(e.target.value)}
+              className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
+          </div>
+          <div className="sm:col-span-3 flex flex-wrap justify-end gap-2">
+            <button type="button" onClick={() => setOpen(false)} disabled={busy}
+              className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+            <button type="button" onClick={submit} disabled={busy || !date}
+              className="px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+              {busy ? 'Saving…' : 'Confirm return'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminExit() {
   // A view-only account follows an exit and decides none of it. The action
   // buttons are not rendered; the clearance ticks and the assigned approver are
@@ -86,8 +188,24 @@ export default function AdminExit() {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newForm, setNewForm] = useState(blankNew);
+  // What the employee picked in the Initiate form holds. `pickFor` is the pick
+  // a response must still match to be shown: flicking through the picker fires
+  // several lookups, and a slow one landing late would list the wrong person's
+  // laptop under the right person's name.
+  const [pickAssets, setPickAssets] = useState({ loading: false, held: [], error: '' });
+  const pickFor = useRef('');
 
   const [detail, setDetail] = useState(null); // currently-open exit
+  // The open exit's company assets: { held, returned }, null until the first
+  // load for THIS exit (skeleton). Returns replace it with the server's fresh
+  // state rather than blanking it. `assetsFor` is the exit a response must
+  // belong to — a late answer for an exit already closed is dropped.
+  const [exitAssets, setExitAssets] = useState(null);
+  const [assetsError, setAssetsError] = useState('');
+  const assetsFor = useRef(null);
+  // The "Assets to recover" popup. Opened only from openDetail, so it appears
+  // once per opening of an exit and never again on a re-render or a save.
+  const [recoverOpen, setRecoverOpen] = useState(false);
   const [savingDetail, setSavingDetail] = useState(false);
   const [actionMsg, setActionMsg] = useState('');
   const [mail, setMail] = useState(null); // editable compose modal payload
@@ -122,7 +240,28 @@ export default function AdminExit() {
 
   const openCreate = () => {
     setNewForm({ ...blankNew, handledBy: me?._id || me?.id || '' });
+    pickFor.current = '';
+    setPickAssets({ loading: false, held: [], error: '' });
     setShowCreate(true);
+  };
+
+  // What this employee holds, shown under the picker so HR sees the laptop
+  // before the exit is even raised.
+  const loadPickAssets = async (profileId) => {
+    pickFor.current = profileId;
+    if (!profileId) {
+      setPickAssets({ loading: false, held: [], error: '' });
+      return;
+    }
+    setPickAssets({ loading: true, held: [], error: '' });
+    try {
+      const { data } = await api.get(`/exits/employee-assets/${profileId}`);
+      if (pickFor.current !== profileId) return;
+      setPickAssets({ loading: false, held: data.held || [], error: '' });
+    } catch (err) {
+      if (pickFor.current !== profileId) return;
+      setPickAssets({ loading: false, held: [], error: err.response?.data?.message || 'Could not check company assets.' });
+    }
   };
 
   // When the admin picks an employee in the create form, auto-fill Handled By
@@ -136,14 +275,18 @@ export default function AdminExit() {
       employee: employeeId,
       handledBy: partnerId || me?._id || me?.id || '',
     });
+    loadPickAssets(employeeId);
   };
 
   const submitCreate = async (e) => {
     e.preventDefault();
     setCreating(true);
     try {
-      await api.post('/exits', newForm);
+      const { data } = await api.post('/exits', newForm);
       setShowCreate(false);
+      // Straight into the new exit, so anything the leaver still holds pops up
+      // now, while HR has this person in mind, not on some later open.
+      if (data?.exit?._id) openDetail(data.exit);
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not create exit request');
@@ -159,8 +302,70 @@ export default function AdminExit() {
     try {
       const { data } = await api.get(`/exits/${exit._id}`);
       setDetail(data.exit);
+      loadExitAssets(data.exit, { popup: true });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not open this exit record');
+    }
+  };
+
+  // Closing an exit drops its asset state too, so the next one opened starts
+  // from a skeleton instead of flashing the previous leaver's items.
+  const closeDetail = () => {
+    assetsFor.current = null;
+    setDetail(null);
+    setExitAssets(null);
+    setAssetsError('');
+    setRecoverOpen(false);
+  };
+
+  /**
+   * Load what this exit's employee holds and has handed back. With `popup`, a
+   * leaver still holding anything on a live exit gets the recover dialog —
+   * but not for a view-only account, which could only look at it.
+   */
+  const loadExitAssets = async (exit, { popup = false } = {}) => {
+    if (assetsFor.current !== exit._id) setExitAssets(null);
+    assetsFor.current = exit._id;
+    setAssetsError('');
+    try {
+      const { data } = await api.get(`/exits/${exit._id}/assets`);
+      if (assetsFor.current !== exit._id) return;
+      setExitAssets({ held: data.held || [], returned: data.returned || [] });
+      const final = exit.status === 'Completed' || exit.status === 'Cancelled';
+      if (popup && !viewOnly && !final && data.held?.length) setRecoverOpen(true);
+    } catch (err) {
+      if (assetsFor.current !== exit._id) return;
+      setAssetsError(err.response?.data?.message || 'Could not load company assets');
+    }
+  };
+
+  // Take one item back. The server answers with the exit's fresh asset state,
+  // which feeds the section and the popup alike. Resolves true when it took.
+  const returnAsset = async (holding, { date, note }) => {
+    const exitId = detail._id;
+    try {
+      const { data } = await api.patch(`/exits/${exitId}/assets/${holding._id}/return`, {
+        date: returnStamp(date),
+        note,
+      });
+      if (assetsFor.current !== exitId) return true;
+      const held = data.held || [];
+      setExitAssets({ held, returned: data.returned || [] });
+      if (held.length) {
+        toast.success(`${holdingTitle(holding)} marked returned`);
+      } else {
+        setRecoverOpen(false);
+        toast.success(`All company assets recovered from ${detail.employee?.user?.firstName || 'this employee'}`);
+      }
+      return true;
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not mark it returned');
+      // Already returned or no longer theirs (someone used the Assets page in
+      // the meantime): show the list as it now stands — unless the exit has
+      // been closed since, when a reload would only re-arm a stale state.
+      const gone = err.response?.status === 409 || err.response?.status === 404;
+      if (gone && assetsFor.current === exitId) loadExitAssets(detail);
+      return false;
     }
   };
 
@@ -206,9 +411,37 @@ export default function AdminExit() {
     });
   };
 
+  // Items still out are a warning, not a block: a lost phone is sometimes
+  // settled in the final settlement rather than handed back. Resolves true to
+  // go ahead. If the list can't be fetched, it doesn't stand in the way.
+  const confirmHeldAssets = async () => {
+    let held = exitAssets?.held;
+    if (!held) {
+      try {
+        const { data } = await api.get(`/exits/${detail._id}/assets`);
+        held = data.held || [];
+      } catch {
+        return true;
+      }
+    }
+    if (!held.length) return true;
+    const n = held.length;
+    const listed = held.slice(0, 3).map(holdingTitle).join(', ');
+    return confirmDialog({
+      title: 'Company assets not returned',
+      message: `${detail.employee?.user?.firstName || 'This employee'} still holds ${plural(n, 'company asset')}: ${listed}${n > 3 ? ` and ${n - 3} more` : ''}.\n\nComplete the exit anyway? They stay on the asset register as held until someone marks them returned.`,
+      confirmText: 'Complete anyway',
+      tone: 'warning',
+    });
+  };
+
   // Finalize the exit: sets date of exit, deactivates login, and prepares the
   // feedback email for HR to review/send.
   const complete = async () => {
+    // Asked first, so the early-release question below is only reached once HR
+    // has chosen to go ahead with items still out.
+    if (!(await confirmHeldAssets())) return;
+
     // A resigning employee keeps access through their last working day. If the LWD
     // hasn't passed yet, completing now revokes access EARLY — require an explicit
     // "release immediately" confirmation and send force:true.
@@ -486,6 +719,32 @@ export default function AdminExit() {
                     ? <p className="text-xs text-gray-500 mt-1">Handled By prefilled from this employee's HR partner.</p>
                     : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set · defaulting to you.</p>;
                 })()}
+                {/* What they hold, before the exit is raised — the same list
+                    pops up again on the exit itself to be taken back. */}
+                {newForm.employee && (
+                  pickAssets.loading ? (
+                    <p className="text-xs text-gray-400 mt-2">Checking company assets…</p>
+                  ) : pickAssets.error ? (
+                    <p className="text-xs text-gray-500 mt-2">Couldn't check company assets · {pickAssets.error}</p>
+                  ) : pickAssets.held.length > 0 ? (
+                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-sm font-medium text-amber-800">
+                        Company assets with {employees.find((p) => p._id === newForm.employee)?.user?.firstName || 'this employee'} ({pickAssets.held.length})
+                      </p>
+                      <ul className="mt-2 space-y-1.5">
+                        {pickAssets.held.map((h) => (
+                          <li key={h._id} className="text-sm text-gray-700 break-words">
+                            {holdingTitle(h)}
+                            {holdingMeta(h) && <span className="block text-xs text-gray-500">{holdingMeta(h)}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-xs text-amber-700 mt-2">Once the exit is saved you can mark each one returned from it.</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500 mt-2">No company assets on record.</p>
+                  )
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -567,7 +826,7 @@ export default function AdminExit() {
                 <span className={`inline-block px-2 py-1 text-xs rounded-lg ${STATUS_COLORS[detail.status]}`}>
                   {detail.status}
                 </span>
-                <button type="button" aria-label="Close" title="Close" onClick={() => setDetail(null)} className="topbar-icon-btn shrink-0">×</button>
+                <button type="button" aria-label="Close" title="Close" onClick={closeDetail} className="topbar-icon-btn shrink-0">×</button>
               </div>
             </div>
 
@@ -649,6 +908,59 @@ export default function AdminExit() {
               </div>
             )}
 
+            {/* Company assets: what the leaver still holds (with the return
+                action while the exit is live) and what came back during it. */}
+            <div className="mb-4 bg-gray-50 rounded-lg p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <h3 className="text-sm font-semibold">Company assets</h3>
+                {exitAssets && (
+                  exitAssets.held.length > 0
+                    ? <span className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">{exitAssets.held.length} still held</span>
+                    : <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Nothing outstanding</span>
+                )}
+              </div>
+              {assetsError ? (
+                <p className="text-xs text-red-600">{assetsError}</p>
+              ) : !exitAssets ? (
+                <div className="space-y-2"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-2/3" /></div>
+              ) : exitAssets.held.length === 0 && exitAssets.returned.length === 0 ? (
+                <p className="text-xs text-gray-500">No company assets on record for this employee.</p>
+              ) : (
+                <>
+                  {exitAssets.held.length > 0 && (
+                    <div className="space-y-2">
+                      {exitAssets.held.map((h) => (
+                        <HeldAssetItem key={h._id} holding={h} canReturn={!isFinal && !viewOnly} onReturn={returnAsset} />
+                      ))}
+                    </div>
+                  )}
+                  {/* Closed exits keep no return action here; the Assets page
+                      still can, and the item stays "held" there until it does. */}
+                  {isFinal && exitAssets.held.length > 0 && (
+                    <p className="text-xs text-amber-700 mt-2">This exit is closed · record any late return from the Assets page.</p>
+                  )}
+                  {exitAssets.returned.length > 0 && (
+                    <div className={exitAssets.held.length > 0 ? 'mt-3 pt-3 border-t border-gray-200' : ''}>
+                      <p className="text-xs font-medium text-gray-500 mb-1.5">Handed back during this exit</p>
+                      <ul className="space-y-1.5">
+                        {exitAssets.returned.map((h) => (
+                          <li key={h._id} className="text-sm text-gray-500 break-words">
+                            {holdingTitle(h)}
+                            {holdingIds(h) && <span className="text-xs text-gray-400"> · {holdingIds(h)}</span>}
+                            <span className="block text-xs text-gray-400">
+                              Returned {fmtDate(h.returnedAt)}
+                              {h.returnedBy ? ` · taken back by ${personName(h.returnedBy)}` : ''}
+                              {h.returnNote ? ` · ${h.returnNote}` : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
             {/* No-dues clearance (per-department managers) */}
             {detail.clearanceSections?.length > 0 ? (
               <div className="mb-4 bg-gray-50 rounded-lg p-3">
@@ -701,6 +1013,19 @@ export default function AdminExit() {
                             </label>
                           ))}
                         </div>
+                        {/* The assigned manager's sign-off from their Approvals inbox:
+                            the remarks are often the whole point when a section is
+                            submitted with items still unticked. */}
+                        {(s.remarks || s.submittedAt) && (
+                          <div className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-600">
+                            {s.remarks && <p className="whitespace-pre-wrap"><span className="font-medium text-gray-700">Remarks: </span>{s.remarks}</p>}
+                            {s.submittedAt && (
+                              <p className="text-gray-400 mt-0.5">
+                                Submitted {fmtDateTime(s.submittedAt)}{s.submittedByName ? ` by ${s.submittedByName}` : ''}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -801,9 +1126,48 @@ export default function AdminExit() {
                     </button>
                   </>
                 )}
-                <button onClick={() => setDetail(null)}
+                <button onClick={closeDetail}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Assets to recover =====
+          A SIBLING of the detail overlay, one z-step above it, not a child of
+          its panel: inside, the panel's entry animation (a transform) and its
+          own scroller would pin this "fixed" layer to the panel instead of the
+          screen. Its close button carries data-modal-close so Esc shuts this
+          dialog, not the exit underneath. */}
+      {detail && recoverOpen && exitAssets?.held.length > 0 && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[60]">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <span className="shrink-0 grid place-items-center w-10 h-10 rounded-full bg-amber-50 text-amber-700">
+                <FiPackage size={20} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="card-title">
+                  {personName(detail.employee?.user) || 'This employee'} still holds {plural(exitAssets.held.length, 'company asset')}
+                </h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Collect {exitAssets.held.length === 1 ? 'it' : 'them'} before the last working day
+                  {detail.lastWorkingDay ? ` (${fmtDate(detail.lastWorkingDay)})` : ''}. Mark each one returned as
+                  it comes back · the date and its condition go on the asset register.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {exitAssets.held.map((h) => (
+                <HeldAssetItem key={h._id} holding={h} canReturn={!isFinal && !viewOnly} onReturn={returnAsset} />
+              ))}
+            </div>
+            <div className="flex justify-end pt-4">
+              <button type="button" data-modal-close onClick={() => setRecoverOpen(false)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                I'll do it later
+              </button>
             </div>
           </div>
         </div>

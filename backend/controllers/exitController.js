@@ -23,6 +23,8 @@ const { startOfDayIST } = require('../utils/dateHelpers');
 const { buildDefaultSections } = require('../config/exitClearance');
 const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
 const { getBranding } = require('../services/branding');
+const AssetAssignment = require('../models/AssetAssignment');
+const { openHoldingsFor, returnHolding, HOLDING_ASSET_FIELDS, withLegacySerial } = require('../services/assetHoldings');
 const { renderRelievingLetter, resolveLetterBody, longDate } = require('../services/letterPdf');
 
 // Shared resolver — see config/appUrl.js. The exit-feedback link goes to a
@@ -393,6 +395,31 @@ async function notifyClearanceAssignee(userId, exit, sectionTitle, applicantName
   }
 }
 
+// Tell the HR handling the exit that a department manager has submitted their
+// no-dues section — cleared, or sent in with items still outstanding and the
+// remarks explaining why. The submitter is never told about their own action.
+async function notifyClearanceSubmitted(exit, section, submitterId) {
+  try {
+    const hr = exit.handledBy ? String(exit.handledBy._id || exit.handledBy) : '';
+    if (!hr || hr === String(submitterId)) return;
+    const applicantName = await applicantNameOf(exit.employee);
+    const total = (section.items || []).length;
+    const done = (section.items || []).filter((it) => it.done).length;
+    const state = section.completed ? 'cleared' : `submitted with ${total - done} of ${total} item(s) still pending`;
+    const remark = section.remarks ? ` Remarks: "${section.remarks.slice(0, 160)}${section.remarks.length > 160 ? '…' : ''}"` : '';
+    await notify({
+      recipient: hr,
+      type: 'exit',
+      audience: 'admin',
+      title: `${section.title} no-dues ${section.completed ? 'cleared' : 'submitted'}`,
+      body: `${section.submittedByName || 'The assigned manager'} ${state} for ${applicantName}.${remark}`,
+      link: '/admin/exits',
+    });
+  } catch (err) {
+    console.error('clearance submitted notify failed:', err.message);
+  }
+}
+
 // Ping every already-assigned section manager that clearance has begun. Called
 // when an exit transitions into InClearance (approval finalised / termination).
 async function notifyAssignedSections(exit, applicantName) {
@@ -533,6 +560,98 @@ const getExit = asyncHandler(async (req, res) => {
   }
   await assertExitInScope(req, res, exit);
   res.json({ exit });
+});
+
+// ============ Company assets on an exit ============
+// The items a leaver still holds pop up when HR initiates or opens the exit, and
+// can be taken back right there. Served from this router (exit.manage) rather
+// than /assets, so the HR handling an exit needs no separate Assets grant to see
+// what to recover — recovering it is part of handling the exit.
+
+/**
+ * What this exit's employee holds now, and what has been handed back since the
+ * exit was raised.
+ * @param {Object} exit - ExitRequest (employee may be an id or populated)
+ * @returns {Promise<{held: Object[], returned: Object[]}>}
+ */
+async function exitAssetState(exit) {
+  const profile = await EmployeeProfile.findById(exit.employee?._id || exit.employee).select('user');
+  const userId = profile?.user;
+  if (!userId) return { held: [], returned: [] };
+  const [held, returned] = await Promise.all([
+    openHoldingsFor(userId),
+    // Taken back THROUGH this exit (whatever date was entered — a laptop handed
+    // in the week before HR raised the exit is still this exit's recovery), or
+    // from the Assets page any time since the exit was raised.
+    AssetAssignment.find({
+      employee: userId,
+      $or: [{ returnedViaExit: exit._id }, { returnedAt: { $gte: exit.createdAt || new Date(0) } }],
+    })
+      .populate('asset', HOLDING_ASSET_FIELDS)
+      .populate('returnedBy', 'firstName lastName')
+      .sort({ returnedAt: -1 })
+      .lean(),
+  ]);
+  return { held, returned: returned.map(withLegacySerial) };
+}
+
+/**
+ * Items an employee holds — for the Initiate Exit form, before any exit exists.
+ * @route GET /api/exits/employee-assets/:profileId  (exit.manage)
+ * @returns {{held: Object[]}}
+ */
+const listEmployeeAssets = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.profileId).select('user hrPartner company');
+  // Company wall — an out-of-scope profile is indistinguishable from a missing one.
+  if (!profile || cannotManageProfile(req, profile)) {
+    res.status(404);
+    throw new Error('Employee profile not found');
+  }
+  res.json({ held: await openHoldingsFor(profile.user) });
+});
+
+/**
+ * Items this exit's employee still holds, and those already handed back.
+ * @route GET /api/exits/:id/assets  (exit.manage)
+ * @returns {{held: Object[], returned: Object[]}}
+ */
+const listExitAssets = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id).select('employee createdAt');
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  await assertExitInScope(req, res, exit);
+  res.json(await exitAssetState(exit));
+});
+
+/**
+ * Take one item back as part of the exit.
+ * @route PATCH /api/exits/:id/assets/:assignmentId/return  (exit.manage)
+ * @param {string} [req.body.date] - return date (defaults to now)
+ * @param {string} [req.body.note] - condition on hand-back
+ * @returns {{held: Object[], returned: Object[]}} the exit's fresh asset state
+ */
+const returnExitAsset = asyncHandler(async (req, res) => {
+  const exit = await ExitRequest.findById(req.params.id).select('employee createdAt');
+  if (!exit) {
+    res.status(404);
+    throw new Error('Exit request not found');
+  }
+  await assertExitInScope(req, res, exit);
+  const profile = await EmployeeProfile.findById(exit.employee).select('user');
+  const holding = await AssetAssignment.findById(req.params.assignmentId);
+  if (!holding || !profile?.user || String(holding.employee) !== String(profile.user)) {
+    res.status(404);
+    throw new Error("That item is not on this employee's record");
+  }
+  try {
+    await returnHolding(holding, { by: req.user._id, date: req.body?.date, note: req.body?.note, exitId: exit._id });
+  } catch (err) {
+    res.status(err.status || 400);
+    throw err;
+  }
+  res.json(await exitAssetState(exit));
 });
 
 /**
@@ -1100,8 +1219,23 @@ async function recordClearanceSection(exit, key, userId, privileged, payload) {
     }
     if (upd.note !== undefined) it.note = upd.note;
   });
+  // Remarks travel with the ticks; absent means "leave them as they are", so a
+  // caller that only ticks (the mobile app, the HR console) never wipes them.
+  if (payload?.remarks !== undefined) {
+    section.remarks = String(payload.remarks || '').trim().slice(0, 2000);
+  }
   recomputeSection(section, userId);
+  // Submit = the manager's sign-off on the section as it now stands. It does not
+  // decide completion (every item ticked does); it stamps who sent it and when.
+  const submitting = payload?.submit === true;
+  if (submitting) {
+    const u = await User.findById(userId).select('firstName lastName').lean();
+    section.submittedAt = new Date();
+    section.submittedBy = userId;
+    section.submittedByName = u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '';
+  }
   await exit.save();
+  if (submitting) await notifyClearanceSubmitted(exit, section, userId);
   return section;
 }
 
@@ -1300,6 +1434,9 @@ module.exports = {
   submitFeedback,
   // No-dues clearance
   assignClearanceApprovers,
+  listEmployeeAssets,
+  listExitAssets,
+  returnExitAsset,
   updateClearanceSectionAdmin,
   overrideClearance,
   relievingLetterPdf,

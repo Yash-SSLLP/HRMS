@@ -7,6 +7,8 @@
 const asyncHandler = require('express-async-handler');
 const { LeaveRequest, EMERGENCY_LEAVE } = require('../models/Leave');
 const ExitRequest = require('../models/ExitRequest');
+const { openHoldingsFor } = require('../services/assetHoldings');
+const AssetAssignment = require('../models/AssetAssignment');
 const Regularization = require('../models/Regularization');
 const Attendance = require('../models/Attendance');
 const { advanceRegularizationApproval, decideAsHr, AWAITING_HR } = require('./regularizationController');
@@ -369,7 +371,25 @@ const listMyClearances = asyncHandler(async (req, res) => {
       populate: { path: 'user', select: 'firstName lastName email' },
     })
     .sort({ lastWorkingDay: 1 });
-  res.json({ scope, count: requests.length, requests });
+  // The company items each leaver still holds, so the manager collecting them
+  // sees "Laptop — MacBook i5 (SN …)" rather than just the word "Laptop" on
+  // their checklist. One query for the whole page.
+  const userIds = requests.map((r) => r.employee?.user?._id).filter(Boolean);
+  const held = await openHoldingsFor(userIds);
+  const byUser = new Map();
+  for (const h of held) {
+    const k = String(h.employee);
+    if (!byUser.has(k)) byUser.set(k, []);
+    byUser.get(k).push({
+      _id: h._id, name: h.asset?.name, category: h.asset?.category, details: h.details,
+      serialNumber: h.serialNumber, unitTag: h.unitTag, assignedAt: h.assignedAt,
+    });
+  }
+  const out = requests.map((r) => ({
+    ...r.toObject(),
+    heldAssets: byUser.get(String(r.employee?.user?._id)) || [],
+  }));
+  res.json({ scope, count: out.length, requests: out });
 });
 
 // ================= Attendance regularizations (configured ladder) =================
@@ -863,12 +883,18 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     }))
     : NONE;
 
+  // GET /assets/return-requests                (assets.manage)      employee = User
+  // Items their holders asked to hand back; badges the Assets row.
+  const assetReturnQ = may('assets.manage')
+    ? AssetAssignment.countDocuments(await scopeUserField(req, { 'returnRequest.status': 'Pending', returnedAt: null }))
+    : NONE;
+
   const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip,
     payslipRequest, khata, khataConfirm, khataSanction, voucher, exit, complaint,
-    passwordReset, declaration, course, confirmation, taskApproval] = await Promise.all([
+    passwordReset, declaration, course, confirmation, taskApproval, assetReturn] = await Promise.all([
     leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ, selfPayslipQ,
     payslipRequestQ, khataQ, khataConfirmQ, khataSanctionQ, voucherQ, exitQ, complaintQ,
-    passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ,
+    passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ, assetReturnQ,
   ]);
   res.json({
     leave,
@@ -891,6 +917,7 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     course,
     confirmation,
     taskApproval,
+    assetReturn,
     // `total` is the APPROVALS SCREEN's tally and deliberately counts only the
     // categories that screen lists. Everything added after `selfPayslip` badges
     // its own module in the sidebar instead, so folding it in here would badge
@@ -901,9 +928,12 @@ const countHrApprovals = asyncHandler(async (req, res) => {
 });
 
 /**
- * The assigned manager ticks their no-dues section.
+ * The assigned manager ticks their no-dues section and, with `submit`, signs it
+ * off with optional remarks for HR.
  * @route PATCH /api/approvals/clearances/:id/:key
  * @param {Object} req.body.items - array of { done, note } by item index
+ * @param {string} [req.body.remarks] - the manager's note to HR (omitted = unchanged)
+ * @param {boolean} [req.body.submit] - stamp the section as submitted and tell HR
  * @returns {{request: Object}}
  */
 const updateMyClearanceSection = asyncHandler(async (req, res) => {

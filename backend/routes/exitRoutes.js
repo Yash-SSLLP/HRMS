@@ -17,6 +17,9 @@ const {
   getFeedbackContext,
   submitFeedback,
   assignClearanceApprovers,
+  listEmployeeAssets,
+  listExitAssets,
+  returnExitAsset,
   updateClearanceSectionAdmin,
   overrideClearance,
   relievingLetterPdf,
@@ -53,6 +56,10 @@ router.post('/me', submitMyResignation);
 // HR/Admin — everything below requires the 'exit.manage' permission.
 router.use(requirePermission('exit.manage'));
 
+// GET /employee-assets/:profileId — the company items an employee holds, for the
+// Initiate Exit form. Declared before '/:id' so the path is not read as an id.
+router.get('/employee-assets/:profileId', listEmployeeAssets);
+
 // GET / — list exits; POST / — create an exit; protected, requires 'exit.manage'.
 router.route('/')
   .get(listExits)
@@ -69,6 +76,12 @@ router.patch('/:id/cancel', cancelExit);
 router.patch('/:id/complete', completeExit);
 // POST /:id/resend-email — resend the exit email; protected, requires 'exit.manage'.
 router.post('/:id/resend-email', resendExitEmail);
+
+// -------- Company assets (HR/Admin) --------
+// GET /:id/assets — items the leaver still holds + those handed back since.
+router.get('/:id/assets', listExitAssets);
+// PATCH /:id/assets/:assignmentId/return — take one back as part of the exit.
+router.patch('/:id/assets/:assignmentId/return', returnExitAsset);
 
 // -------- No-dues clearance (HR/Admin) --------
 // PATCH /:id/clearance-assignees — assign a manager to each no-dues section.

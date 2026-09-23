@@ -2,16 +2,23 @@
  * ExitClearanceInbox — the "no-dues" queue for a department manager. When HR
  * assigns you a clearance section on an exiting employee (IT / HR / Accounts /
  * Sales), it appears here during their notice period. You tick each company
- * asset/due as it's handed back; once every item is ticked the section is
- * cleared. Scoped server-side to sections assigned to the current user.
+ * asset/due as it's handed back, add any remarks for HR, and Submit; once every
+ * item is ticked the section is cleared. Scoped server-side to sections
+ * assigned to the current user.
  */
 import { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import { useAuthStore } from '../store/authStore';
+import { formatDateTime12 } from '../utils/time';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const empName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
+const draftKey = (exitId, sectionKey) => `${exitId}:${sectionKey}`;
+
+// What the server holds for a section, in the shape the form edits.
+const savedState = (s) => ({ done: s.items.map((it) => !!it.done), remarks: s.remarks || '' });
 
 export default function ExitClearanceInbox({ onCount }) {
   const me = useAuthStore((s) => s.user);
@@ -20,6 +27,12 @@ export default function ExitClearanceInbox({ onCount }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  // Ticks and remarks are a DRAFT until Submit. Ticking used to save on every
+  // click, so a manager half-way through a checklist had already told the
+  // server — and the moment the last box went on, the section cleared with no
+  // chance to say "the laptop came back with a cracked screen". Keyed by
+  // exit + section; a section with no entry is showing exactly what is saved.
+  const [drafts, setDrafts] = useState({});
 
   const load = async () => {
     setLoading(true); setError('');
@@ -45,17 +58,48 @@ export default function ExitClearanceInbox({ onCount }) {
   const mySections = (r) =>
     (r.clearanceSections || []).filter((s) => String(s.assignedTo?._id || s.assignedTo || '') === String(myId || ''));
 
-  const toggleItem = async (exit, section, idx, done) => {
-    const items = section.items.map((it, i) => ({ done: i === idx ? done : !!it.done, note: it.note }));
-    setBusy(`${exit._id}:${section.key}:${idx}`);
+  const draftOf = (exit, s) => drafts[draftKey(exit._id, s.key)] || savedState(s);
+
+  const setDraft = (exit, s, patch) => setDrafts((d) => {
+    const k = draftKey(exit._id, s.key);
+    return { ...d, [k]: { ...(d[k] || savedState(s)), ...patch } };
+  });
+
+  const toggleItem = (exit, s, idx, done) => {
+    const cur = draftOf(exit, s).done;
+    setDraft(exit, s, { done: cur.map((v, i) => (i === idx ? done : v)) });
+  };
+
+  const submit = async (exit, s) => {
+    const k = draftKey(exit._id, s.key);
+    const draft = draftOf(exit, s);
+    const items = s.items.map((it, i) => ({ done: !!draft.done[i], note: it.note }));
+    setBusy(k);
+    setError('');
     try {
-      const { data } = await api.patch(`/approvals/clearances/${exit._id}/${section.key}`, { items });
-      // Replace this exit in place with the server's updated copy.
-      setRows((prev) => prev.map((r) => (r._id === exit._id
-        ? { ...r, clearanceSections: data.request.clearanceSections }
-        : r)));
+      const { data } = await api.patch(`/approvals/clearances/${exit._id}/${s.key}`, {
+        items,
+        remarks: draft.remarks,
+        submit: true,
+      });
+      const sections = data.request.clearanceSections || [];
+      const saved = sections.find((x) => x.key === s.key);
+      const stillMine = sections.some((x) => String(x.assignedTo?._id || x.assignedTo || '') === String(myId || '') && !x.completed);
+      setDrafts((d) => { const n = { ...d }; delete n[k]; return n; });
+      // Nothing left for me on this exit → it is no longer waiting on me, so it
+      // leaves the queue (and the tab's count drops) rather than sitting here
+      // marked Cleared until the next reload.
+      setRows((prev) => (stillMine
+        ? prev.map((r) => (r._id === exit._id ? { ...r, clearanceSections: sections } : r))
+        : prev.filter((r) => r._id !== exit._id)));
+      if (saved?.completed) {
+        toast.success(`${s.title} no-dues cleared for ${empName(exit)} — HR has been told.`);
+      } else {
+        const left = (saved?.items || []).filter((it) => !it.done).length;
+        toast.info(`Submitted. ${left} item${left === 1 ? '' : 's'} still pending — it stays in your queue until ticked.`);
+      }
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not update the no-dues checklist');
+      setError(err.response?.data?.message || 'Could not submit the no-dues checklist');
     } finally {
       setBusy('');
     }
@@ -81,30 +125,102 @@ export default function ExitClearanceInbox({ onCount }) {
                 <div className="text-xs text-gray-500 mb-2">
                   {r.employee?.designation || ''}{r.employee?.department ? ` · ${r.employee.department}` : ''} · last working day {fmtDate(r.lastWorkingDay)}
                 </div>
-                {mySections(r).map((s) => (
-                  <div key={s.key} className="mt-2 bg-gray-50 border rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm font-medium text-gray-800">{s.title}</div>
-                      {/* Both chips carry the border — Pending's is transparent — so ticking
-                          the last item only repaints it. Give Pending no border and the row
-                          grows 2px, twitching the checklist under the cursor mid-tick. */}
-                      {s.completed
-                        ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
-                        : <span className="text-xs text-gray-500 bg-gray-100 border border-transparent rounded px-1.5 py-0.5">Pending</span>}
+                {/* What the leaver still holds, off the asset register. The
+                    checklist below only says "Laptop"; this says WHICH laptop,
+                    so the MacBook issued to them comes back and not the spare
+                    Asus from the cupboard. Read-only — ticking a checklist item
+                    does not return the holding; HR books the hand-back on the
+                    exit (or the Assets page), and that is what drops a line
+                    from here on the next load. */}
+                {r.heldAssets?.length > 0 && (
+                  <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <div className="text-xs font-medium text-amber-800">
+                      Company assets with them ({r.heldAssets.length})
                     </div>
-                    <p className="text-xs text-gray-500 mb-2">Tick each item once it has been handed back to the company.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                      {s.items.map((it, idx) => (
-                        <label key={idx} className="flex items-center gap-2 text-sm">
-                          <input type="checkbox" checked={!!it.done}
-                            disabled={busy === `${r._id}:${s.key}:${idx}`}
-                            onChange={(e) => toggleItem(r, s, idx, e.target.checked)} />
-                          {it.label}
-                        </label>
+                    <ul className="mt-1 space-y-1">
+                      {r.heldAssets.map((a) => (
+                        <li key={a._id} className="text-sm text-gray-800 break-words">
+                          <span className="font-medium">{a.name || 'Asset'}</span>
+                          {a.details ? <span> — {a.details}</span> : null}
+                          {a.serialNumber ? <span className="text-xs text-gray-500"> · SN {a.serialNumber}</span> : null}
+                          {/* The unit's own sticker, monospace like every other
+                              tag in the portal (O vs 0, I vs 1). */}
+                          {a.unitTag ? <span className="text-xs text-gray-500"> · <span className="font-mono">{a.unitTag}</span></span> : null}
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
-                ))}
+                )}
+                {mySections(r).map((s) => {
+                  const k = draftKey(r._id, s.key);
+                  const draft = draftOf(r, s);
+                  const saved = savedState(s);
+                  const dirty = draft.remarks.trim() !== saved.remarks.trim()
+                    || draft.done.some((v, i) => v !== saved.done[i]);
+                  const ticked = draft.done.filter(Boolean).length;
+                  const total = s.items.length;
+                  const submitting = busy === k;
+                  return (
+                    <div key={s.key} className="mt-2 bg-gray-50 border rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-sm font-medium text-gray-800">{s.title}</div>
+                        {/* Both chips carry the border — Pending's is transparent — so a
+                            status change only repaints it. Give Pending no border and
+                            the row grows 2px, twitching the checklist under the cursor. */}
+                        {s.completed
+                          ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
+                          : <span className="text-xs text-gray-500 bg-gray-100 border border-transparent rounded px-1.5 py-0.5">Pending</span>}
+                      </div>
+                      <p className="text-xs text-gray-500 mb-2">Tick each item once it has been handed back to the company, then submit.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                        {s.items.map((it, idx) => (
+                          <label key={idx} className="flex items-center gap-2 text-sm">
+                            <input type="checkbox" checked={!!draft.done[idx]}
+                              disabled={submitting}
+                              onChange={(e) => toggleItem(r, s, idx, e.target.checked)} />
+                            {it.label}
+                          </label>
+                        ))}
+                      </div>
+
+                      <label className="block mt-3">
+                        <span className="text-xs font-medium text-gray-600">Remarks</span>
+                        <textarea
+                          rows={2}
+                          value={draft.remarks}
+                          disabled={submitting}
+                          maxLength={2000}
+                          onChange={(e) => setDraft(r, s, { remarks: e.target.value })}
+                          placeholder="Anything HR should know — e.g. laptop returned with a damaged charger, SIM still with the employee"
+                          className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+                        />
+                      </label>
+
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs text-gray-500">
+                          {ticked < total
+                            ? `${ticked} of ${total} ticked · unticked items keep this section pending`
+                            : 'All items ticked · submitting clears this section'}
+                          {s.submittedAt && (
+                            <span className="block text-gray-400">
+                              Last submitted {formatDateTime12(s.submittedAt)}{s.submittedByName ? ` by ${s.submittedByName}` : ''}
+                              {dirty ? ' · unsaved changes' : ''}
+                            </span>
+                          )}
+                          {!s.submittedAt && dirty && <span className="block text-amber-700">Not saved until you submit</span>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => submit(r, s)}
+                          disabled={submitting || (!dirty && !!s.submittedAt)}
+                          className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {submitting ? 'Submitting…' : 'Submit'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </li>
             ))}
           </ul>
