@@ -20,7 +20,9 @@ const mongoose = require('mongoose');
 const c = require('../config/tasks');
 const r = require('../services/taskRecurrenceWorker');
 const engine = require('../services/taskEngine');
+const access = require('../services/taskAccess');
 const Task = require('../models/Task');
+const { decorate, buildQuery } = require('../controllers/taskController');
 
 let passed = 0;
 let failed = 0;
@@ -431,6 +433,75 @@ async function testSubtasksAndFollowers() {
   ok('the stamp is never rewritten', handed.originalAssignees.map(String), [String(A)]);
 }
 
+// ===== A row from before `kind` existed (2026-09-24) =====
+
+function testLegacyRows() {
+  console.log('\nA row from before `kind` existed');
+  // A schema default is applied on hydration, never inside a query, so a
+  // filter naming a kind has to let a missing one through as a TASK — or the
+  // pre-rework rows vanish from every list while the Tasks badge counts them.
+  ok('a TASK filter also matches a missing kind', c.kindFilter(c.KIND_TASK), { $in: ['TASK', null] });
+  ok('a REQUEST filter is exact', c.kindFilter(c.KIND_REQUEST), 'REQUEST');
+
+  // What the list reads: a LEAN row, straight from Mongo, in the old words —
+  // the shape of the 57 "Documents Submission" rows.
+  const lean = {
+    _id: uid(), title: 'Documents Submission', status: 'ASSIGNED', createdBy: C,
+    requiresApproval: false, assignees: [{ user: A, status: 'ASSIGNED' }],
+  };
+  const row = decorate(lean);
+  ok('…reads as a task', row.kind, 'TASK');
+  ok('…in the current word', row.status, 'PENDING');
+  ok('…worth the default points', row.effectivePoints, c.DEFAULT_TASK_POINTS);
+  ok('…and not yet accepted', row.awaitingAcceptance, true);
+
+  // The detail page reads the same row HYDRATED (defaults + post('init')); the
+  // list reads it lean and decorated. They must offer the same buttons.
+  const doer = { _id: A, role: 'Employee', permissions: [] };
+  const fromList = access.capabilitiesFor(doer, row);
+  ok('the list offers what the detail page offers',
+    fromList, access.capabilitiesFor(doer, Task.hydrate(lean)));
+  ok('…which includes Accept', fromList.canAccept, true);
+  ok('…and a way to start it', fromList.transitions.some((t) => t.to === 'IN_PROGRESS'), true);
+}
+
+// ===== The date chips (2026-09-24) =====
+
+async function testDateChips() {
+  console.log('\nThe date chips: open work always shows on the ones that contain today');
+  // The Tasks badge counts every open task; the page opens on This month. A
+  // strict window let a task due last month, next month or never badge over
+  // an empty page. buildQuery touches no database, so it is testable here.
+  const req = { user: { _id: A, role: 'Employee', permissions: [] }, query: {} };
+  const open = c.spellingsOf(...c.OPEN_STATUS);
+  const clauses = (f) => f.$and || [];
+  const carried = (f) => clauses(f).some((x) => Array.isArray(x.$or)
+    && x.$or.some((b) => b.dueDate)
+    && x.$or.some((b) => JSON.stringify(b.status?.$in) === JSON.stringify(open)));
+  const strict = (f) => clauses(f).some((x) => x.dueDate && !x.$or);
+
+  for (const range of ['today', 'week', 'month']) {
+    ok(`${range}: open work carries in`, carried(await buildQuery(req, { scope: 'mine', range })), true);
+  }
+  for (const range of ['yesterday', 'nextWeek']) {
+    const f = await buildQuery(req, { scope: 'mine', range });
+    ok(`${range}: strict`, [carried(f), strict(f)], [false, true]);
+  }
+  const custom = await buildQuery(req, { scope: 'mine', range: 'custom', from: '2026-09-01', to: '2026-09-30' });
+  ok('custom: strict', [carried(custom), strict(custom)], [false, true]);
+
+  const report = await buildQuery(req, { scope: 'mine', range: 'month' }, { strictRange: true });
+  ok('the dashboard stays strict', [carried(report), strict(report)], [false, true]);
+  ok('…and a client cannot ask for that',
+    carried(await buildQuery({ ...req, query: { strictRange: '1' } }, { scope: 'mine', range: 'month' })), true);
+
+  // "Open" is everything not finished: a task in review is still owed a word.
+  ok('open includes in review and the legacy words',
+    ['PENDING', 'IN_PROGRESS', 'SUBMITTED', 'ASSIGNED', 'UNDER_REVIEW'].every((s) => open.includes(s)), true);
+  ok('…but not done or called off',
+    ['COMPLETED', 'CANCELLED', 'Done', 'APPROVED', 'DECLINED'].some((s) => open.includes(s)), false);
+}
+
 async function run() {
   console.log('Task module — rules');
   testVocabulary();
@@ -440,6 +511,8 @@ async function run() {
   await testModel();
   await testAcceptance();
   await testSubtasksAndFollowers();
+  testLegacyRows();
+  await testDateChips();
 
   console.log(`\n${passed} passed, ${failed} failed.`);
   process.exit(failed ? 1 : 0);

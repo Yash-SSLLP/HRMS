@@ -1148,6 +1148,35 @@ const updateEmployee = asyncHandler(async (req, res) => {
     }
   }
 
+  // --- Salary: structure + annual CTC ---
+  // Once saved, a salary changes only with a CEO/MD's approval
+  // (services/salaryChanges.js), and this route is a door to it — the Android
+  // app's Salary Revisions screen saves a CTC through it — so it answers to the
+  // same rule as the web page's own endpoint. Setting up a salary that is not
+  // there yet still applies here and now; sending back the values already on
+  // record (a client round-tripping the whole profile) changes nothing.
+  let salaryRequest = null;
+  if ('salaryStructure' in req.body || 'annualCtc' in req.body) {
+    const salaryChanges = require('../services/salaryChanges');
+    if (req.body.salaryStructure && !(await SalaryStructure.exists({ _id: req.body.salaryStructure }))) {
+      res.status(400);
+      throw new Error('That salary structure no longer exists — pick another.');
+    }
+    const cls = salaryChanges.classifySetup(profile, {
+      structure: 'salaryStructure' in req.body ? (req.body.salaryStructure || null) : undefined,
+      ctc: 'annualCtc' in req.body ? req.body.annualCtc : undefined,
+    });
+    delete req.body.salaryStructure;
+    delete req.body.annualCtc;
+    if (cls.changed) {
+      if (cls.editsSaved && !salaryChanges.writesSalaryDirectly(req.user)) {
+        salaryRequest = await salaryChanges.raiseSetupChange(req, profile, cls);
+      } else {
+        salaryChanges.applySetup(profile, cls, { by: req.user._id, byName: salaryChanges.actorName(req.user) });
+      }
+    }
+  }
+
   Object.assign(profile, req.body);
   await profile.save();
 
@@ -1184,7 +1213,13 @@ const updateEmployee = asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ profile, queuedForApproval: queuedCount });
+  res.json({
+    profile,
+    queuedForApproval: queuedCount,
+    // The salary change this save asked for, waiting on a CEO/MD — the profile
+    // above still carries the salary they are paid today.
+    ...(salaryRequest ? { salaryPendingApproval: true, salaryRequest } : {}),
+  });
 });
 
 /**
@@ -1888,19 +1923,39 @@ const resolveImportFlag = asyncHandler(async (req, res) => {
       res.status(403);
       throw new Error('Moving an employee to another company is the Backend account’s call');
     }
-    const write = FLAG_WRITERS[flagDoc.field];
-    if (!write) {
-      res.status(400);
-      throw new Error(`"${flagDoc.field}" cannot be changed from here`);
+    // A salary structure is a salary. Filling in the one the import could not
+    // match is setting it up, and applies now; replacing one the employee has
+    // since been given is a change, and from an HR that waits for a CEO/MD
+    // (services/salaryChanges.js) — the flag is answered either way.
+    let salaryRequested = null;
+    if (flagDoc.field === 'salaryStructure') {
+      const salaryChanges = require('../services/salaryChanges');
+      const st = await SalaryStructure.findOne({ name: new RegExp(`^${escapeRegExp(value)}$`, 'i') });
+      if (st) {
+        const cls = salaryChanges.classifySetup(profile, { structure: st._id });
+        if (cls.editsSaved && !salaryChanges.writesSalaryDirectly(req.user)) {
+          await salaryChanges.raiseSetupChange(req, profile, cls, { reason: 'Correcting a value from an employee import' });
+          salaryRequested = st.name;
+        }
+      }
     }
-    let applied;
-    try {
-      applied = await write(value, { profile, user: { _id: flagDoc.user }, actor: req.user });
-    } catch (err) {
-      res.status(err.status || 400);
-      throw err;
+    if (salaryRequested) {
+      resolution = `Sent for CEO/MD approval: ${salaryRequested}`;
+    } else {
+      const write = FLAG_WRITERS[flagDoc.field];
+      if (!write) {
+        res.status(400);
+        throw new Error(`"${flagDoc.field}" cannot be changed from here`);
+      }
+      let applied;
+      try {
+        applied = await write(value, { profile, user: { _id: flagDoc.user }, actor: req.user });
+      } catch (err) {
+        res.status(err.status || 400);
+        throw err;
+      }
+      resolution = `Changed to ${applied}`;
     }
-    resolution = `Changed to ${applied}`;
   }
 
   flagDoc.status = 'Resolved';

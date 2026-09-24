@@ -10,6 +10,7 @@
  *
  *   scope    which pile     — mine | delegated | loop | all | requests
  *   range    which window   — today | yesterday | week | month | nextWeek | all | custom
+ *                             (on today/week/month, open work always shows)
  *   filters  category, assignedTo, assignedBy, frequency, priority, status, q
  *
  * …and every one of them runs ON THE SERVER. The brief's app shows a live
@@ -40,16 +41,16 @@ const { pickableUserFilter } = require('../utils/peoplePicker');
 const { departedUserIdSet } = require('../utils/departed');
 const { viewerCompanyScope } = require('../utils/employeeScope');
 const {
-  KIND_TASK, KIND_REQUEST, TASK_KINDS, STATUS, TASK_STATUS, TASK_PRIORITY,
+  KIND_TASK, KIND_REQUEST, TASK_KINDS, STATUS, TASK_STATUS, OPEN_STATUS, TASK_PRIORITY,
   DEFAULT_PRIORITY, FREQUENCY, FREQUENCIES, FREQUENCY_LABELS, WEEKDAYS,
   REMINDER_CHANNELS, REMINDER_UNITS, REMINDER_WHENS, REMINDER_CHANNEL_LABELS,
-  MAX_TASK_POINTS, evidenceKindFor, statusLabel, isOverdue, isTerminal,
+  DEFAULT_TASK_POINTS, MAX_TASK_POINTS, evidenceKindFor, statusLabel, isOverdue, isTerminal,
   isDeclined, isAwaitingAcceptance, ACCEPTANCE_LABELS, ACCEPTANCE,
   // 2026-09-22: the review state, the pieces, the colours and the sort.
   normalisePriority, LEGACY_PRIORITY_MAP, PRIORITY_COLORS, DONE_COLOR, CANCELLED_COLOR,
   accentFor, PRIORITY_RANK, BOARD_COLUMNS, SORTS, SORT_KEYS, DEFAULT_SORT,
   PROGRESS_STEPS, MAX_SUBTASKS, EXTENSION_STATUS, clampProgress,
-  normaliseStatus, spellingsOf, normaliseStatusStage,
+  normaliseStatus, spellingsOf, kindFilter, normaliseStatusStage,
 } = require('../config/tasks');
 
 // ===== Small shared helpers =====
@@ -112,14 +113,21 @@ function rangeWindow(range, fromRaw, toRaw) {
   }
 }
 
+/** The chips that contain today — where open work always shows (see buildQuery). */
+const CURRENT_RANGES = ['today', 'week', 'month'];
+
 /**
  * ONE filter, used by the list AND by the counters above it.
  *
  * If these two were built separately they would drift, and a counter that
  * disagrees with the rows underneath it is worse than no counter — it makes
  * people stop trusting the page.
+ *
+ * `strictRange` is the dashboard's: a date chip there always means "due in
+ * that period". It is a third argument rather than an override so no client
+ * can send it.
  */
-async function buildQuery(req, overrides = {}) {
+async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   const {
     scope = 'all', range = 'all', from, to,
     category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late,
@@ -134,14 +142,35 @@ async function buildQuery(req, overrides = {}) {
 
   // A request is its own pile: it never appears among the tasks, because "what
   // is on my plate" and "what have I asked for" are different questions.
-  if (scope === 'requests') and.push({ kind: KIND_REQUEST });
-  else if (kind && TASK_KINDS.includes(kind)) and.push({ kind });
-  else and.push({ kind: KIND_TASK });
+  // Through kindFilter, so a row set before `kind` existed still counts as the
+  // task it is — see config/tasks.kindFilter.
+  if (scope === 'requests') and.push({ kind: kindFilter(KIND_REQUEST) });
+  else if (kind && TASK_KINDS.includes(kind)) and.push({ kind: kindFilter(kind) });
+  else and.push({ kind: kindFilter(KIND_TASK) });
 
+  /**
+   * The window applies to the DEADLINE — "this week" is the work due this week,
+   * not the work created this week — but on Today / This week / This month it
+   * narrows FINISHED work only. Every open task shows, whatever its deadline,
+   * including none. (User decision, 2026-09-24.)
+   *
+   * The page opens on This month, and the Tasks badge counts every open task on
+   * the person. Filtered strictly, a task due last month and still undone, one
+   * due next month, or one with no deadline put a red number on the pill over a
+   * page saying "Nothing on your plate". Open work is never filtered out of the
+   * present; finished work stays filed under the period it was due in.
+   *
+   * Yesterday, Next week and Custom look up one period and stay strict, and so
+   * does the dashboard (`strictRange`): a score for "this month" has to be over
+   * what was DUE this month, or a job due in December drags September down.
+   */
   const window = rangeWindow(range, from, to);
-  // The window applies to the DEADLINE, which is what the chip bar means: "this
-  // week" is the work due this week, not the work created this week.
-  if (window) and.push({ dueDate: window });
+  if (window) {
+    const carryOpen = !strictRange && CURRENT_RANGES.includes(range);
+    and.push(carryOpen
+      ? { $or: [{ dueDate: window }, { status: { $in: spellingsOf(...OPEN_STATUS) } }] }
+      : { dueDate: window });
+  }
 
   const cats = listParam(category);
   if (cats.length) and.push({ category: { $in: cats } });
@@ -340,11 +369,25 @@ function decorate(row) {
    * exactly the same reason; the status was the half that was missed.
    */
   const status = normaliseStatus(row.status) || row.status;
+  // …and the schema DEFAULTS, for the same reason: hydration fills them in,
+  // `.lean()` does not. A row set before the 2026-09-21 rework has no `kind`,
+  // no `points` and no `acceptance`, so a lean copy read as neither a task nor
+  // a request, worth 0 points and "not awaiting" — while the detail page,
+  // reading the same row hydrated, said TASK, 100 points and "Not yet
+  // accepted", and offered Accept.
   const assignees = (row.assignees || []).map((a) => {
     const an = normaliseStatus(a.status);
-    return an && an !== a.status ? { ...a, status: an } : a;
+    const fixed = an && an !== a.status ? { ...a, status: an } : a;
+    return fixed.acceptance ? fixed : { ...fixed, acceptance: ACCEPTANCE.AWAITING };
   });
-  row = { ...row, status, assignees };
+  const kind = row.kind || KIND_TASK;
+  row = {
+    ...row,
+    kind,
+    points: row.points ?? (kind === KIND_TASK ? DEFAULT_TASK_POINTS : 0),
+    status,
+    assignees,
+  };
 
   const pending = (row.extensions || []).find((e) => e.status === EXTENSION_STATUS.PENDING) || null;
   const pool = Number(row.points) || 0;
@@ -399,6 +442,21 @@ function decorate(row) {
     // twice, asking again" reads without opening anything.
     extensionRequests: (row.extensions || []).length,
   };
+}
+
+/**
+ * One lean row as a client gets it: decorated, with its serial, and with `can`
+ * worked out from the DECORATED row.
+ *
+ * Handing capabilitiesFor the raw row was the bug. It looks the moves up by
+ * status, and a raw pre-rework row still says `ASSIGNED` — TRANSITIONS has no
+ * such key — with no `acceptance` and no `kind`. So a legacy row came back with
+ * no moves, no Accept and no Split: a task the detail page could act on and
+ * the list could not.
+ */
+function listRow(user, row, serial) {
+  const decorated = decorate(row);
+  return { ...decorated, serial, can: access.capabilitiesFor(user, decorated) };
 }
 
 // ===== Sorting =====
@@ -527,15 +585,12 @@ const listTasks = asyncHandler(async (req, res) => {
     // in-memory work over at most 200 rows and no extra query, and the
     // alternative is the client re-deriving the rules, which is exactly the
     // split-brain this module was rebuilt to end.
-    tasks: rows.map((row, i) => ({
-      ...decorate(row),
-      // The serial number the brief asks for. It CONTINUES ACROSS PAGES — row
-      // 51 is "51", not "1" again — because a number that restarts is not a
-      // serial, it is a row index, and quoting "number 3" then becomes
-      // ambiguous the moment anybody turns a page.
-      serial: (page - 1) * limit + i + 1,
-      can: access.capabilitiesFor(req.user, row),
-    })),
+    //
+    // The serial number the brief asks for CONTINUES ACROSS PAGES — row 51 is
+    // "51", not "1" again — because a number that restarts is not a serial, it
+    // is a row index, and quoting "number 3" then becomes ambiguous the moment
+    // anybody turns a page.
+    tasks: rows.map((row, i) => listRow(req.user, row, (page - 1) * limit + i + 1)),
     page,
     limit,
     total,
@@ -597,11 +652,7 @@ const getTask = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  const pieces = children.map((c, i) => ({
-    ...decorate(c),
-    serial: i + 1,
-    can: access.capabilitiesFor(req.user, c),
-  }));
+  const pieces = children.map((c, i) => listRow(req.user, c, i + 1));
 
   res.json({
     task: {
@@ -648,11 +699,7 @@ const getChildren = asyncHandler(async (req, res) => {
     .lean();
 
   res.json({
-    children: children.map((c, i) => ({
-      ...decorate(c),
-      serial: i + 1,
-      can: access.capabilitiesFor(req.user, c),
-    })),
+    children: children.map((c, i) => listRow(req.user, c, i + 1)),
   });
 });
 
@@ -682,11 +729,7 @@ const boardTasks = asyncHandler(async (req, res) => {
       boardLabel: col.label,
       count,
       more: Math.max(0, count - rows.length),
-      tasks: rows.map((row, i) => ({
-        ...decorate(row),
-        serial: i + 1,
-        can: access.capabilitiesFor(req.user, row),
-      })),
+      tasks: rows.map((row, i) => listRow(req.user, row, i + 1)),
     };
   }));
 

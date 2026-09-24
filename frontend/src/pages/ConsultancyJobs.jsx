@@ -308,12 +308,12 @@ export default function ConsultancyJobs() {
   // ----- Rendering -----
   const jobCard = (j) => (
     <div key={j._id} className="bg-white shadow rounded-lg p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <div className="font-semibold text-gray-900 break-words">{j.title}</div>
           <Facts department={j.department} employmentType={j.employmentType} openings={j.openings} companyName={j.companyName} />
         </div>
-        {j.postedAt && <span className="text-[11px] text-gray-400">Posted {fmtDate(j.postedAt)}</span>}
+        {j.postedAt && <span className="shrink-0 text-[11px] text-gray-400">Posted {fmtDate(j.postedAt)}</span>}
       </div>
       <Places list={j.locations} />
       <LongText text={j.description} />
@@ -334,15 +334,15 @@ export default function ConsultancyJobs() {
 
   const requestCard = (r) => (
     <div key={r._id} className="bg-white shadow rounded-lg p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <div className="font-semibold text-gray-900 break-words">{r.title}</div>
           <Facts department={r.department} employmentType={r.employmentType} openings={r.openings} companyName={r.company?.name} />
           <div className="text-xs text-gray-500 mt-0.5">
             {external ? 'Asked' : `From ${r.requestedByName || 'a consultancy'} ·`} {fmtDate(r.createdAt)}
           </div>
         </div>
-        <span className={`text-[11px] px-2 py-0.5 rounded ${chipOf(r).style}`}>
+        <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${chipOf(r).style}`}>
           {chipOf(r).label}
         </span>
       </div>

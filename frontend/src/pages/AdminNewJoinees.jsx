@@ -152,8 +152,8 @@ export default function AdminNewJoinees() {
             <div key={c._id} id={`nj-${c._id}`}
               className={`bg-white shadow rounded-lg p-4 flex flex-wrap items-start justify-between gap-3 transition-shadow ${
                 highlighted === c._id ? arrivalRing : ''}`}>
-              <div>
-                <div className="font-semibold text-gray-900">{c.name}</div>
+              <div className="min-w-0 grow basis-64">
+                <div className="font-semibold text-gray-900 break-words">{c.name}</div>
                 <div className="text-xs text-gray-500">{c.job?.title || '-'}{c.email ? ` · ${c.email}` : ' · no email on file'}</div>
                 <div className="text-[11px] text-gray-400 mt-0.5">
                   Joining {fmtDate(c.onboarding?.joiningDate)}
@@ -178,7 +178,7 @@ export default function AdminNewJoinees() {
                   grid auto-placement to create two implicit columns even in a
                   1-column grid, so leaving it unqualified would have made
                   grid-cols-1 inert. */}
-              <div className="grid grid-cols-1 w-full sm:w-auto sm:grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-2 sm:justify-end">
+              <div className="grid grid-cols-1 w-full sm:w-auto sm:ml-auto sm:grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-2 sm:justify-end">
                 {/* Offer letter */}
                 {c.offer?.emailedAt
                   ? <span className="text-[10px] text-gray-400 sm:text-right whitespace-nowrap">already sent {fmtDate(c.offer.emailedAt)}</span>

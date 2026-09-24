@@ -7,15 +7,26 @@
  *
  * Generating, holding and approving payslips lives on the Payroll page; this
  * screen no longer carries the day calendar or the computed-salary panel.
+ *
+ * CEO/MD APPROVAL (user decision 2026-09-24). Once an employee's salary is
+ * saved, an HR's change to it — Save with a different structure or CTC, or a
+ * revision — is sent to a CEO, MD or Super Admin instead of being applied, and
+ * reaches payroll only when they approve it (backend/services/salaryChanges.js).
+ * Filling in a salary that is not set up yet still saves at once. The approvers'
+ * own changes apply directly, and they approve HR's from the list at the top of
+ * this page or from Approvals → Salary changes.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
-import { canAdministerEmployee } from '../config/permissions';
+import { canAdministerEmployee, canApproveSalaryChanges, isReadOnlyExec } from '../config/permissions';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
+import SalaryChangeInbox from '../components/SalaryChangeInbox';
+import { promptDialog } from '../components/dialogs';
+import { useNavCountsStore } from '../store/navCountsStore';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -49,6 +60,9 @@ export default function AdminPayrollRun() {
   const [error, setError] = useState('');
   const [setup, setSetup] = useState({ salaryStructure: '', annualCtc: '' });
   const [hike, setHike] = useState(null); // hike modal form, or null when closed
+  // Bumped after anything that can add, decide or withdraw a salary change, so
+  // both approval lists on the page reload with it.
+  const [changesKey, setChangesKey] = useState(0);
 
   useEffect(() => {
     api.get('/employees?excludeExecutives=true').then(({ data }) => {
@@ -84,15 +98,40 @@ export default function AdminPayrollRun() {
   // First load once the employee list arrives; after that the OK button applies.
   useEffect(() => { if (employee && !att) load(employee); /* eslint-disable-next-line */ }, [employee]);
 
+  // A new salary change is waiting (or one was just decided): refresh both
+  // lists and the sidebar/Approvals counts, not only this employee's card.
+  const changesMoved = () => {
+    setChangesKey((k) => k + 1);
+    useNavCountsStore.getState().refresh({ admin: true, force: true });
+  };
+
   // ----- salary setup + hikes -----
   const saveSetup = async () => {
+    // Changing a SAVED salary is, from an HR, a request — ask why, for the
+    // approver. Cancelling the prompt cancels the save; an empty answer is fine.
+    let reason;
+    if (saveNeedsApproval) {
+      reason = await promptDialog({
+        title: 'Send for CEO/MD approval',
+        message: 'This salary is already saved, so the change goes to a CEO, MD or Super Admin and reaches payroll only once they approve it. Why is it changing? (optional — the approver sees this)',
+        placeholder: 'e.g. Corrected CTC from the offer letter',
+        confirmText: 'Send for approval',
+      });
+      if (reason === null) return;
+    }
     setBusy(true);
     try {
-      await api.put(`/employees/${employee}`, {
+      const { status } = await api.put(`/payroll/employees/${employee}/salary-setup`, {
         salaryStructure: setup.salaryStructure || null,
         annualCtc: Number(setup.annualCtc) || 0,
+        ...(reason ? { reason } : {}),
       });
-      toast.success('Salary setup saved');
+      if (status === 202) {
+        toast.info('Sent to the CEO/MD for approval — the salary stays as it is until they approve it.');
+        changesMoved();
+      } else {
+        toast.success('Salary setup saved');
+      }
       await load();
     } catch (err) { toast.error(err.response?.data?.message || 'Save failed'); }
     finally { setBusy(false); }
@@ -138,9 +177,15 @@ export default function AdminPayrollRun() {
       });
       setHike(null);
       const cut = data.entry.newCtc < data.entry.previousCtc;
-      toast.success(data.applied
-        ? `${cut ? 'Reduction' : 'Hike'} applied · new CTC ${inr(data.entry.newCtc)}`
-        : `${cut ? 'Reduction' : 'Hike'} scheduled from ${MONTHS[(data.entry.effectiveMonth || 1) - 1]} ${data.entry.effectiveYear}`);
+      if (data.pendingApproval) {
+        // An HR's revision is a request: nothing changes until a CEO/MD agrees.
+        toast.info(`${cut ? 'Reduction' : 'Hike'} to ${inr(data.entry.newCtc)} sent to the CEO/MD for approval — it reaches payroll only once approved.`);
+        changesMoved();
+      } else {
+        toast.success(data.applied
+          ? `${cut ? 'Reduction' : 'Hike'} applied · new CTC ${inr(data.entry.newCtc)}`
+          : `${cut ? 'Reduction' : 'Hike'} scheduled from ${MONTHS[(data.entry.effectiveMonth || 1) - 1]} ${data.entry.effectiveYear}`);
+      }
       await load();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not apply the hike');
@@ -153,7 +198,29 @@ export default function AdminPayrollRun() {
   // grant. The server refuses either way; this greys the two buttons instead of
   // failing on click.
   const canRevise = canAdministerEmployee(currentUser, run?.employee?.user);
-  const NO_MANAGER_SALARY = "Not yours to set — you cannot revise your own salary, and a Manager's needs a Super Admin's permission.";
+  // A read-only CEO/MD is greyed out for a different reason entirely — they are
+  // read-only everywhere — and the own-salary/Manager wording blamed a grant
+  // they were never missing.
+  const NO_MANAGER_SALARY = isReadOnlyExec(currentUser)
+    ? 'Your account is read-only here (a Super Admin can switch on edit access). You can still approve the salary changes HR sends you — in the list at the top of this page, or Approvals → Salary changes.'
+    : "Not yours to set — you cannot revise your own salary, and a Manager's needs a Super Admin's permission.";
+
+  // CEO/MD approval. `required`: this viewer's changes to a SAVED salary wait
+  // for a CEO/MD/Super Admin. `pending`: a change for this employee already is.
+  const approvalRequired = run?.salaryApproval?.required ?? !canApproveSalaryChanges(currentUser);
+  const pendingChange = run?.salaryApproval?.pending || null;
+  // One waiting change per salary — the server refuses a second one on top.
+  const heldByPending = approvalRequired && !!pendingChange;
+  const HELD = 'A change for this employee is already waiting for CEO/MD approval — withdraw it, or wait for the decision.';
+  const savedStructure = String(run?.employee?.salaryStructure?._id || run?.employee?.salaryStructure || '');
+  const savedCtc = Number(run?.employee?.annualCtc) || Number(c?.ctc) || 0;
+  const salarySaved = !!savedStructure || savedCtc > 0;
+  // Would THIS save replace something already saved, rather than fill a blank?
+  // The same test the server makes (services/salaryChanges.classifySetup) — it
+  // only decides the button's wording; the server decides what happens.
+  const saveNeedsApproval = approvalRequired && (
+    (setup.salaryStructure !== savedStructure && !!savedStructure)
+    || ((Number(setup.annualCtc) || 0) !== savedCtc && savedCtc > 0));
 
   return (
     <div>
@@ -183,6 +250,22 @@ export default function AdminPayrollRun() {
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
+      {/* Every salary change waiting for a CEO/MD — theirs to approve, HR's to
+          follow (and withdraw their own). The selected employee's is on their
+          card below instead, so it is not listed twice. */}
+      <SalaryChangeInbox
+        hideWhenEmpty
+        className="mb-4 bg-white p-4 rounded-lg shadow-sm"
+        title="Salary changes waiting for approval"
+        excludeEmployee={employee}
+        reloadKey={changesKey}
+        onOpen={(r) => {
+          const id = r.employee?._id;
+          if (id) { setEmployee(id); load(id); }
+        }}
+        onChanged={() => { changesMoved(); load(); }}
+      />
+
       {att && (
         <>
           {c && (
@@ -190,6 +273,15 @@ export default function AdminPayrollRun() {
               {/* Salary setup, CTC revisions + the attendance roll-up behind them */}
               <div className="bg-white shadow rounded-xl p-5">
                 <h3 className="font-semibold text-gray-800 mb-3">Salary setup · {fullName(run.employee.user)}</h3>
+                {/* This employee's change waiting for a CEO/MD, with what the
+                    viewer may do about it (approve / turn down, or withdraw). */}
+                <SalaryChangeInbox
+                  employee={employee}
+                  hideWhenEmpty
+                  className="mb-4"
+                  reloadKey={`${changesKey}:${employee}`}
+                  onChanged={() => { changesMoved(); load(); }}
+                />
                 <div className="flex flex-wrap gap-2 items-center mb-4">
                   <SearchableSelect value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm bg-white flex-1 min-w-[160px]">
@@ -199,13 +291,26 @@ export default function AdminPayrollRun() {
                   <input type="number" min="0" placeholder="Annual CTC (₹)" value={setup.annualCtc}
                     onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
                     className="border rounded-lg px-3 py-2 text-sm w-40" />
-                  <button onClick={saveSetup} disabled={busy || !canRevise}
-                    title={canRevise ? undefined : NO_MANAGER_SALARY}
-                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">Save</button>
-                  <button onClick={openHike} disabled={busy || !canRevise}
-                    title={canRevise ? "Revise this employee's CTC (increment)" : NO_MANAGER_SALARY}
+                  <button onClick={saveSetup} disabled={busy || !canRevise || heldByPending}
+                    title={!canRevise ? NO_MANAGER_SALARY
+                      : heldByPending ? HELD
+                        : saveNeedsApproval ? 'This salary is saved — the change goes to a CEO/MD for approval' : undefined}
+                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                    {saveNeedsApproval ? 'Send for approval' : 'Save'}
+                  </button>
+                  <button onClick={openHike} disabled={busy || !canRevise || heldByPending}
+                    title={!canRevise ? NO_MANAGER_SALARY
+                      : heldByPending ? HELD
+                        : approvalRequired ? "Revise this employee's CTC — goes to a CEO/MD for approval" : "Revise this employee's CTC (increment)"}
                     className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Revise salary</button>
                 </div>
+                {/* Say it before they press anything: a saved salary is HR's to
+                    propose changing, and a CEO/MD's to change. */}
+                {approvalRequired && canRevise && salarySaved && !pendingChange && (
+                  <p className="-mt-2 mb-4 text-[11px] text-gray-500">
+                    This salary is saved. A change to it, or a revision, goes to a CEO/MD for approval and reaches payroll only once approved.
+                  </p>
+                )}
 
                 {run.employee?.ctcHistory?.length > 0 && (
                   <div className="mb-4 text-xs">
@@ -217,7 +322,11 @@ export default function AdminPayrollRun() {
                             {MONTHS[(h.effectiveMonth || 1) - 1]} {h.effectiveYear}: {inr(h.previousCtc)} → <span className="text-gray-700 font-medium">{inr(h.newCtc)}</span>
                             {h.reason ? ` · ${h.reason}` : ''}
                           </span>
-                          <span className="text-gray-400 shrink-0">{h.byName || ''}</span>
+                          <span className="text-gray-400 shrink-0 text-right">
+                            {h.byName || ''}
+                            {/* Revisions that went through the CEO/MD step say who agreed. */}
+                            {h.approvedByName && <span className="block">approved by {h.approvedByName}</span>}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -290,6 +399,11 @@ export default function AdminPayrollRun() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
             <h2 className="font-semibold text-gray-900 mb-1">Revise salary · {fullName(run?.employee?.user)}</h2>
             <p className="text-xs text-gray-500 mb-4">Current CTC: {inr(setup.annualCtc)}/yr</p>
+            {approvalRequired && (
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
+                This goes to a CEO/MD for approval. Nothing changes — and payroll keeps paying the current CTC — until they approve it.
+              </p>
+            )}
             <form onSubmit={submitHike} className="space-y-3">
               {/* Up or down. A separate toggle rather than expecting a minus
                   sign in the amount — typing "-5000" is easy to do by accident
@@ -400,7 +514,9 @@ export default function AdminPayrollRun() {
               <div className="flex justify-end gap-2 pt-1">
                 <button type="button" onClick={() => setHike(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={busy} className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">
-                  {busy ? 'Applying…' : 'Apply hike'}
+                  {approvalRequired
+                    ? (busy ? 'Sending…' : 'Send for approval')
+                    : (busy ? 'Applying…' : 'Apply hike')}
                 </button>
               </div>
             </form>

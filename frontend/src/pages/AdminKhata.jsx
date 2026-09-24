@@ -1115,13 +1115,13 @@ export default function AdminKhata() {
 
           <div className="bg-white shadow rounded-lg p-5 mb-4">
             <div className="flex flex-wrap justify-between items-start gap-3">
-              <div>
+              <div className="min-w-0 grow basis-64">
                 <p className="text-lg font-semibold text-gray-900">{detail.employee.name}</p>
                 <p className="text-xs text-gray-500">
                   {[detail.employee.employeeCode, detail.employee.designation, detail.employee.department].filter(Boolean).join(' · ') || detail.employee.email}
                 </p>
               </div>
-              <BalanceChip display={detail.balance} />
+              <div className="ml-auto"><BalanceChip display={detail.balance} /></div>
             </div>
 
             {/* The wallet arithmetic in one line: what went out, what came back
@@ -1386,12 +1386,15 @@ export default function AdminKhata() {
               <ul className="divide-y divide-gray-100">
                 {sanctions.map((e) => (
                   <li key={e._id} className="px-4 py-3">
+                    {/* Text beside the buttons, buttons on the right — a long
+                        purpose used to push them onto a line of their own at the
+                        left. Below 16rem of text they wrap, still to the right. */}
                     <div className="flex flex-wrap justify-between items-start gap-3">
-                      <div className="min-w-0">
+                      <div className="min-w-0 grow basis-64">
                         <p className="font-medium text-gray-900">
                           {e.employee?.name || 'Employee'} · {money(e.amount)}
                         </p>
-                        {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                        {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
                         {/* What they are already carrying. Without it the
                             decision is being made blind. */}
                         <p className="text-xs text-gray-500 mt-1">
@@ -1400,7 +1403,7 @@ export default function AdminKhata() {
                         </p>
                         <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
                       </div>
-                      <div className="flex gap-2 shrink-0">
+                      <div className="ml-auto flex gap-2 shrink-0">
                         <button onClick={() => setSanctionModal({ entry: e, approve: true, note: '' })}
                           className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
                           Approve
@@ -1435,7 +1438,7 @@ export default function AdminKhata() {
               {pending.map((e) => (
                 <li key={e._id} className="px-4 py-3">
                   <div className="flex flex-wrap justify-between items-start gap-3">
-                    <div className="min-w-0">
+                    <div className="min-w-0 grow basis-64">
                       <p className="font-medium text-gray-900">
                         {e.employee?.name || 'Employee'} · {money(e.amount)}
                       </p>
@@ -1455,11 +1458,11 @@ export default function AdminKhata() {
                           {e.execNote ? ` — ${e.execNote}` : ''}
                         </p>
                       )}
-                      {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                      {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
                       <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
                     </div>
                     {!viewOnly && (
-                    <div className="flex gap-2 shrink-0">
+                    <div className="ml-auto flex gap-2 shrink-0">
                       <button onClick={() => setApproveModal({ entry: e, cashAccount: e.cashAccount || '', note: '' })}
                         className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
                         Approve
@@ -1499,7 +1502,7 @@ export default function AdminKhata() {
               <ul className="divide-y divide-gray-100">
                 {expenses.map((e) => (
                   <li key={e._id} className="px-4 py-3 flex flex-wrap justify-between items-start gap-3">
-                    <div className="min-w-0">
+                    <div className="min-w-0 grow basis-64">
                       <p className="font-medium text-gray-900">
                         {e.employee?.name || 'Employee'} · {money(e.amount)}
                       </p>
@@ -1532,7 +1535,7 @@ export default function AdminKhata() {
                       </div>
                     </div>
                     {!viewOnly && (
-                    <div className="flex flex-wrap gap-2 shrink-0">
+                    <div className="ml-auto flex flex-wrap justify-end gap-2 shrink-0">
                       <button onClick={() => confirmExpense(e)}
                         className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
                         Confirm

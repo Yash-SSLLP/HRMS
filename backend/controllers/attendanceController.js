@@ -1426,7 +1426,11 @@ const monthSummary = asyncHandler(async (req, res) => {
 
   const [profile, records, settings, holidays] = await Promise.all([
     EmployeeProfile.findById(req.query.employee)
-      .select('employeeCode designation department user workLocationRef remotePunchAllowed')
+      // `company` + `hrPartner` because cannotManageProfile below READS them.
+      // Without `company` every employee looked company-less, which a CEO/MD
+      // limited to certain companies may not see — so the month summary (the
+      // Monthly View, and the Salary Revisions page) refused everyone to them.
+      .select('employeeCode designation department user workLocationRef remotePunchAllowed company hrPartner')
       .populate('user', 'firstName lastName email')
       .populate('workLocationRef', 'name lat lng radiusM'),
     // Capped at today like the registers: a leave approved for later this month

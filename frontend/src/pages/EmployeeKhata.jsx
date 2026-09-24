@@ -837,7 +837,7 @@ export default function EmployeeKhata() {
       {invites.map((iv) => (
         <div key={iv.khata}
           className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-          <div className="text-sm min-w-0">
+          <div className="text-sm min-w-0 grow basis-64">
             <div className="font-medium text-amber-900">
               {`${iv.owner?.name || 'A colleague'} invited you to keep entries in "${iv.name}"`}
             </div>
@@ -847,7 +847,7 @@ export default function EmployeeKhata() {
                 : 'You would be able to add your own spending to it. What you spend still comes out of your own advance, not theirs.'}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="ml-auto flex items-center gap-2 shrink-0">
             <button type="button" onClick={() => respondToInvite(iv.khata, 'decline')}
               className="px-3 py-1.5 border border-gray-300 bg-white rounded-lg text-sm hover:bg-gray-50">
               Decline

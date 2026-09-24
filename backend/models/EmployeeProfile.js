@@ -241,6 +241,14 @@ const employeeProfileSchema = new mongoose.Schema(
         by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         byName: String,
         at: { type: Date, default: Date.now },
+        // Set when an HR's revision went through the CEO/MD approval step
+        // (models/SalaryChangeRequest.js): `by` stays the HR who proposed it,
+        // and these say who agreed to it. Absent on a revision a CEO, MD or
+        // Super Admin made directly — they are the approval.
+        approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        approvedByName: String,
+        approvedAt: Date,
+        request: { type: mongoose.Schema.Types.ObjectId, ref: 'SalaryChangeRequest' },
       },
     ],
 

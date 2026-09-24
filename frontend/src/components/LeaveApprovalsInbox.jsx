@@ -342,8 +342,14 @@ export default function LeaveApprovalsInbox({ onCount }) {
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (
-                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
+                // The text takes whatever the buttons leave (flex-1 + min-w-0),
+                // so a long reason WRAPS beside them. It used to be a wrapping
+                // row with a content-sized text box: a long reason made that box
+                // the full width, and the buttons dropped to a line of their own
+                // on the LEFT — the one row in the list with them anywhere else.
+                // On a phone they stack under the text, still on the right.
+                <li key={r._id} className="py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="text-sm font-medium text-gray-900">
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
@@ -362,7 +368,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                   {/* shrink-0 from sm up only: on a phone the "Override & …"
                       labels make this ~325px, and a cluster that refuses to
                       shrink never wraps — it ran past the card's edge. */}
-                  <div className="flex gap-2 sm:shrink-0">
+                  <div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
                     {/* Correcting the ask is a third answer alongside yes and
                         no: a request with the wrong dates or the wrong type does
                         not need rejecting, it needs fixing. */}
@@ -403,8 +409,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
           ) : (
             <ul className="divide-y divide-gray-100">
               {emergency.map((r) => (
-                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
+                // Same layout as the queue above: text beside, buttons right.
+                <li key={r._id} className="py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="text-sm font-medium text-gray-900">
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
@@ -431,7 +438,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                   </div>
                   {/* sm:shrink-0 for the same reason as the queue above: four
                       buttons ("Undo double cut") outgrow a phone row. */}
-                  <div className="flex flex-wrap gap-2 sm:shrink-0">
+                  <div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
                     <button onClick={() => setAmending(r)} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
                       Edit
@@ -465,8 +472,8 @@ export default function LeaveApprovalsInbox({ onCount }) {
           ) : (
             <ul className="divide-y divide-gray-100">
               {others.slice(0, 30).map((r) => (
-                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
+                <li key={r._id} className="py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="text-sm text-gray-800">
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d</span>
@@ -503,7 +510,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                     <AmendTrail items={r.amendments} />
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center justify-end gap-2 shrink-0">
                     {/* Still correctable once approved: the days are on a
                         calendar somebody has to live with, and the API amends
                         that calendar with the request. A CANCELLED or REJECTED

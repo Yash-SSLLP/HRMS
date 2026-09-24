@@ -23,6 +23,12 @@ const {
   checkRequestableMonth, requestableMonths,
 } = require('../services/payslipRequestMonths');
 const { canApproveSelfPayslip } = require('../middleware/authMiddleware');
+const SalaryChangeRequest = require('../models/SalaryChangeRequest');
+const SalaryStructure = require('../models/SalaryStructure');
+const {
+  writesSalaryDirectly, classifySetup, applySetup, computeRevision, applyRevision,
+  raiseSetupChange, raiseRevision, shapeForViewer, populated: populatedSalaryChange, actorName,
+} = require('../services/salaryChanges');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
 const Holiday = require('../models/Holiday');
@@ -985,7 +991,9 @@ function guardPayrollProfile(req, res, profile) {
   if (isOwnProfile(req, profile)) return true;
   if (cannotManageProfile(req, profile)) {
     res.status(403);
-    throw new Error('You can only manage employees assigned to you');
+    // With the actor's own record answered above, the company wall is the only
+    // refusal left — "assigned to you" named the HR-partner wall, which is gone.
+    throw new Error('This employee belongs to a company you do not cover.');
   }
   return false;
 }
@@ -2133,7 +2141,12 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
   const profile = await EmployeeProfile.findById(req.query.employee)
-    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit')
+    // `company` and `hrPartner` are here because guardPayrollProfile READS them.
+    // Without `company` the company wall saw every employee as belonging to no
+    // company — which a CEO/MD limited to certain companies may not see — so the
+    // Salary Revisions page refused every single person to exactly the people
+    // it answers to, with "You can only manage employees assigned to you".
+    .select('employeeCode designation department user salaryStructure annualCtc ctcHistory dateOfJoining dateOfExit company hrPartner')
     // `role` rides along so the Hikes page knows a Manager when it sees one —
     // revising their CTC needs the manager-profile grant.
     .populate('user', 'firstName lastName email role')
@@ -2143,8 +2156,14 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
     throw new Error('Employee not found');
   }
   guardPayrollProfile(req, res, profile);
-  const computed = await computeEmployeeRun(profile, year, month);
-  const found = await Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month });
+  const [computed, found, waiting] = await Promise.all([
+    computeEmployeeRun(profile, year, month),
+    Payroll.findOne({ employee: profile._id, payPeriodYear: year, payPeriodMonth: month }),
+    // A salary change for this person waiting on a CEO/MD, if there is one —
+    // the page shows it on the salary card, and holds further changes until it
+    // is decided (services/salaryChanges.js).
+    populatedSalaryChange(SalaryChangeRequest.findOne({ employee: profile._id, status: 'Pending' })).lean(),
+  ]);
   // A request shell is reported as NO payslip, plus the ask that created it.
   // Both clients render `payslip` directly as a status chip with a net figure,
   // so returning the shell would show "Draft · ₹0" for a month nobody has run.
@@ -2154,6 +2173,12 @@ const previewEmployeeRun = asyncHandler(async (req, res) => {
     month,
     employee: profile,
     computed,
+    // Whether THIS viewer's changes to a saved salary wait for a CEO/MD, and
+    // the change already waiting, if any.
+    salaryApproval: {
+      required: !writesSalaryDirectly(req.user),
+      pending: waiting ? shapeForViewer(req, waiting) : null,
+    },
     payslip: shell ? null : found,
     pendingRequest: shell || ['Requested', 'Approved'].includes(found?.release?.status)
       ? {
@@ -2813,13 +2838,18 @@ const deriveSalaryForEditor = asyncHandler(async (req, res) => {
  * value refused is one that changes nothing, or that would take the CTC below
  * zero. Reductions used to be blocked, which meant HR edited the CTC by hand
  * and the revision history lost the one thing it exists to record.
+ *
+ * From an HR this is a REQUEST: it waits for a CEO, MD or Super Admin to
+ * approve it and reaches the record — and payroll — only then (202). A CEO, MD
+ * or Super Admin's own revision applies at once (200). See
+ * services/salaryChanges.js.
  * @route POST /api/payroll/employees/:id/hike  (HR/Admin)
  * @param {string} req.body.mode - 'percent' | 'amount' | 'set'
  * @param {number} req.body.value - the % (percent), ₹ change (amount, may be negative), or absolute CTC (set)
  * @param {string} [req.body.newStructure] - optionally switch the salary structure
  * @param {number} req.body.effectiveYear / req.body.effectiveMonth
  * @param {string} [req.body.reason]
- * @returns {{profile, applied, entry}}
+ * @returns 200 {profile, applied, entry} | 202 {pendingApproval: true, applied: false, entry, request}
  */
 /**
  * Active employees whose salary basis is incomplete — no salary structure, or no
@@ -2865,86 +2895,103 @@ const salarySetupStatus = asyncHandler(async (req, res) => {
   res.json({ count: employees.length, employees });
 });
 
-const giveHike = asyncHandler(async (req, res) => {
-  const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName');
+/**
+ * Load the employee a salary write is about, with the two walls every salary
+ * write passes: the company wall / "not your own salary" (cannotManageProfile),
+ * and the manager-profile grant — revising a Manager's CTC is the same decision
+ * as putting them on a salary structure, so without it the Salary Revisions page
+ * would be the way around the gate on the Salary Structures page.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @returns {Promise<Object>} the EmployeeProfile document
+ */
+async function salaryTargetOrFail(req, res) {
+  const profile = await EmployeeProfile.findById(req.params.id).populate('user', 'firstName lastName role');
   if (!profile) {
     res.status(404);
     throw new Error('Employee not found');
   }
+  // Said as what it is. "Assigned to you" dates from the HR-partner wall, which
+  // no longer exists (utils/employeeScope.js) — the two refusals left are these.
   if (cannotManageProfile(req, profile)) {
     res.status(403);
-    throw new Error('You can only manage employees assigned to you');
+    throw new Error('This employee is in a company you do not cover, or this is your own salary — nobody sets their own.');
   }
-  // Revising a Manager's CTC is the same decision as putting them on a salary
-  // structure, so it needs the manager-profile grant too — otherwise the Hikes
-  // page would be the way around the gate on the Salary Structures page.
   await assertCanEditProfileOf(req, profile);
-  const { mode, value, newStructure, effectiveYear, effectiveMonth, reason } = req.body;
-  const prevCtc = profile.annualCtc || 0;
-  const v = Number(value) || 0;
+  return profile;
+}
 
-  // A revision may go DOWN as well as up. Demotions, a corrected offer, a move
-  // to a shorter week — all are real, and refusing them forced HR to fix the
-  // CTC by hand, which left no record of what changed or why. So a negative
-  // percent/amount, or a lower "set to", is accepted; only a revision that
-  // changes nothing is refused, because it would be an empty history entry.
-  if (v === 0) {
-    res.status(400);
-    throw new Error('Enter a value — a revision of zero changes nothing.');
-  }
-  if ((mode === 'percent' || mode === 'amount') && !prevCtc) {
-    res.status(400);
-    throw new Error('Set a current CTC for this employee before applying a percentage/amount revision (or use "Set to" mode).');
-  }
-  let newCtc;
-  if (mode === 'percent') newCtc = Math.round(prevCtc * (1 + v / 100));
-  else if (mode === 'amount') newCtc = Math.round(prevCtc + v);
-  else if (mode === 'set') newCtc = Math.round(v);
-  else { res.status(400); throw new Error('Invalid revision mode.'); }
+const giveHike = asyncHandler(async (req, res) => {
+  const profile = await salaryTargetOrFail(req, res);
+  const entry = await computeRevision(profile, req.body);
 
-  if (newCtc < 0) {
-    res.status(400);
-    throw new Error(`That reduction would take the CTC below zero (${prevCtc.toLocaleString('en-IN')} → ${newCtc.toLocaleString('en-IN')}).`);
-  }
-  if (newCtc === prevCtc) {
-    res.status(400);
-    throw new Error('That leaves the CTC unchanged.');
+  // An HR's revision is a PROPOSAL until a CEO, MD or Super Admin approves it —
+  // nothing reaches the record, so nothing reaches payroll, before that
+  // (services/salaryChanges.js). 202 with the same `entry` shape and
+  // `applied: false` a direct revision answers with, so an app build from before
+  // the approval step still reads a sensible reply rather than crashing on it.
+  if (!writesSalaryDirectly(req.user)) {
+    const request = await raiseRevision(req, profile, entry);
+    return res.status(202).json({
+      pendingApproval: true,
+      applied: false,
+      entry,
+      request: shapeForViewer(req, await populatedSalaryChange(SalaryChangeRequest.findById(request._id)).lean()),
+    });
   }
 
-  const now = new Date();
-  const eYear = Number(effectiveYear) || now.getFullYear();
-  const eMonth = Number(effectiveMonth) || now.getMonth() + 1;
-  const prevStructure = profile.salaryStructure || null;
-  const entry = {
-    previousCtc: prevCtc,
-    newCtc,
-    mode,
-    value: v,
-    previousStructure: prevStructure,
-    newStructure: newStructure || prevStructure,
-    effectiveYear: eYear,
-    effectiveMonth: eMonth,
-    reason: (reason || '').trim(),
+  // The approvers' own revision needs nobody's approval. Effective this month or
+  // earlier it is live at once; a future month waits in the history for its run.
+  const { entry: applied, live } = applyRevision(profile, entry, {
     by: req.user._id,
-    byName: req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
-    at: now,
-  };
-  profile.ctcHistory = [...(profile.ctcHistory || []), entry];
-
-  // Apply to the live CTC now only if the hike is effective on/before this month;
-  // a future-dated hike stays pending and is resolved per-month at run time.
-  const effectiveNow = eYear * 12 + (eMonth - 1) <= now.getFullYear() * 12 + now.getMonth();
-  if (effectiveNow) {
-    profile.annualCtc = newCtc;
-    if (newStructure) profile.salaryStructure = newStructure;
-  }
+    byName: actorName(req.user),
+  });
   await profile.save();
 
   // The paperwork a revision drags behind it is set from a saved task template
   // rather than raised automatically — the event hook went with the
   // 2026-09-21 task rework (see employeeController.createEmployee).
 
-  res.json({ profile, applied: effectiveNow, entry });
+  res.json({ profile, applied: live, entry: applied });
+});
+
+/**
+ * Set an employee's salary structure and annual CTC — the Save beside them on
+ * the Salary Revisions page.
+ *
+ * Setting up a salary that is not there yet applies at once. CHANGING one that
+ * has been saved is, from an HR, a request for a CEO/MD to approve, and nothing
+ * is written until they do (services/salaryChanges.js). A CEO, MD or Super
+ * Admin's own change applies directly.
+ * @route PUT /api/payroll/employees/:id/salary-setup  (payroll.manage)
+ * @param {string|null} [req.body.salaryStructure] - omit to keep, ''/null to clear
+ * @param {number} [req.body.annualCtc] - omit to keep
+ * @param {string} [req.body.reason] - why, for the approver
+ * @returns 200 {applied: true, unchanged?, profile} | 202 {pendingApproval: true, request}
+ */
+const saveSalarySetup = asyncHandler(async (req, res) => {
+  const profile = await salaryTargetOrFail(req, res);
+  const { salaryStructure, annualCtc, reason } = req.body || {};
+  if (salaryStructure && !(await SalaryStructure.exists({ _id: salaryStructure }))) {
+    res.status(400);
+    throw new Error('That salary structure no longer exists — pick another.');
+  }
+  const cls = classifySetup(profile, {
+    structure: salaryStructure === undefined ? undefined : (salaryStructure || null),
+    ctc: annualCtc,
+  });
+  if (!cls.changed) return res.json({ applied: true, unchanged: true, profile });
+
+  if (cls.editsSaved && !writesSalaryDirectly(req.user)) {
+    const request = await raiseSetupChange(req, profile, cls, { reason });
+    return res.status(202).json({
+      pendingApproval: true,
+      request: shapeForViewer(req, await populatedSalaryChange(SalaryChangeRequest.findById(request._id)).lean()),
+    });
+  }
+  applySetup(profile, cls, { by: req.user._id, byName: actorName(req.user), reason });
+  await profile.save();
+  res.json({ applied: true, profile });
 });
 
 module.exports = {
@@ -2963,6 +3010,7 @@ module.exports = {
   myAttendanceSummary,
   deriveSalaryForEditor,
   giveHike,
+  saveSalarySetup,
   salarySetupStatus,
   exportPayrollSheet,
   // exported for unit tests

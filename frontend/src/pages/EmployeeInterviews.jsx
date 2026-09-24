@@ -127,8 +127,8 @@ export default function EmployeeInterviews() {
 
     return (
       <div key={k} className="bg-white shadow rounded-lg p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="font-semibold text-gray-900 flex flex-wrap items-center gap-2">
               {/* Which round THIS card is — the number the whole card hangs
                   off, so it leads, filled, before the name. */}
@@ -147,7 +147,7 @@ export default function EmployeeInterviews() {
           {/* Only the round's status here: the recommendation and the average
               belong to the write-up below, and printing them in both places
               read as two different facts about the same round. */}
-          <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[iv.status]}`}>{iv.status}</span>
+          <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[iv.status]}`}>{iv.status}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 mt-3">

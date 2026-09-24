@@ -9,6 +9,12 @@
  * one person's monthly breakup plus their annual CTC — the upload turns those
  * amounts into a structure's percentages and puts the employee on it, which is
  * the same two steps the modal below does by hand, for a whole company at once.
+ *
+ * CEO/MD APPROVAL (user decision 2026-09-24). A structure people are paid on IS
+ * their salary, so from an HR new percentages on one — and assigning somebody
+ * whose salary is already saved to a different structure or CTC — go to a CEO,
+ * MD or Super Admin and apply only when approved (backend/services/
+ * salaryChanges.js). A structure nobody is on yet is a draft HR shapes freely.
  */
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -21,7 +27,9 @@ import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
-import { canAdministerEmployee } from '../config/permissions';
+import { canAdministerEmployee, canApproveSalaryChanges } from '../config/permissions';
+import SalaryChangeInbox from '../components/SalaryChangeInbox';
+import { useNavCountsStore } from '../store/navCountsStore';
 
 const inr = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -96,6 +104,15 @@ export default function AdminSalaryStructures() {
   // its name is shared, so the modal warns instead of quietly renaming it.
   const [sharedCount, setSharedCount] = useState(0);
   const [saving, setSaving] = useState(false);
+  // Structures with new percentages waiting for a CEO/MD (id set), and a key the
+  // waiting list reloads on.
+  const [pendingStructures, setPendingStructures] = useState(() => new Set());
+  const [changesKey, setChangesKey] = useState(0);
+  // An HR's new percentages on a structure people are paid on wait for approval.
+  const approvalRequired = !canApproveSalaryChanges(currentUser);
+  // Everyone (in view) on the structure being edited, the editor included —
+  // what decides whether its percentages are HR's to change directly.
+  const [editHolders, setEditHolders] = useState(0);
 
   // ----- Bulk Excel -----
   const [showImport, setShowImport] = useState(false);
@@ -123,6 +140,13 @@ export default function AdminSalaryStructures() {
     } finally {
       setLoading(false);
     }
+    // Which structures have new percentages waiting — a chip on their row. On
+    // its own so a failure here costs the chip, not the page.
+    api.get('/payroll/salary-changes', { params: { kind: 'structure' } })
+      .then(({ data }) => setPendingStructures(new Set((data.requests || [])
+        .map((r) => String(r.structure?._id || r.structure || '')))))
+      .catch(() => {});
+    setChangesKey((k) => k + 1);
   };
   useEffect(() => {
     load();
@@ -147,6 +171,7 @@ export default function AdminSalaryStructures() {
     setForm(blankForm());
     setAssign({ employee: '', annualCtc: '' });
     setSharedCount(0);
+    setEditHolders(0);
     setError('');
     setShowModal(true);
   };
@@ -169,6 +194,7 @@ export default function AdminSalaryStructures() {
       (p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(s._id)
     );
     setSharedCount(Math.max(0, onThis.length - 1));
+    setEditHolders(onThis.length);
 
     // Prefill when there is an unambiguous candidate: the only person on the
     // structure, or — where several share it — the only one who actually has a
@@ -266,10 +292,17 @@ export default function AdminSalaryStructures() {
     setSaving(true);
     setError('');
     try {
-      // 1) Create or update the structure template.
+      // 1) Create or update the structure template. New percentages on one
+      // people are paid on come back 202 from an HR: held for a CEO/MD, while
+      // the name and description saved as usual.
       let structureId = editingId;
+      let sentForApproval = false;
       if (editingId) {
-        await api.put(`/salary-structures/${editingId}`, form);
+        const { status, data } = await api.put(`/salary-structures/${editingId}`, form);
+        if (status === 202 || data?.pendingApproval) {
+          sentForApproval = true;
+          toast.info('The new percentages were sent to the CEO/MD for approval — people on this structure are paid on the current ones until then.');
+        }
       } else {
         const { data } = await api.post('/salary-structures', form);
         structureId = data.structure._id;
@@ -282,8 +315,14 @@ export default function AdminSalaryStructures() {
         });
         const emp = employees.find((p) => p._id === assign.employee);
         const name = emp ? `${emp.user?.firstName || ''} ${emp.user?.lastName || ''}`.trim() : 'the employee';
-        toast.success(`Structure assigned to ${name}${data.annualCtc ? ` · CTC ₹${Number(data.annualCtc).toLocaleString('en-IN')}` : ''}`);
+        if (data.pendingApproval) {
+          sentForApproval = true;
+          toast.info(`${name}'s salary is already saved, so this change was sent to the CEO/MD for approval.`);
+        } else {
+          toast.success(`Structure assigned to ${name}${data.annualCtc ? ` · CTC ₹${Number(data.annualCtc).toLocaleString('en-IN')}` : ''}`);
+        }
       }
+      if (sentForApproval) useNavCountsStore.getState().refresh({ admin: true, force: true });
       setShowModal(false);
       await load();
     } catch (err) {
@@ -452,6 +491,17 @@ export default function AdminSalaryStructures() {
         </div>
       )}
 
+      {/* New percentages waiting for a CEO/MD on structures people are paid on.
+          Approvers decide here; HR sees what is waiting and can withdraw theirs. */}
+      <SalaryChangeInbox
+        kind="structure"
+        hideWhenEmpty
+        className="mb-4 bg-white p-4 rounded-lg shadow-sm"
+        title="Structure changes waiting for approval"
+        reloadKey={changesKey}
+        onChanged={() => load()}
+      />
+
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
@@ -490,6 +540,12 @@ export default function AdminSalaryStructures() {
                     >
                       {s.isActive ? 'Active' : 'Inactive'}
                     </span>
+                    {pendingStructures.has(String(s._id)) && (
+                      <span className="block mt-1 w-max text-xs px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800"
+                        title="New percentages are waiting for CEO/MD approval">
+                        Change awaiting approval
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right space-x-2">
                     <button
@@ -555,6 +611,18 @@ export default function AdminSalaryStructures() {
                 <div className="text-xs font-medium text-gray-500 mb-2">
                   Components (% of annual CTC)
                 </div>
+                {/* Said up front: this structure is somebody's salary. */}
+                {editingId && approvalRequired && editHolders > 0 && (
+                  <p className="mb-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {editHolders} {editHolders === 1 ? 'employee is' : 'employees are'} paid on this structure, so new
+                    percentages go to a CEO/MD for approval and apply only once approved. The name and description save now.
+                  </p>
+                )}
+                {editingId && pendingStructures.has(String(editingId)) && (
+                  <p className="mb-2 text-xs text-amber-800">
+                    A change to these percentages is already waiting for approval.
+                  </p>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {PCT_FIELDS.map(([key, label]) => (
                     <label key={key} className="text-sm text-gray-700">

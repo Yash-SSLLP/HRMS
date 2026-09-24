@@ -39,10 +39,14 @@ const {
   runEmployeePayroll,
   deriveSalaryForEditor,
   giveHike,
+  saveSalarySetup,
   salarySetupStatus,
 } = require('../controllers/payrollController');
 const {
-  protect, restrictTo, requirePermission, requireSelfPayslipApprover,
+  listSalaryChanges, approveSalaryChange, rejectSalaryChange, withdrawSalaryChange,
+} = require('../controllers/salaryChangeController');
+const {
+  protect, restrictTo, requirePermission, requireSelfPayslipApprover, requireSalaryChangeApprover,
 } = require('../middleware/authMiddleware');
 
 const router = express.Router();
@@ -96,6 +100,22 @@ router.get('/self-approvals', requireSelfPayslipApprover, listSelfApprovals);
 router.patch('/:id/self-approval/approve', requireSelfPayslipApprover, approveSelfPayslip);
 router.patch('/:id/self-approval/reject', requireSelfPayslipApprover, rejectSelfPayslip);
 
+// ===== Salary changes waiting on a CEO/MD =====
+// Once an employee's salary is saved, an HR's change to it — a revised CTC, a
+// different structure, new percentages on a structure people are paid on — is
+// a request until a CEO, MD or Super Admin approves it (services/salaryChanges.js).
+// Above the 'payroll.manage' gate for the same two reasons as the self-payslip
+// sanction: a read-only CEO/MD is refused by that gate on any non-GET, and it is
+// the wrong key — it is held by the very people whose changes are being judged.
+// GET /salary-changes — the queue (?status=Pending|…|all&kind=&employee=&structure=).
+// Read with payroll.manage, which a CEO/MD/God passes on a GET.
+router.get('/salary-changes', requirePermission('payroll.manage'), listSalaryChanges);
+// PATCH /salary-changes/:id/approve|reject — decide one (reject needs a note).
+router.patch('/salary-changes/:id/approve', requireSalaryChangeApprover, approveSalaryChange);
+router.patch('/salary-changes/:id/reject', requireSalaryChangeApprover, rejectSalaryChange);
+// PATCH /salary-changes/:id/withdraw — the requester takes it back while it waits.
+router.patch('/salary-changes/:id/withdraw', requirePermission('payroll.manage'), withdrawSalaryChange);
+
 // HR/Admin only — everything below requires the 'payroll.manage' permission.
 router.use(requirePermission('payroll.manage'));
 
@@ -112,8 +132,13 @@ router.route('/run').get(previewPayrollRun).post(runPayroll);
 router.route('/run-employee').get(previewEmployeeRun).post(runEmployeePayroll);
 // GET /derive-salary — earnings+deductions from structure×CTC for the payslip editor; requires 'payroll.manage'.
 router.get('/derive-salary', deriveSalaryForEditor);
-// POST /employees/:id/hike — apply a CTC hike/increment to an employee; requires 'payroll.manage'.
+// POST /employees/:id/hike — revise an employee's CTC; requires 'payroll.manage'.
+// From an HR it becomes a request for a CEO/MD to approve (202).
 router.post('/employees/:id/hike', giveHike);
+// PUT /employees/:id/salary-setup — set their salary structure + annual CTC.
+// Filling a blank applies at once; changing a saved salary is, from an HR, a
+// request for a CEO/MD to approve (202). Requires 'payroll.manage'.
+router.put('/employees/:id/salary-setup', saveSalarySetup);
 // GET /salary-setup-status — active employees missing a salary structure and/or
 // CTC; requires 'payroll.manage'. Declared before '/:id' so it isn't read as an id.
 router.get('/salary-setup-status', salarySetupStatus);

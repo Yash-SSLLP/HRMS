@@ -71,6 +71,9 @@ const EMPTY = {
   // Job openings an HR consultancy asked for, waiting on somebody who may
   // accept them (HR with recruitment.jobs, CEO/MD, the Backend).
   jobRequest: 0,
+  // Salary changes an HR asked for, waiting on a CEO/MD/Super Admin — 0 for
+  // everyone else. Answered by the PERSONAL endpoint (see PERSONAL below).
+  salaryChange: 0,
 };
 
 /** Read one key out of a server payload, defaulting anything odd to 0. */
@@ -87,7 +90,9 @@ const n = (v) => Number(v) || 0;
 // listing it here is what makes the personal answer win — which is the whole
 // point, because the HR-wide one is not asked for in My Portal (bar an
 // assets.manage holder, for the Manage Assets count — see Layout.jsx).
-const PERSONAL = ['mine', 'interviews', 'taskApproval'];
+// `salaryChange` (2026-09-24) is addressed to the approver personally, so it
+// rides on the personal answer too — and only there.
+const PERSONAL = ['mine', 'interviews', 'taskApproval', 'salaryChange'];
 
 export const useNavCountsStore = create((set) => ({
   counts: EMPTY,
@@ -119,7 +124,13 @@ export const useNavCountsStore = create((set) => ({
         // falls back to 0 instead of keeping the last number it ever sent.
         const next = {
           ...EMPTY,
-          mine: n(mine.data?.total),
+          // Salary changes waiting on this approver are added here rather than
+          // by the server: the server's `total` is also what the Android app's
+          // Approvals pill wears, and the app has no salary tab to open yet.
+          // The web Approvals page does list them (ApprovalsBoard → Salary
+          // changes), so on the web they belong in this count.
+          mine: n(mine.data?.total) + n(mine.data?.salaryChange),
+          salaryChange: n(mine.data?.salaryChange),
           // Interview rounds booked with this user and not yet written up. It
           // rides along on the personal answer (one request, not two) and is
           // deliberately NOT part of that answer's `total` — an interview is

@@ -345,15 +345,17 @@ export default function AdminHiringOnboarding() {
             <div key={c._id} id={`onb-${c._id}`}
               className={`bg-white shadow rounded-lg p-4 transition-shadow ${
                 highlighted === c._id ? arrivalRing : ''}`}>
+              {/* The candidate takes the room the letter buttons leave; the
+                  buttons stay on the right, wrapping there if they must. */}
               <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                <div>
-                  <div className="font-semibold text-gray-900">{c.name}</div>
+                <div className="min-w-0 grow basis-64">
+                  <div className="font-semibold text-gray-900 break-words">{c.name}</div>
                   <div className="text-xs text-gray-500">{c.job?.title || '-'}{c.email ? ` · ${c.email}` : ''}</div>
                   <div className="text-[11px] text-gray-400 mt-0.5">
                     Onboarding since {fmtDate(c.onboarding?.startedAt)}{c.onboarding?.startedByName ? ` · by ${c.onboarding.startedByName}` : ''}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                   {c.offer?.emailedAt && <span className="text-[10px] text-gray-400">offer already sent {fmtDate(c.offer.emailedAt)}</span>}
                   {c.offer?.hasLetter && (
                     <button onClick={() => downloadOffer(c)} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50">Offer PDF</button>

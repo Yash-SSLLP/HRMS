@@ -36,11 +36,28 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 
 const Task = require('../models/Task');
-const { STATUS, KIND_TASK } = require('../config/tasks');
+const {
+  STATUS, KIND_TASK, normaliseStatus, normaliseStatusStage, spellingsOf,
+} = require('../config/tasks');
 const access = require('../services/taskAccess');
 const { buildQuery } = require('./taskController');
 
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+
+/**
+ * The legacy status words, rewritten BEFORE statsStage compares anything.
+ *
+ * statsStage names the five current statuses, but a row set before the
+ * 2026-09-21 rework still says ASSIGNED / Done / REJECTED — on the task and on
+ * each assignee. Left alone, such a row lands in `total` and in no bucket, so
+ * the halves stop adding up and every score it touches reads low. Those rows
+ * only reached the dashboard on 2026-09-24, when buildQuery stopped dropping
+ * them for having no `kind` (config/tasks.kindFilter); the list's counters
+ * already normalise the same way.
+ */
+const TASK_STATUS_NOW = normaliseStatusStage();
+/** The same, per person — only valid after `$unwind: '$assignees'`. */
+const PERSON_STATUS_NOW = normaliseStatusStage('assignees.status');
 
 /**
  * The facts every tab counts, as aggregation expressions.
@@ -170,7 +187,9 @@ function scoreRow(r, label, extra = {}) {
  * are excluded, because an upward ask is not work anybody was set.
  */
 async function dashboardFilter(req) {
-  return buildQuery(req, { kind: KIND_TASK });
+  // STRICT dates, unlike the list: this month's score is over what was due this
+  // month, not every open task anybody has (see taskController.buildQuery).
+  return buildQuery(req, { kind: KIND_TASK }, { strictRange: true });
 }
 
 /** GET /api/tasks/dashboard?view=employee|category|trend|mine|delegated */
@@ -186,6 +205,7 @@ const dashboard = asyncHandler(async (req, res) => {
   if (view === 'category') {
     const rows = await Task.aggregate([
       { $match: filter },
+      TASK_STATUS_NOW,
       // No `$unwind`: this counts TASKS, and `perTask` sums everybody's points
       // per row itself.
       { $group: { _id: { $ifNull: ['$category', ''] }, ...perTask(now) } },
@@ -207,6 +227,7 @@ const dashboard = asyncHandler(async (req, res) => {
       { $match: match },
       { $unwind: '$assignees' },
       { $match: { 'assignees.user': new mongoose.Types.ObjectId(req.user._id) } },
+      PERSON_STATUS_NOW,
       { $group: { _id: '$assignees.user', ...perPerson(now) } },
     ]);
     const r = rows[0];
@@ -221,6 +242,7 @@ const dashboard = asyncHandler(async (req, res) => {
     const rows = await Task.aggregate([
       { $match: { ...match, createdBy: new mongoose.Types.ObjectId(req.user._id) } },
       { $unwind: '$assignees' },
+      PERSON_STATUS_NOW,
       {
         $group: {
           _id: '$assignees.user',
@@ -247,6 +269,7 @@ const dashboard = asyncHandler(async (req, res) => {
   const rows = await Task.aggregate([
     { $match: match },
     { $unwind: '$assignees' },
+    PERSON_STATUS_NOW,
     {
       $group: {
         _id: '$assignees.user',
@@ -279,6 +302,7 @@ async function trend(filter, grainRaw, now) {
     // carry a window, and merging two `dueDate` objects by spread silently
     // drops whichever bound they share.
     { $match: { $and: [filter, { dueDate: { $ne: null } }] } },
+    TASK_STATUS_NOW,
     {
       $group: {
         // Asia/Kolkata, so a task due at 11pm is counted on the day it was
@@ -306,7 +330,8 @@ const overdueReport = asyncHandler(async (req, res) => {
   const filter = await dashboardFilter(req);
   const rows = await Task.find({
     ...filter,
-    status: { $in: [STATUS.PENDING, STATUS.IN_PROGRESS] },
+    // Every spelling — a row nobody has migrated still says ASSIGNED.
+    status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
     dueDate: { $lt: now },
   })
     .select('code title category priority status dueDate assignees createdByName points')
@@ -317,6 +342,7 @@ const overdueReport = asyncHandler(async (req, res) => {
   res.json({
     rows: rows.map((t) => ({
       ...t,
+      status: normaliseStatus(t.status) || t.status,
       // Whole days late, rounded down — "3 days" reads better than "3.4".
       daysLate: Math.floor((now - new Date(t.dueDate)) / 86400000),
       who: (t.assignees || []).map((a) => a.name).filter(Boolean).join(', '),

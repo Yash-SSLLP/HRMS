@@ -115,8 +115,11 @@ export default function RegularizationApprovalsInbox({ onCount }) {
         <div className="space-y-3">
           {rows.map((r) => (
             <div key={r._id} className="bg-white shadow rounded-lg p-4">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
+              {/* The details take the room the step pill leaves, so a long
+                  reason wraps beside it instead of pushing it onto a line of
+                  its own at the left. */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
                   <div className="font-medium">
                     {empName(r)}
                     <span className="ml-2 text-xs font-normal text-gray-500">{r.type}</span>
@@ -131,7 +134,7 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                     <ChangeLine label="In" from={r.previousCheckIn || r.current?.checkIn} to={r.requestedCheckIn} />
                     <ChangeLine label="Out" from={r.previousCheckOut || r.current?.checkOut} to={r.requestedCheckOut} />
                   </div>
-                  <div className="text-sm text-gray-700 mt-1">{r.reason}</div>
+                  <div className="text-sm text-gray-700 mt-1 break-words">{r.reason}</div>
                 </div>
                 {/* The final rung reads differently from a step on the way to
                     it: approving here APPLIES the correction to the day, where
@@ -147,7 +150,7 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                   </span>
                 )}
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                 <input
                   type="text"
                   placeholder="Note (optional)"

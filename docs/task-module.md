@@ -985,6 +985,36 @@ a task nobody has started, and it is the one queue nobody else can clear for me.
 A row I have *submitted* is deliberately not counted for me — it is out of my
 hands, and counting it would leave a number I cannot make go down.
 
+**The badge and the list must count the same rows.** On 2026-09-24 they did
+not: 48 people wore a red 1 over an empty Tasks page. The badge counted every
+row on them; the list asked for `kind: 'TASK'`, and the 57 "Documents
+Submission" rows set on 2026-09-11 — before `kind` existed — have no `kind` at
+all. A schema default is applied on hydration, never inside a query, so they
+were missing from every list, board, tile and dashboard. Every filter now names
+a kind through `config/tasks.kindFilter`, where TASK includes a missing one —
+the same rule `spellingsOf` is for status words.
+
+### The date chips — open work always shows on the ones that contain today
+
+Today · Yesterday · This week · This month · Next week · All time · Custom.
+They filter on the **deadline** — "this week" is the work due this week — but on
+**Today, This week and This month** they narrow **finished** work only. Every
+open task (pending, in progress, in review) shows whatever its deadline,
+including none. *(User decision, 2026-09-24.)*
+
+The page opens on This month and the badge counts every open task on you. With
+a strict window, a task due last month and still undone, one due next month, or
+one with no deadline put a red number on the pill over a page saying "Nothing
+on your plate" — on 1 Oct that would have been all 48 people with a Documents
+Submission task still open. Finished work stays filed under the period it was
+due in.
+
+Yesterday, Next week and Custom look up one period and stay strict. So does
+the **dashboard** (`buildQuery(…, { strictRange: true })`): a score for "this
+month" has to be over what was due this month, or a job due in December drags
+September's figure down. It is a third argument rather than a query parameter,
+so no client can switch it.
+
 ---
 
 ## 12a. The endpoints
@@ -1077,10 +1107,14 @@ npm run migrate:tasks:apply      # do it
    it. Expected to find nothing — there were zero in the live data — but a
    restored backup or another environment must not be silently emptied
 8. seeds TaskCategory from the categories already in use
+9. sets `kind` to TASK on any row with none — V3's step, repeated because V3
+   never ran (57 rows on 2026-09-24)
 
 The model's own hooks apply the same status AND priority maps, so a row the
 migration has not reached is still a valid document and an un-updated Android
-build still works.
+build still works. A missing `kind` reads as TASK in every filter
+(`config/tasks.kindFilter`) and in every lean row (`decorate()`), so step 9 is
+tidying, not a fix.
 
 ### What the live data looked like when this landed (2026-09-22)
 

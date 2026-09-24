@@ -7,7 +7,7 @@
 const express = require('express');
 const {
   listAssets, createAsset, updateAsset, deleteAsset,
-  issueAsset, updateAssignment, returnAssignment, deleteAssignment, assignAsset,
+  issueAsset, issueToEmployee, updateAssignment, returnAssignment, deleteAssignment, assignAsset,
   listAssignments, listMyAssets, listAssetPeople,
   listReturnRequests, acceptReturnRequest, rejectReturnRequest, requestReturn, cancelReturnRequest,
 } = require('../controllers/assetController');
@@ -41,6 +41,10 @@ router.patch('/assignments/:aid/return', returnAssignment);
 // reusing /admin/users, which is role-gated and would 403 for the holder of
 // the standalone Assets grant.
 router.get('/people', listAssetPeople);
+// POST /employees/:userId/assignments — issue several assets to one employee
+// (the employee-wise side; POST /:id/assignments below is the asset-wise one).
+// Three segments, so neither '/:id' route below can shadow it.
+router.post('/employees/:userId/assignments', issueToEmployee);
 // GET / — list asset kinds with their holders; POST / — create a kind.
 router.route('/').get(listAssets).post(createAsset);
 // POST /:id/assignments — issue a kind to one or more employees.

@@ -340,7 +340,7 @@ export default function AdminRoster() {
           ) : shifts.map((s) => (
             <div key={s._id}>
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
+                <div className="min-w-0 grow basis-64">
                   <span className="font-medium text-gray-900">{s.name}</span>
                   <span className="text-gray-600 text-sm ml-2">{timeRange(s)}</span>
                   {/* Without this, "7:00 PM – 4:00 AM" reads as a fifteen-hour
@@ -352,7 +352,7 @@ export default function AdminRoster() {
                     {s.assignedCount === 1 ? '1 employee' : `${s.assignedCount || 0} employees`}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="ml-auto flex items-center gap-2">
                   <button onClick={() => toggleShiftEmployees(s._id)} className="text-blue-600 hover:underline text-sm">
                     {expandedShift === s._id ? 'Hide' : 'View'}
                   </button>

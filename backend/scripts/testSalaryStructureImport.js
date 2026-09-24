@@ -212,10 +212,16 @@ stub('services/salaryStructureExcel.js', {
 
 const ctrl = require(path.join(BACKEND, 'controllers/salaryStructureController.js'));
 
-const runImport = async () => {
+// Uploaded by a SUPER ADMIN unless a test says otherwise. Since 2026-09-24 an
+// HR's upload may only set up salaries that are not saved yet — changing a saved
+// one needs a CEO/MD's approval (services/salaryChanges.js) — and nearly every
+// case below is about what a CHANGE does to the numbers. The approvers write
+// directly, so the arithmetic pinned here is theirs; the HR rule has its own
+// section at the end.
+const runImport = async (role = 'SuperAdmin') => {
   const req = {
     file: { buffer: Buffer.from('x') },
-    user: { _id: 'admin1', role: 'HRManager', firstName: 'HR', lastName: 'One' },
+    user: { _id: 'admin1', role, firstName: 'HR', lastName: 'One' },
     body: {},
     query: {},
   };
@@ -415,6 +421,33 @@ const runImport = async () => {
   isTrue('and the shortfall note names them instead of blaming PF',
     gapped.notes.some((n) => /no Conveyance or Medical column/.test(n.message) && !/That is normal/.test(n.message)));
   MISSING_COLUMNS = [];
+  SHEET_TO_PARSE = SHEET;
+
+  console.log('\n--- an HR sets salaries up; changing a saved one waits for a CEO/MD ---');
+  PEOPLE.push(profile({ _id: 'p10', employeeCode: 'SSL010', user: { firstName: 'New', lastName: 'Joiner' } }));
+  const ashaNow = PEOPLE.find((p) => p._id === 'p1');
+  const ashaBefore = { ctc: ashaNow.annualCtc, history: ashaNow.ctcHistory.length, structure: ashaNow.salaryStructure };
+  const createdBeforeHr = createdStructures.length;
+  SHEET_TO_PARSE = [
+    // Nobody has set this person's salary up yet — that is HR's to do.
+    row(2, { employeeName: 'New Joiner', employeeCode: 'SSL010', annualCtc: 600000,
+      amounts: { basic: 20000, hra: 10000, specialAllowance: 12500, conveyance: 2500, medical: 2500, lta: 2500 } }),
+    // Asha's salary is saved; this row would raise it.
+    row(3, { employeeName: 'Asha Patel', employeeCode: 'SSL001', annualCtc: 900000,
+      amounts: { basic: 30000, hra: 15000, specialAllowance: 18750, conveyance: 3750, medical: 3750, lta: 3750 } }),
+    // Kiran's row is exactly what he is on — an export uploaded back.
+    row(4, { employeeName: 'Kiran Rao', employeeCode: 'SSL006', annualCtc: 600000,
+      amounts: { basic: 20000, hra: 10000, specialAllowance: 12500, conveyance: 2500, medical: 2500, lta: 2500 } }),
+  ];
+  countOnShared = 2;
+  const byHr = await runImport('HRManager');
+  isTrue('the new joiner is set up', byHr.assigned.some((a) => a.employeeCode === 'SSL010'));
+  check('the saved salary is left exactly as it was',
+    [ashaNow.annualCtc, ashaNow.ctcHistory.length, ashaNow.salaryStructure], [ashaBefore.ctc, ashaBefore.history, ashaBefore.structure]);
+  isTrue('and the row says why it was not applied',
+    byHr.skipped.some((s) => s.excelRow === 3 && s.reason.startsWith('Salary already saved')));
+  check('nothing was created or repriced for it', createdStructures.length, createdBeforeHr + 1);
+  isTrue('a row that changes nothing is not held up', byHr.assigned.some((a) => a.employeeCode === 'SSL006'));
   SHEET_TO_PARSE = SHEET;
 
   console.log('\n--- the query selects what the real guards read ---');

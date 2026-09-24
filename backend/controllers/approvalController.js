@@ -50,6 +50,7 @@ const { countOpenResetRequests } = require('./passwordResetRequestController');
 const { countMyOpenTasks } = require('./taskController');
 const { countDueConfirmations } = require('./lifecycleController');
 const { countPendingJobRequests } = require('./jobRequestController');
+const { countPendingSalaryChanges } = require('./salaryChangeController');
 const {
   hasPermission, isPortalViewer, isExecViewer, canApproveSelfPayslip, canApproveAdvances,
 } = require('../middleware/authMiddleware');
@@ -631,7 +632,7 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     : emergencyReviewFilter(req.user);
   const [
     leave, emergencyLeave, exits, clearances, regularizations, workOnLeave, interviews,
-    taskApproval,
+    taskApproval, salaryChange,
   ] = await Promise.all([
     LeaveRequest.countDocuments(leaveFilter),
     // Its own tally, never folded into `leave`: these are days already taken,
@@ -676,6 +677,10 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     // not update because the server did. Same reasoning as the legacy subtask
     // routes. Both call this one helper, so the two answers cannot drift.
     countMyOpenTasks(req).catch(() => 0),
+    // Salary changes an HR raised, waiting on a CEO/MD/Super Admin — 0 for
+    // everyone else (services/salaryChanges.js). Addressed to the executive
+    // bench as surely as a leave at the top of its ladder is.
+    countPendingSalaryChanges(req).catch(() => 0),
   ]);
   res.json({
     leave,
@@ -686,6 +691,11 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     workOnLeave,
     interviews,
     taskApproval,
+    // Deliberately OUTSIDE `total` for now: the Android app wears `total` on an
+    // Approvals screen that has no salary tab yet, and a count that opens on
+    // nothing is the thing this endpoint promises never to show. The web client
+    // adds it to its own Approvals pill, where the Approvals page does list it.
+    salaryChange,
     // OUTSIDE the total, deliberately — both of them. `total` is what the
     // Approvals pill wears, and neither an interview nor a task is something you
     // approve there: folding either in would put a number on a badge that opens
@@ -897,12 +907,20 @@ const countHrApprovals = asyncHandler(async (req, res) => {
   // them — so the number on the sidebar row is always one the reader can clear.
   const jobRequestQ = countPendingJobRequests(req).catch(() => 0);
 
+  // GET /payroll/salary-changes?status=Pending   (CEO/MD/SuperAdmin decide)
+  // Salary changes an HR asked for. 0 for anyone who cannot decide one — HR's
+  // own requests wait on somebody else. The app's Approvals screen has a tab
+  // for it from 2.8.36 (keyed 'salary', like mobile ApprovalsScreen's CATEGORIES).
+  const salaryQ = countPendingSalaryChanges(req).catch(() => 0);
+
   const [leave, expense, travel, regularization, loan, change, docswap, selfPayslip,
     payslipRequest, khata, khataConfirm, khataSanction, voucher, exit, complaint,
-    passwordReset, declaration, course, confirmation, taskApproval, assetReturn, jobRequest] = await Promise.all([
+    passwordReset, declaration, course, confirmation, taskApproval, assetReturn, jobRequest,
+    salary] = await Promise.all([
     leaveQ, expenseQ, travelQ, regularizationQ, loanQ, changeQ, docswapQ, selfPayslipQ,
     payslipRequestQ, khataQ, khataConfirmQ, khataSanctionQ, voucherQ, exitQ, complaintQ,
     passwordResetQ, declarationQ, courseQ, confirmationQ, taskApprovalQ, assetReturnQ, jobRequestQ,
+    salaryQ,
   ]);
   res.json({
     leave,
@@ -927,6 +945,10 @@ const countHrApprovals = asyncHandler(async (req, res) => {
     taskApproval,
     assetReturn,
     jobRequest,
+    // OUTSIDE `total`, like everything after selfPayslip — but for a different
+    // reason: the Approvals screen of app builds before 2.8.36 has no salary
+    // tab, and they wear `total`. Newer builds add it to their own badge.
+    salary,
     // `total` is the APPROVALS SCREEN's tally and deliberately counts only the
     // categories that screen lists. Everything added after `selfPayslip` badges
     // its own module in the sidebar instead, so folding it in here would badge

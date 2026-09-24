@@ -350,7 +350,7 @@ export default function ConsultancyCandidates() {
       <div key={r._id} className="bg-white shadow rounded-lg p-4">
         {/* Who, and for what */}
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 grow basis-64">
             <div className="font-semibold text-gray-900 flex flex-wrap items-center gap-2">
               <span className="break-words">{r.name}</span>
               {!external && <PriorRejectionChip flag={r.priorRejection} />}
@@ -364,7 +364,7 @@ export default function ConsultancyCandidates() {
               <div className="text-xs text-gray-500 mt-0.5 break-words">{[r.email, r.phone].filter(Boolean).join(' · ')}</div>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
             {/* The agency sees its own round; the company sees where the
                 candidate is NOW (Round 1 is in the rounds row below). */}
             {external ? (

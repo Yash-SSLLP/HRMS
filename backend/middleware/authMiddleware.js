@@ -808,6 +808,41 @@ const requireSelfPayslipApprover = (req, res, next) => {
   return next(new Error('Only a CEO, MD or Super Admin can decide a self-prepared payslip.'));
 };
 
+/**
+ * May this account approve a salary change — and so make one without asking?
+ *
+ * SuperAdmin, CEO or MD (user decision 2026-09-24): once an employee's salary
+ * has been saved, an HR's change to it — a revised CTC, a different structure,
+ * new percentages on a structure people are paid on — is only a proposal until
+ * one of these three agrees. The same bench, and the same ROLE check rather than
+ * `payroll.manage`, as canApproveSelfPayslip above, for the same reason: the
+ * capability is held by exactly the people whose changes are being judged.
+ *
+ * Also the answer to "does this account's own change need approving?" — a gate
+ * the bench could clear for itself is not a gate. See services/salaryChanges.js.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function canApproveSalaryChanges(user) {
+  return !!user && ['SuperAdmin', 'CEO', 'MD'].includes(user.role);
+}
+
+/**
+ * Route guard for deciding a salary change.
+ *
+ * Like the self-payslip sanction, a READ-ONLY CEO/MD writes here: the request is
+ * addressed to them, and gating it behind edit mode would mean the person being
+ * asked could not answer. Mounted outside the payroll router's `payroll.manage`
+ * gate for that reason (see routes/payrollRoutes.js).
+ * @returns {import('express').RequestHandler}
+ * @sideeffect On denial sets res.status(403) and forwards an Error via next().
+ */
+const requireSalaryChangeApprover = (req, res, next) => {
+  if (canApproveSalaryChanges(req.user)) return next();
+  res.status(403);
+  return next(new Error('Only a CEO, MD or Super Admin can approve a salary change.'));
+};
+
 module.exports = {
   protect,
   protectMedia,
@@ -831,6 +866,8 @@ module.exports = {
   requireAdvanceApprover,
   canApproveSelfPayslip,
   requireSelfPayslipApprover,
+  canApproveSalaryChanges,
+  requireSalaryChangeApprover,
   canPayIncentive,
   requireIncentivePayer,
   canCreditIncentive,

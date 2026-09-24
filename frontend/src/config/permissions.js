@@ -175,6 +175,19 @@ export const canCreditIncentive = (user) => {
 };
 
 /**
+ * May this account approve a salary change — and so change a saved salary
+ * without asking anyone? Mirrors canApproveSalaryChanges in the backend's
+ * authMiddleware: SuperAdmin, CEO or MD, on ROLE alone. A read-only CEO/MD
+ * counts: the request is addressed to them, so deciding it is the one write
+ * they make here. Everyone else's change to a saved salary waits for one of
+ * these three (backend/services/salaryChanges.js).
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canApproveSalaryChanges = (user) => !!user
+  && ['SuperAdmin', 'CEO', 'MD'].includes(user.role);
+
+/**
  * Roles whose employee profile is protected by the manager-profile grant.
  * Mirrors MANAGER_PROFILE_ROLES in the backend's authMiddleware.
  */

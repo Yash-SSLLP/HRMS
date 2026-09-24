@@ -111,6 +111,10 @@ const EXEC_WRITE_PATHS = [
   // one in either mode (jobRequestController canDecideJobRequests) — the request
   // is addressed to them — so the backstop must let the decision through.
   /\/recruitment\/consultancy\/job-requests\/[^/]+\/(approve|reject)(\?|$)/,
+  // SALARY CHANGES an HR asked for. A CEO/MD approves or turns one down in either
+  // mode (routes/payrollRoutes.js mounts the decision above the payroll.manage
+  // gate) — the request is addressed to them.
+  /\/payroll\/salary-changes\/[^/]+\/(approve|reject)(\?|$)/,
 ];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job

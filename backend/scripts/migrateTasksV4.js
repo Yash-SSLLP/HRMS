@@ -59,6 +59,7 @@ const APPLY = process.argv.includes('--apply');
 const stats = {
   seen: 0,
   statusMapped: 0,
+  kindSet: 0,
   priorityMapped: 0,
   approvalSet: 0,
   progressSet: 0,
@@ -105,6 +106,14 @@ async function migrateTasks() {
     if (priority !== t.priority) {
       set.priority = priority;
       stats.priorityMapped += 1;
+    }
+
+    // kind — V3's step, repeated because V3 was never run here. A row with no
+    // kind reads as a TASK everywhere since 2026-09-24 (config/tasks.kindFilter),
+    // so this only makes the stored row say what the code already assumes.
+    if (!t.kind) {
+      set.kind = KIND_TASK;
+      stats.kindSet += 1;
     }
 
     // 3. requiresApproval

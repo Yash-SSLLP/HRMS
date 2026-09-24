@@ -2,8 +2,11 @@
  * Asset controller — asset KINDS (Asset: "Laptop", "Phone") and the people who
  * hold one (AssetAssignment: Priya's "MacBook i5", Arjun's "Asus i7, 6GB RAM,
  * 1TB ROM"). HR/Admin create kinds, issue them to any number of employees each
- * with their own details, edit and take items back, keeping the full holding
- * history; employees list what they currently hold.
+ * with their own details — or several kinds to one employee at once, the
+ * employee-wise way in — edit and take items back, keeping the full holding
+ * history; employees list what they currently hold. Both ways of issuing write
+ * the same AssetAssignment rows, so the asset-wise and employee-wise views are
+ * two readings of one register and can never disagree.
  *
  * Reworked 2026-09-23 from one-unit-one-holder. The single-unit
  * `PATCH /:id/assign` endpoint survives only for app builds installed before
@@ -186,6 +189,42 @@ const deleteAsset = asyncHandler(async (req, res) => {
 // ===== Holdings (HR/Admin) =====
 
 /**
+ * One holding row from a request row — the fields both ways of issuing accept,
+ * cleaned the same way. Shared by issueAsset (one asset → many people) and
+ * issueToEmployee (many assets → one person), which is what keeps the two views
+ * in step: they write the very same AssetAssignment rows.
+ * @param {Object} r - the request row
+ * @param {number} i - its index, for "Row 2: …" messages
+ * @param {{assetId: *, userId: *, body: Object, by: *}} ctx
+ * @returns {Object} the document to insert
+ * @throws {Error} with `.status` 400 on a bad date
+ */
+function holdingDoc(r, i, { assetId, userId, body, by }) {
+  const dateIn = r.date || body.date;
+  const when = dateIn ? new Date(dateIn) : new Date();
+  if (Number.isNaN(when.getTime())) {
+    throw Object.assign(new Error(`Row ${i + 1}: that date is not valid.`), { status: 400 });
+  }
+  return {
+    asset: assetId,
+    employee: userId,
+    details: String(r.details || '').trim().slice(0, 300) || undefined,
+    serialNumber: String(r.serialNumber || '').trim().slice(0, 100) || undefined,
+    unitTag: String(r.unitTag || '').trim().slice(0, 60) || undefined,
+    assignedAt: when,
+    assignedBy: by,
+    note: String(r.note ?? body.note ?? '').trim().slice(0, 500) || undefined,
+  };
+}
+
+/** Freshly inserted holdings, populated the way every holding is shown. */
+const populatedHoldings = (created) => AssetAssignment.find({ _id: { $in: created.map((d) => d._id) } })
+  .populate('asset', HOLDING_ASSET_FIELDS)
+  .populate('employee', USER_FIELDS)
+  .sort({ createdAt: 1 })
+  .lean();
+
+/**
  * Issue an asset kind to one or more employees, each with their own item.
  * @route POST /api/assets/:id/assignments  (assets.manage)
  * @param {Object[]} req.body.assignments - [{ userId, details?, serialNumber?,
@@ -220,29 +259,76 @@ const issueAsset = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error('Employee not found');
     }
-    const dateIn = r.date || req.body.date;
-    const when = dateIn ? new Date(dateIn) : new Date();
-    if (Number.isNaN(when.getTime())) {
-      res.status(400);
-      throw new Error(`Row ${i + 1}: that date is not valid.`);
+    try {
+      docs.push(holdingDoc(r, i, { assetId: asset._id, userId, body: req.body, by: req.user._id }));
+    } catch (err) {
+      fail(res, err);
     }
-    docs.push({
-      asset: asset._id,
-      employee: userId,
-      details: String(r.details || '').trim().slice(0, 300) || undefined,
-      serialNumber: String(r.serialNumber || '').trim().slice(0, 100) || undefined,
-      unitTag: String(r.unitTag || '').trim().slice(0, 60) || undefined,
-      assignedAt: when,
-      assignedBy: req.user._id,
-      note: String(r.note ?? req.body.note ?? '').trim().slice(0, 500) || undefined,
-    });
   }
   const created = await AssetAssignment.insertMany(docs);
-  const assignments = await AssetAssignment.find({ _id: { $in: created.map((d) => d._id) } })
-    .populate('asset', HOLDING_ASSET_FIELDS)
-    .populate('employee', USER_FIELDS)
-    .lean();
-  res.status(201).json({ assignments });
+  res.status(201).json({ assignments: await populatedHoldings(created) });
+});
+
+/**
+ * Issue SEVERAL assets to ONE employee at once — a joiner's laptop, phone, SIM
+ * and chair in one go (user request 2026-09-24). The employee-wise twin of
+ * issueAsset above, which issues one asset to many people.
+ *
+ * Both write the same AssetAssignment rows, so there is nothing to keep in sync:
+ * an item issued from either side is on the asset's card, in the employee's
+ * list, in the register and on the employee's own My Assets, the moment it is
+ * saved. The same asset twice (two SIMs) is allowed, as it is from the other side.
+ * @route POST /api/assets/employees/:userId/assignments  (assets.manage)
+ * @param {string} req.params.userId - the employee's User id
+ * @param {Object[]} req.body.assignments - [{ assetId, details?, serialNumber?,
+ *   unitTag?, date?, note? }], one row per item
+ * @param {string} [req.body.date] / [req.body.note] - defaults for every row
+ * @returns {{assignments: Object[]}} (201) with asset + employee populated
+ */
+const issueToEmployee = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const User = require('../models/User');
+  // Company wall first, so another company's employee is indistinguishable from
+  // one who does not exist.
+  if (!userId || (await cannotSeeUser(req, userId)) || !(await User.exists({ _id: userId }))) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const rows = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+  if (!rows.length) {
+    res.status(400);
+    throw new Error('Add at least one asset.');
+  }
+  const kinds = await Asset.find({
+    _id: { $in: [...new Set(rows.map((r) => String(r.assetId || '')).filter(Boolean))] },
+  }).select('name status');
+  const kindById = new Map(kinds.map((k) => [String(k._id), k]));
+
+  const docs = [];
+  for (const [i, r] of rows.entries()) {
+    if (!r.assetId) {
+      res.status(400);
+      throw new Error(`Row ${i + 1}: pick an asset.`);
+    }
+    const kind = kindById.get(String(r.assetId));
+    if (!kind) {
+      res.status(404);
+      throw new Error(`Row ${i + 1}: that asset no longer exists.`);
+    }
+    // Same rule as issuing from the asset's side: people who already hold one
+    // keep it, but a Retired or In-repair kind is not handed out.
+    if (kind.status === 'Retired' || kind.status === 'InRepair') {
+      res.status(400);
+      throw new Error(`Row ${i + 1}: "${kind.name}" is marked ${kind.status === 'Retired' ? 'Retired' : 'In repair'} — change its status before issuing it.`);
+    }
+    try {
+      docs.push(holdingDoc(r, i, { assetId: kind._id, userId, body: req.body, by: req.user._id }));
+    } catch (err) {
+      fail(res, err);
+    }
+  }
+  const created = await AssetAssignment.insertMany(docs);
+  res.status(201).json({ assignments: await populatedHoldings(created) });
 });
 
 /**
@@ -629,7 +715,7 @@ const listAssetPeople = asyncHandler(async (req, res) => {
 
 module.exports = {
   listAssets, createAsset, updateAsset, deleteAsset,
-  issueAsset, updateAssignment, returnAssignment, deleteAssignment, assignAsset,
+  issueAsset, issueToEmployee, updateAssignment, returnAssignment, deleteAssignment, assignAsset,
   listAssignments, listMyAssets, listAssetPeople, ASSET_STATUS,
   listReturnRequests, acceptReturnRequest, rejectReturnRequest, requestReturn, cancelReturnRequest,
 };

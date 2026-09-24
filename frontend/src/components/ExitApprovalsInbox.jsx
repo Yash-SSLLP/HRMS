@@ -124,8 +124,10 @@ export default function ExitApprovalsInbox({ onCount }) {
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (
-                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
+                // Text beside, buttons on the right — also when the reason is
+                // long (see the same row in LeaveApprovalsInbox for why).
+                <li key={r._id} className="py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 sm:flex-1">
                     <div className="text-sm font-medium text-gray-900">
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
@@ -135,7 +137,7 @@ export default function ExitApprovalsInbox({ onCount }) {
                     </div>
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex justify-end gap-2 shrink-0">
                     <button onClick={() => decide(r._id, 'approve')} disabled={busyId === r._id}
                       className="text-xs px-3 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">Approve</button>
                     <button onClick={() => decide(r._id, 'reject')} disabled={busyId === r._id}
@@ -155,8 +157,8 @@ export default function ExitApprovalsInbox({ onCount }) {
           ) : (
             <ul className="divide-y divide-gray-100">
               {others.slice(0, 30).map((r) => (
-                <li key={r._id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
+                <li key={r._id} className="py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
                     <div className="text-sm text-gray-800">
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {meta(r)}</span>

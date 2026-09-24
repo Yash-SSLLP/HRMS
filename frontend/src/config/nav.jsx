@@ -114,7 +114,11 @@ export const adminNav = [
       badge: ['payslipRequest', 'selfPayslip'],
       tabs: [{ id: 'pending', label: 'Needs action' }, { id: 'released', label: 'Released' }] },
     { to: '/admin/salary-structures', label: 'Salary Structures', icon: FiSliders, perm: 'payroll.manage' },
-    { to: '/admin/payroll-run', label: 'Salary Revisions', icon: FiRepeat, perm: 'payroll.manage' },
+    // Wears the salary changes waiting on a CEO/MD/Super Admin — 0 for HR, whose
+    // requests are waiting on somebody else.
+    { to: '/admin/payroll-run', label: 'Salary Revisions', icon: FiRepeat, perm: 'payroll.manage',
+      badge: 'salaryChange',
+      keywords: ['hike', 'hikes', 'increment', 'revise salary', 'ctc', 'salary approval', 'approve salary'] },
     { to: '/admin/loans', label: 'Loans & Advances', icon: FiCreditCard, perm: 'loans.manage', badge: 'loan' },
     { to: '/admin/declarations', label: 'Tax Declarations', icon: FiPercent, perm: 'declarations.manage',
       badge: 'declaration' },
@@ -272,7 +276,7 @@ export const adminNav = [
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
       badge: 'assetReturn',
       keywords: ['asset return', 'return request', 'hand back', 'take back'],
-      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' },
+      tabs: [{ id: 'assets', label: 'By asset' }, { id: 'employees', label: 'By employee' }, { id: 'assignments', label: 'Assignments' },
         { id: 'returns', label: 'Return requests' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [
@@ -479,7 +483,7 @@ export const employeeNav = [
     // this grant (see the nav-count poll there).
     { to: '/employee/assets-manage', label: 'Manage Assets', icon: FiPackage, perm: 'assets.manage',
       badge: 'assetReturn',
-      tabs: [{ id: 'assets', label: 'Assets' }, { id: 'assignments', label: 'Assignments' },
+      tabs: [{ id: 'assets', label: 'By asset' }, { id: 'employees', label: 'By employee' }, { id: 'assignments', label: 'Assignments' },
         { id: 'returns', label: 'Return requests' }] },
   ] },
   { group: 'Communication & Culture', icon: FiVolume2, items: [

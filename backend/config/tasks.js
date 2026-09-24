@@ -624,6 +624,28 @@ function spellingsOf(...targets) {
 }
 
 /**
+ * The value for a `kind` condition in a FILTER — where TASK includes a row
+ * that has no `kind` at all.
+ *
+ * Added 2026-09-24, the sibling of `spellingsOf` for the other field the
+ * rework introduced. `kind` defaults to TASK in the schema, but a default is
+ * applied when a document is HYDRATED, never inside a query — and every row
+ * set before the 2026-09-21 rework has no `kind` (scripts/migrateTasksV3.js
+ * stamps it, and has never been run). So `{ kind: 'TASK' }` matched none of
+ * them: 57 of the 62 live tasks were missing from every list, board, tile and
+ * dashboard, while the Tasks badge, which never filtered on kind, went on
+ * counting them — a red number over an empty page.
+ *
+ * `null` inside `$in` matches a missing field as well as an explicit null.
+ *
+ * @param {string} kind - KIND_TASK or KIND_REQUEST
+ * @returns {string|Object} what to put after `kind:`
+ */
+function kindFilter(kind) {
+  return kind === KIND_REQUEST ? KIND_REQUEST : { $in: [KIND_TASK, null] };
+}
+
+/**
  * An aggregation stage that rewrites `$status` (and, optionally, a nested one)
  * into the CURRENT vocabulary before anything downstream compares it.
  *
@@ -718,6 +740,7 @@ module.exports = {
   UPDATE_KINDS,
   LEGACY_STATUS_MAP,
   spellingsOf,
+  kindFilter,
   normaliseStatusStage,
   normaliseStatus,
 };

@@ -7,9 +7,14 @@
  * on their holding (AssetAssignment) with its own details — Priya's Laptop is a
  * "MacBook i5", Arjun's an "Asus i7, 6GB RAM, 1TB ROM".
  *
- * Three tabs:
- *  - Assets: one card per kind with the people holding one. Issue / Edit /
+ * Four tabs:
+ *  - By asset: one card per kind with the people holding one. Issue / Edit /
  *    Delete on the kind; Edit / Take back / Remove on each holder.
+ *  - By employee (2026-09-24): one card per person with every item they hold,
+ *    and "Assign assets" to hand one person several at once — a joiner's
+ *    laptop, phone and SIM in one go (POST /assets/employees/:userId/assignments).
+ *    It is the same holdings as the tab before it, grouped the other way, so
+ *    the two can never disagree: issue from either side and both show it.
  *  - Assignments: the register (GET /assets/assignments) — who had what, from
  *    when, and in what state it came back.
  *  - Return requests (?tab=returns, where the notification lands): items their
@@ -17,8 +22,10 @@
  *    (it leaves their list); declining needs a reason, which they are told.
  *    A holding with a request waiting also wears a chip and the same two
  *    actions on the other two tabs.
- * Issuing is POST /assets/:id/assignments with one row per person. The legacy
- * PATCH /assets/:id/assign is the mobile app's and is not used here.
+ * Issuing is POST /assets/:id/assignments with one row per person (asset-wise)
+ * or POST /assets/employees/:userId/assignments with one row per item
+ * (employee-wise). The legacy PATCH /assets/:id/assign is the mobile app's and
+ * is not used here.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -60,7 +67,8 @@ const idOf = (v) => String(v?._id || v || '');
 // Serial and sticker read as one quiet line under the item.
 const unitLine = (h) => [h.serialNumber && `S/N ${h.serialNumber}`, h.unitTag && `Tag ${h.unitTag}`].filter(Boolean).join(' · ');
 
-const TABS = [['assets', 'Assets'], ['assignments', 'Assignments'], ['returns', 'Return requests']];
+// `assets` keeps its id (and so every saved ?tab= link) under its new label.
+const TABS = [['assets', 'By asset'], ['employees', 'By employee'], ['assignments', 'Assignments'], ['returns', 'Return requests']];
 const TAB_IDS = TABS.map(([k]) => k);
 
 // A holding whose holder asked to hand it back and nobody has answered yet.
@@ -89,6 +97,8 @@ let rowSeq = 0;
 // `key` is the row's React identity: rows are removable from the middle, and an
 // index key would hand the next row's picker the removed row's open state.
 const blankRow = () => ({ key: `r${++rowSeq}`, userId: '', details: '', serialNumber: '', unitTag: '' });
+// The employee-wise twin: one row per ITEM for a single person.
+const blankItemRow = () => ({ key: `i${++rowSeq}`, assetId: '', details: '', serialNumber: '', unitTag: '' });
 
 const SKELETON = (
   <div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div>
@@ -149,6 +159,13 @@ export default function AdminAssets() {
   const [decide, setDecide] = useState(null); // { mode: 'accept' | 'decline', h, date, note, reason }
   const [modalErr, setModalErr] = useState(''); // edit-item / take-back / accept / decline
   const [saving, setSaving] = useState(false);
+  // Employee-wise: several assets to one person. { userId, person, pickUser, rows, date, note }
+  const [bundle, setBundle] = useState(null);
+  const [bundleErr, setBundleErr] = useState(null); // { msg, row } — row is 0-based, or null
+  // The By employee tab's own search, and whether people holding nothing are listed too.
+  const [peopleQuery, setPeopleQuery] = useState('');
+  const [showEveryone, setShowEveryone] = useState(false);
+  const [openPeople, setOpenPeople] = useState(() => new Set()); // user ids showing every item
 
   // Same latest-wins rule as the register: a take-back and a quick Remove
   // after it start two reloads, and the older one landing last would put the
@@ -516,6 +533,115 @@ export default function AdminAssets() {
     return next;
   });
 
+  // ---- By employee: the same holdings, grouped by the person holding them ----
+  // Built from the kinds already loaded — no second fetch — which is what makes
+  // the two tabs one register read two ways: every write reloads the kinds, so
+  // an item issued from either side is on both at once.
+  const byEmployee = useMemo(() => {
+    const map = new Map();
+    for (const k of assets) {
+      for (const raw of k.holdings || []) {
+        const h = { ...raw, asset: k }; // the modals read h.asset.name
+        const id = idOf(h.employee);
+        if (!map.has(id)) map.set(id, { id, employee: h.employee, items: [] });
+        map.get(id).items.push(h);
+      }
+    }
+    const people = [...map.values()];
+    for (const p of people) p.items.sort((a, b) => new Date(b.assignedAt) - new Date(a.assignedAt));
+    return people.sort((a, b) => personName(a.employee).localeCompare(personName(b.employee)));
+  }, [assets]);
+
+  // Search matches the person OR anything they hold ("macbook" finds who has one).
+  const shownPeople = useMemo(() => {
+    const terms = peopleQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const holders = byEmployee.filter((p) => {
+      if (!terms.length) return true;
+      const hay = [
+        personName(p.employee), p.employee?.email, p.employee?.role,
+        ...p.items.flatMap((h) => [h.asset?.name, h.asset?.category, h.details, h.serialNumber, h.unitTag]),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return terms.every((t) => hay.includes(t));
+    });
+    // People holding nothing, only when asked for — the reason to look is
+    // usually to hand a new joiner their first kit.
+    const idle = !showEveryone ? [] : users
+      .filter((u) => !byEmployee.some((p) => p.id === idOf(u)))
+      .filter((u) => {
+        if (!terms.length) return true;
+        const hay = [personName(u), u.email, u.role].filter(Boolean).join(' ').toLowerCase();
+        return terms.every((t) => hay.includes(t));
+      })
+      .map((u) => ({ id: idOf(u), employee: u, items: [] }));
+    return [...holders, ...idle];
+  }, [byEmployee, users, peopleQuery, showEveryone]);
+
+  const togglePerson = (id) => setOpenPeople((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // `person` is the card's own copy of who it is for, so the title can name
+  // them without depending on the picker's list.
+  const openBundle = (userId, person = null) => {
+    setBundleErr(null);
+    setBundle({ userId: userId || '', person, pickUser: !userId, rows: [blankItemRow()], date: today(), note: '' });
+  };
+  // Any edit invalidates the last error, as on the asset-wise modal.
+  const patchBundle = (patch) => { setBundleErr(null); setBundle((s) => ({ ...s, ...patch })); };
+  const patchItem = (key, patch) => {
+    setBundleErr(null);
+    setBundle((s) => ({ ...s, rows: s.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)) }));
+  };
+  const addItem = () => patchBundle({ rows: [...bundle.rows, blankItemRow()] });
+  const dropItem = (key) => patchBundle({ rows: bundle.rows.filter((r) => r.key !== key) });
+
+  const bundleUser = bundle ? (users.find((u) => idOf(u) === bundle.userId) || bundle.person) : null;
+  // What the chosen person already holds, by kind — a soft hint on a row, since
+  // a second SIM or a spare charger is legitimate.
+  const bundleHeld = useMemo(() => {
+    const m = new Map();
+    const person = bundle ? byEmployee.find((p) => p.id === bundle.userId) : null;
+    for (const h of person?.items || []) {
+      const k = idOf(h.asset);
+      if (!m.has(k)) m.set(k, h);
+    }
+    return m;
+  }, [bundle, byEmployee]);
+
+  const bundleUserKey = bundle?.userId || '';
+  const bundlePersonOptions = useMemo(() => peopleOptionList(
+    users,
+    (u) => `${u.firstName} ${u.lastName} (${u.role})`,
+    { keep: [bundleUserKey], lead: [{ value: '', label: 'Select an employee…' }] },
+  ), [users, bundleUserKey]);
+
+  const submitBundle = async (e) => {
+    e.preventDefault();
+    if (!bundle.userId) { setBundleErr({ msg: 'Pick the employee.', row: null }); return; }
+    const missing = bundle.rows.findIndex((r) => !r.assetId);
+    if (missing >= 0) { setBundleErr({ msg: `Row ${missing + 1}: pick an asset.`, row: missing }); return; }
+    setSaving(true); setBundleErr(null);
+    try {
+      const { data } = await api.post(`/assets/employees/${bundle.userId}/assignments`, {
+        assignments: bundle.rows.map(({ assetId, details, serialNumber, unitTag }) => ({ assetId, details, serialNumber, unitTag })),
+        date: bundle.date,
+        note: bundle.note,
+      });
+      const n = data.assignments?.length || bundle.rows.length;
+      toast.success(`${n} ${n === 1 ? 'asset' : 'assets'} issued to ${personName(bundleUser) || 'the employee'}.`);
+      // Open their card so what was just handed over is on screen.
+      setOpenPeople((s) => new Set(s).add(bundle.userId));
+      setBundle(null);
+      await refreshAfterWrite();
+    } catch (err) {
+      const msg = errMsg(err, 'Could not issue the assets');
+      const m = /^Row (\d+):/.exec(msg);
+      setBundleErr({ msg, row: m ? Number(m[1]) - 1 : null });
+    } finally { setSaving(false); }
+  };
+
   // Register filter — client-side, every word must match somewhere in the row.
   const shownRegister = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -553,7 +679,9 @@ export default function AdminAssets() {
         {updating && <span className="text-xs text-gray-400">Updating…</span>}
         {viewOnly || onReturns ? null : tab === 'assets'
           ? <button onClick={openCreateKind} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ New asset</button>
-          : <button onClick={() => openIssue(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Issue asset</button>}
+          : tab === 'employees'
+            ? <button onClick={() => openBundle(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Assign assets</button>
+            : <button onClick={() => openIssue(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Issue asset</button>}
       </PageHeader>
 
       {/* font-medium sits on the base, not the active branch: a weight that changes
@@ -601,7 +729,7 @@ export default function AdminAssets() {
               return (
                 <section key={k._id} className="bg-white shadow rounded-lg overflow-hidden">
                   <div className="px-4 py-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-gray-100">
-                    <div className="min-w-0">
+                    <div className="min-w-0 grow basis-64">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                         <h3 className="text-base font-semibold text-gray-900 break-words">{k.name}</h3>
                         <span className="text-xs font-mono text-gray-500">{k.assetTag}</span>
@@ -614,7 +742,7 @@ export default function AdminAssets() {
                       {k.notes && <p className="text-xs text-gray-500 mt-1 break-words">{k.notes}</p>}
                     </div>
                     {!viewOnly && (
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                         {isIssuable(k)
                           ? <button onClick={() => openIssue(k)} className="text-emerald-700 hover:underline">Issue</button>
                           : <span className="text-xs text-gray-400">Not issuable while {STATUS_LABEL[k.status].toLowerCase()}</span>}
@@ -684,6 +812,128 @@ export default function AdminAssets() {
             })}
           </div>
         )
+      )}
+
+      {/* ===== By employee: every item each person holds ===== */}
+      {tab === 'employees' && (
+        <>
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between mb-3">
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input type="checkbox" checked={showEveryone} onChange={(e) => setShowEveryone(e.target.checked)} />
+              Show people with no assets
+            </label>
+            <input
+              type="search"
+              value={peopleQuery}
+              onChange={(e) => setPeopleQuery(e.target.value)}
+              placeholder="Search employee, asset, details, serial…"
+              className="w-full sm:w-80 border rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+          {loading ? (
+            <div className="space-y-3">
+              {[0, 1, 2].map((i) => <div key={i} className="bg-white shadow rounded-lg p-4">{SKELETON}</div>)}
+            </div>
+          ) : shownPeople.length === 0 ? (
+            <div className="bg-white shadow rounded-lg px-4 py-10 text-center">
+              <p className="text-sm font-medium text-gray-700">
+                {peopleQuery.trim() ? 'Nobody matches that search' : 'Nobody holds an asset right now'}
+              </p>
+              {!viewOnly && !peopleQuery.trim() && (
+                <>
+                  <p className="text-sm text-gray-500 mt-1">Pick an employee and give them several assets at once — a laptop, a phone and a SIM in one go.</p>
+                  <button onClick={() => openBundle(null)} className="mt-4 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Assign assets</button>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {shownPeople.map((p) => {
+                const open = openPeople.has(p.id);
+                const visible = open ? p.items : p.items.slice(0, HOLDER_PREVIEW);
+                const hidden = p.items.length - visible.length;
+                const askedCount = p.items.filter(isPendingReturn).length;
+                return (
+                  <section key={p.id} className="bg-white shadow rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-gray-100">
+                      <div className="min-w-0 grow basis-64">
+                        <h3 className="text-base font-semibold text-gray-900 break-words">{personName(p.employee)}</h3>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {[
+                            p.employee?.role,
+                            p.items.length ? `${p.items.length} ${p.items.length === 1 ? 'item' : 'items'} held` : 'Holds nothing',
+                            askedCount ? `${askedCount} return requested` : null,
+                          ].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                      {/* Only for somebody the picker offers — an account since
+                          deactivated keeps its card (it still owes the items) but
+                          is not handed more. */}
+                      {!viewOnly && users.some((u) => idOf(u) === p.id) && (
+                        <button onClick={() => openBundle(p.id, p.employee)} className="ml-auto text-emerald-700 hover:underline">
+                          {p.items.length ? 'Assign more' : 'Assign assets'}
+                        </button>
+                      )}
+                    </div>
+
+                    {p.items.length === 0 ? (
+                      <p className="px-4 py-3 text-sm text-gray-500">No assets issued.</p>
+                    ) : (
+                      <>
+                        <ul className="divide-y divide-gray-100">
+                          {visible.map((h) => {
+                            const unit = unitLine(h);
+                            const asked = isPendingReturn(h);
+                            return (
+                              <li key={h._id} className="px-4 py-3">
+                                <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:gap-4">
+                                  {/* Same columns as a holder row on By asset, with
+                                      the asset where the person was. */}
+                                  <div className="flex items-baseline justify-between gap-3 md:block md:w-48 md:shrink-0 min-w-0">
+                                    <div className="min-w-0">
+                                      <div className="text-sm font-medium text-gray-800 truncate">{h.asset?.name || 'Asset'}</div>
+                                      <div className="hidden md:block text-xs text-gray-500 font-mono truncate">
+                                        {h.asset?.assetTag}{h.asset?.category ? ` · ${h.asset.category}` : ''}
+                                      </div>
+                                    </div>
+                                    <div className="shrink-0 text-xs text-gray-500 md:mt-0.5">Issued {fmtDate(h.assignedAt)}</div>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    {h.details
+                                      ? <div className="text-sm font-semibold text-gray-900 break-words">{h.details}</div>
+                                      : <div className="text-sm italic text-gray-400">No details recorded</div>}
+                                    {unit && <div className="text-xs font-mono text-gray-500 mt-0.5 break-words">{unit}</div>}
+                                    {h.note && <div className="text-xs text-gray-500 mt-0.5 break-words">{h.note}</div>}
+                                    {asked && <div className="mt-1"><ReturnChip rr={h.returnRequest} /></div>}
+                                  </div>
+                                  {!viewOnly && (
+                                    <div className="flex flex-wrap items-center gap-2 md:justify-end md:shrink-0">
+                                      {asked && decisionButtons(h)}
+                                      <button onClick={() => openItemEdit(h)} className="text-blue-600 hover:underline">Edit</button>
+                                      {!asked && <button onClick={() => openTakeBack(h)} className="text-amber-700 hover:underline">Take back</button>}
+                                      <button onClick={() => removeHolding(h)} className="text-red-600 hover:underline">Remove</button>
+                                    </div>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {p.items.length > HOLDER_PREVIEW && (
+                          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50">
+                            <button onClick={() => togglePerson(p.id)} className="text-blue-600 hover:underline">
+                              {open ? 'Show fewer' : `Show all ${p.items.length} (${hidden} more)`}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* ===== Assignment register (who has / had what, and when) ===== */}
@@ -1097,6 +1347,122 @@ export default function AdminAssets() {
                 <button type="button" onClick={() => setIssue(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
                   {saving ? 'Issuing…' : issue.rows.length > 1 ? `Issue to ${issue.rows.length} people` : 'Issue'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Several assets to one person, each with their own item ===== */}
+      {bundle && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
+            <h2 className="card-title mb-1">
+              {bundle.pickUser || !bundleUser ? 'Assign assets to an employee' : `Assign assets to ${personName(bundleUser)}`}
+            </h2>
+            <p className="text-xs text-gray-500 mb-4">
+              One row per item, each with what they actually get. Every item also shows on its asset’s card — it is the same record.
+            </p>
+            <form onSubmit={submitBundle} className="space-y-4">
+              {bundle.pickUser && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Employee *</label>
+                  <SearchableSelect
+                    required
+                    value={bundle.userId}
+                    onChange={(e) => patchBundle({ userId: e.target.value })}
+                    options={bundlePersonOptions}
+                    className="block w-full border rounded-lg px-3 py-2 text-sm"
+                  />
+                  {users.length === 0 && <p className="text-xs text-amber-700 mt-1">The employee list did not load — reload the page to pick someone.</p>}
+                  {bundle.userId && bundleHeld.size > 0 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Already holds {[...bundleHeld.values()].map((h) => h.asset?.name).filter(Boolean).join(', ')}.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {bundle.rows.map((r, i) => {
+                  const twinAt = r.assetId ? bundle.rows.findIndex((o, j) => j < i && o.assetId === r.assetId) : -1;
+                  const already = r.assetId ? bundleHeld.get(r.assetId) : null;
+                  const flagged = bundleErr?.row === i;
+                  return (
+                    // `border` on the base in both states — an error only recolours it.
+                    <div key={r.key} className={`rounded-lg border p-3 ${flagged ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-xs font-medium text-gray-500">Item {i + 1}</span>
+                        {bundle.rows.length > 1 && (
+                          <button type="button" onClick={() => dropItem(r.key)} className="text-red-600 hover:underline">Remove</button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="min-w-0">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Asset *</label>
+                          <SearchableSelect
+                            required
+                            value={r.assetId}
+                            onChange={(e) => patchItem(r.key, { assetId: e.target.value })}
+                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                          >
+                            <option value="">Select an asset…</option>
+                            {issuableKinds.map((k) => (
+                              <option key={k._id} value={k._id}>{k.name} · {k.assetTag}</option>
+                            ))}
+                          </SearchableSelect>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Details</label>
+                          <input
+                            value={r.details}
+                            onChange={(e) => patchItem(r.key, { details: e.target.value })}
+                            maxLength={300}
+                            placeholder="e.g. MacBook i5 / Samsung A15"
+                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Serial no. (optional)</label>
+                          <input value={r.serialNumber} maxLength={100} onChange={(e) => patchItem(r.key, { serialNumber: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Sticker / tag (optional)</label>
+                          <input value={r.unitTag} maxLength={60} onChange={(e) => patchItem(r.key, { unitTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+                        </div>
+                      </div>
+                      {twinAt >= 0 && <p className="text-xs text-amber-700 mt-2">Also picked as item {twinAt + 1} — they will get two.</p>}
+                      {twinAt < 0 && already && (
+                        <p className="text-xs text-amber-700 mt-2">
+                          Already holds one{already.details ? ` — ${already.details}` : ''}. This adds another.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+                <button type="button" onClick={addItem} className="text-blue-600 hover:underline">+ Add another asset</button>
+                {issuableKinds.length === 0 && (
+                  <p className="text-xs text-amber-700">Nothing can be issued yet — create an asset on the By asset tab first (one In repair or Retired has to be set back to Available).</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Issue date</label>
+                  <input type="date" required value={bundle.date} onChange={(e) => patchBundle({ date: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional, for every item)</label>
+                  <input value={bundle.note} maxLength={500} onChange={(e) => patchBundle({ note: e.target.value })} placeholder="e.g. joining kit" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                </div>
+              </div>
+
+              {bundleErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{bundleErr.msg}</div>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setBundle(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {saving ? 'Issuing…' : bundle.rows.length > 1 ? `Issue ${bundle.rows.length} assets` : 'Issue'}
                 </button>
               </div>
             </form>

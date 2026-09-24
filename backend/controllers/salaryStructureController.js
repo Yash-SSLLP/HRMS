@@ -14,6 +14,10 @@ const { squash, normalizeCode } = require('../utils/loginIdentity');
 const {
   COMPONENTS, writeWorkbook, parseWorkbook, monthlyFromComponents,
 } = require('../services/salaryStructureExcel');
+// Once saved, a salary changes only with a CEO/MD's approval — and a template
+// people are paid on IS their salary. See services/salaryChanges.js.
+const salaryChanges = require('../services/salaryChanges');
+const SalaryChangeRequest = require('../models/SalaryChangeRequest');
 
 /**
  * The most a component total may exceed 100 and still count as 100.
@@ -87,6 +91,13 @@ const createStructure = asyncHandler(async (req, res) => {
  * @returns {{structure: Object}} the updated structure
  */
 // PUT /api/salary-structures/:id
+//
+// NEW PERCENTAGES ON A STRUCTURE PEOPLE ARE PAID ON are, from an HR, a request
+// for a CEO/MD to approve: moving Basic from 60% to 40% changes the pay of
+// everyone on it as surely as changing their CTC would. The name, description
+// and Active flag pay nobody anything and still save at once; a structure
+// nobody is on yet is a draft, and HR may shape it freely.
+// Answers `pendingApproval: true` (+ `request`) when the percentages were held.
 const updateStructure = asyncHandler(async (req, res) => {
   const structure = await SalaryStructure.findById(req.params.id);
   if (!structure) {
@@ -104,9 +115,23 @@ const updateStructure = asyncHandler(async (req, res) => {
 
   // Prevent clients from overwriting the original creator
   delete req.body.createdBy;
+
+  let request = null;
+  const wanted = req.body.components ? salaryChanges.componentsOf(req.body.components) : null;
+  if (wanted && !salaryChanges.sameComponents(wanted, salaryChanges.componentsOf(structure))
+      && !salaryChanges.writesSalaryDirectly(req.user)) {
+    const { locked, holders } = await salaryChanges.structureLock(structure._id);
+    if (locked) {
+      request = await salaryChanges.raiseStructureChange(req, structure, wanted, holders, { reason: req.body.reason });
+      delete req.body.components;
+    }
+  }
+  delete req.body.reason;
   Object.assign(structure, req.body);
   await structure.save();
-  res.json({ structure });
+  if (!request) return res.json({ structure });
+  const full = await salaryChanges.populated(SalaryChangeRequest.findById(request._id)).lean();
+  res.status(202).json({ structure, pendingApproval: true, request: salaryChanges.shapeForViewer(req, full) });
 });
 
 /**
@@ -121,6 +146,19 @@ const deleteStructure = asyncHandler(async (req, res) => {
   if (!structure) {
     res.status(404);
     throw new Error('Salary structure not found');
+  }
+  // Deleting a structure people are paid on leaves them with no salary basis at
+  // all — the next run pays them ₹0. From an HR that is the one salary change
+  // with nothing to approve, so it is refused while anybody is on it (or a
+  // waiting request would put somebody on it). Move them off it first.
+  if (!salaryChanges.writesSalaryDirectly(req.user)) {
+    const { locked, holders } = await salaryChanges.structureLock(structure._id);
+    if (locked) {
+      res.status(409);
+      throw new Error(holders
+        ? `${holders} ${holders === 1 ? 'employee is' : 'employees are'} paid on "${structure.name}", so it cannot be deleted. Move them to another structure first.`
+        : `A salary change waiting for approval moves somebody onto "${structure.name}", so it cannot be deleted until that is decided.`);
+    }
   }
   await structure.deleteOne();
   res.json({ id: req.params.id, deleted: true });
@@ -203,15 +241,31 @@ const assignStructure = asyncHandler(async (req, res) => {
   // Putting a Manager on a salary structure — and with it their CTC — is a
   // change to a Manager's record, so it needs the manager-profile grant.
   await assertCanEditProfileOf(req, profile);
-  profile.salaryStructure = structure._id;
-  if (annualCtc !== undefined && annualCtc !== null && annualCtc !== '') {
-    const ctc = Number(annualCtc);
-    if (!Number.isFinite(ctc) || ctc < 0) {
-      res.status(400);
-      throw new Error('Enter a valid annual CTC');
-    }
-    profile.annualCtc = ctc;
+  // Blank CTC = keep the one they have (the form's "keep current").
+  const keepCtc = annualCtc === undefined || annualCtc === null || annualCtc === '';
+  const cls = salaryChanges.classifySetup(profile, { structure: structure._id, ctc: keepCtc ? undefined : annualCtc });
+  if (!cls.changed) {
+    return res.json({ ok: true, employee: profile._id, annualCtc: profile.annualCtc, unchanged: true });
   }
+  // Setting a salary up applies now; changing a saved one is, from an HR, a
+  // request for a CEO/MD to approve (services/salaryChanges.js).
+  if (cls.editsSaved && !salaryChanges.writesSalaryDirectly(req.user)) {
+    const request = await salaryChanges.raiseSetupChange(req, profile, cls, { reason: req.body.reason });
+    const full = await salaryChanges.populated(SalaryChangeRequest.findById(request._id)).lean();
+    return res.status(202).json({
+      ok: true,
+      pendingApproval: true,
+      employee: profile._id,
+      // What they are still paid on — nothing has changed yet.
+      annualCtc: profile.annualCtc,
+      request: salaryChanges.shapeForViewer(req, full),
+    });
+  }
+  salaryChanges.applySetup(profile, cls, {
+    by: req.user._id,
+    byName: salaryChanges.actorName(req.user),
+    reason: req.body.reason,
+  });
   await profile.save();
   res.json({ ok: true, employee: profile._id, annualCtc: profile.annualCtc });
 });
@@ -368,6 +422,11 @@ const downloadImportTemplate = asyncHandler(async (req, res) => {
  * its Excel row number and reported, so HR fixes those rows and re-uploads.
  * Re-uploading is safe by design — the same sheet twice leaves the same state.
  *
+ * From an HR, only salaries that are not saved yet are set up. A row that would
+ * CHANGE a saved one is listed under `skipped` and not applied: that change
+ * needs a CEO/MD's approval (services/salaryChanges.js). A CEO, MD or Super
+ * Admin's upload applies every row, as it always has.
+ *
  * @route POST /api/salary-structures/import  (payroll.manage, multipart field "file")
  * @returns {{total, createdCount, updatedCount, assignedCount, skippedCount, errorCount,
  *   created, updated, assigned, skipped, errors, notes}}
@@ -440,6 +499,9 @@ const importStructuresXlsx = asyncHandler(async (req, res) => {
   // ordinary copy-paste, and taking the last row silently would quietly pay them
   // whatever that row happened to say — so the second one is refused by name.
   const seen = new Map();
+  // A CEO, MD or Super Admin may change a saved salary from a sheet; an HR may
+  // only set up the ones not saved yet (see the check in the loop).
+  const directWriter = salaryChanges.writesSalaryDirectly(req.user);
 
   const fail = (row, message) => errors.push({
     excelRow: row.excelRow,
@@ -539,6 +601,32 @@ const importStructuresXlsx = asyncHandler(async (req, res) => {
       const currentMatches = !row.structureName
         && !!current?.components
         && paysTheSame(current.components, row, newCtcFor(row));
+
+      // A SAVED SALARY IS NOT A SHEET'S TO CHANGE, from an HR. Once somebody has
+      // a structure or a CTC, changing either waits for a CEO/MD's approval
+      // (services/salaryChanges.js), and an upload is no side door around that —
+      // so the row is reported rather than applied, and nothing is created or
+      // repriced for it. The one such row that still goes through is the one
+      // that changes NOTHING: re-uploading an export has to stay a harmless
+      // no-op. People being set up for the first time import exactly as before.
+      if (!directWriter
+          && (!!current || Number(profile.annualCtc) > 0 || Number(inForceCtc(profile)) > 0)) {
+        const namesCurrent = !row.structureName
+          || (!!current?.name && current.name.trim().toLowerCase() === row.structureName.trim().toLowerCase());
+        const unchanged = namesCurrent
+          && !!current?.components
+          && paysTheSame(current.components, row, newCtcFor(row))
+          && newCtcFor(row) === Number(inForceCtc(profile));
+        if (!unchanged) {
+          skipped.push({
+            excelRow: row.excelRow,
+            name: displayName(profile),
+            employeeCode: profile.employeeCode,
+            reason: 'Salary already saved — a change needs CEO/MD approval, so it was not imported. Raise it from Salary Revisions',
+          });
+          continue;
+        }
+      }
 
       let structure = currentMatches
         ? current

@@ -35,12 +35,17 @@ import { useMemo, useState } from 'react';
 import {
   FiCalendar, FiAlertCircle, FiClock, FiLogOut, FiCheckSquare,
 } from 'react-icons/fi';
+import { TbCurrencyRupee } from 'react-icons/tb';
 
 import LeaveApprovalsInbox from './LeaveApprovalsInbox';
 import ExitApprovalsInbox from './ExitApprovalsInbox';
 import ExitClearanceInbox from './ExitClearanceInbox';
 import RegularizationApprovalsInbox from './RegularizationApprovalsInbox';
 import WorkOnLeaveApprovalsInbox from './WorkOnLeaveApprovalsInbox';
+import SalaryChangeInbox from './SalaryChangeInbox';
+import { useAuthStore } from '../store/authStore';
+import { canApproveSalaryChanges } from '../config/permissions';
+import { useTabParam } from '../hooks/useTabParam';
 
 // One entry per approval type. `tone` drives the icon chip only — a waiting
 // badge always uses the portal accent, so "something needs you" reads the same
@@ -86,6 +91,19 @@ const SECTIONS = [
     tone: 'emerald',
     Inbox: ExitClearanceInbox,
   },
+  // Only for the three who approve salary changes (CEO, MD, Super Admin): once
+  // a salary is saved, an HR's change to it waits here and reaches payroll only
+  // when approved (backend/services/salaryChanges.js). Nobody else has anything
+  // to do in it, so nobody else is shown it.
+  {
+    key: 'salary',
+    title: 'Salary changes',
+    blurb: 'Revisions and salary changes HR has asked for. Nothing reaches payroll until you approve it.',
+    icon: TbCurrencyRupee,
+    tone: 'teal',
+    Inbox: SalaryChangeInbox,
+    visible: canApproveSalaryChanges,
+  },
 ];
 
 // Spelled out rather than built by template literal: Tailwind scans source text
@@ -96,6 +114,7 @@ const TONE = {
   sky: 'bg-sky-50 text-sky-600 border-sky-200',
   rose: 'bg-rose-50 text-rose-600 border-rose-200',
   emerald: 'bg-emerald-50 text-emerald-600 border-emerald-200',
+  teal: 'bg-teal-50 text-teal-700 border-teal-200',
 };
 
 /** The count line under a tab title: skeleton → "All clear" → "N waiting". */
@@ -114,7 +133,14 @@ function TabStatus({ count, active }) {
 }
 
 export default function ApprovalsBoard() {
-  const [openKey, setOpenKey] = useState(SECTIONS[0].key);
+  const user = useAuthStore((s) => s.user);
+  // The approval types this account has a queue in — every one, bar the few
+  // that belong to a role (Salary changes).
+  const sections = useMemo(() => SECTIONS.filter((s) => !s.visible || s.visible(user)), [user]);
+  const sectionKeys = useMemo(() => sections.map((s) => s.key), [sections]);
+  // In the URL (?tab=salary), so a notification can land on the queue it is
+  // about rather than on whichever tab happens to be first.
+  const [openKey, setOpenKey] = useTabParam(sections[0].key, sectionKeys);
   // key -> pending count; `undefined` until that inbox reports in.
   const [counts, setCounts] = useState({});
 
@@ -128,10 +154,10 @@ export default function ApprovalsBoard() {
     return map;
   }, []);
 
-  const reported = SECTIONS.filter((s) => counts[s.key] !== undefined);
+  const reported = sections.filter((s) => counts[s.key] !== undefined);
   const totalPending = reported.reduce((sum, s) => sum + counts[s.key], 0);
-  const allReported = reported.length === SECTIONS.length;
-  const open = SECTIONS.find((s) => s.key === openKey) || SECTIONS[0];
+  const allReported = reported.length === sections.length;
+  const open = sections.find((s) => s.key === openKey) || sections[0];
 
   return (
     <div>
@@ -156,7 +182,7 @@ export default function ApprovalsBoard() {
         // that padding — the badge overhangs freely.
         className="topbar-scroll grid grid-cols-1 gap-2 mb-4 sm:flex sm:items-stretch sm:overflow-x-auto sm:px-2.5 sm:py-2.5 sm:-mx-2.5 sm:-mt-2.5"
       >
-        {SECTIONS.map((s) => {
+        {sections.map((s) => {
           const active = s.key === open.key;
           const n = counts[s.key];
           return (
@@ -224,7 +250,7 @@ export default function ApprovalsBoard() {
             file header. `hidden` is display:none, so nothing is unmounted and
             switching tabs never refetches. */}
         <div className="px-4 sm:px-6 py-5">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <div key={s.key} className={s.key === open.key ? '' : 'hidden'}>
               <s.Inbox onCount={reporters[s.key]} />
             </div>

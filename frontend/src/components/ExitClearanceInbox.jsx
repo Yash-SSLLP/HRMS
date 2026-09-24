@@ -197,7 +197,7 @@ export default function ExitClearanceInbox({ onCount }) {
                       </label>
 
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-gray-500 min-w-0 grow basis-64">
                           {ticked < total
                             ? `${ticked} of ${total} ticked · unticked items keep this section pending`
                             : 'All items ticked · submitting clears this section'}
@@ -213,7 +213,7 @@ export default function ExitClearanceInbox({ onCount }) {
                           type="button"
                           onClick={() => submit(r, s)}
                           disabled={submitting || (!dirty && !!s.submittedAt)}
-                          className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="ml-auto px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {submitting ? 'Submitting…' : 'Submit'}
                         </button>

@@ -1197,8 +1197,8 @@ export default function AdminRecruitment() {
         return (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
             <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl p-5 my-8">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
                   <h3 className="text-lg font-semibold text-gray-900 flex flex-wrap items-center gap-2">
                     <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
                     {c.name}
@@ -1208,7 +1208,7 @@ export default function AdminRecruitment() {
                     {r.decidedAt ? ` · decided ${fmtDateTime(r.decidedAt)}` : ''}
                   </p>
                 </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
+                <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
               </div>
 
               {/* Above the earlier rounds of THIS attempt, because it outranks

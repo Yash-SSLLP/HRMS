@@ -121,13 +121,13 @@ function HeldAssetItem({ holding, canReturn, onReturn }) {
 
   return (
     <div className="bg-white border rounded-lg p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-gray-800 break-words">{holdingTitle(holding)}</p>
           {meta && <p className="text-xs text-gray-500 mt-0.5 break-words">{meta}</p>}
         </div>
         {canReturn && !open && (
-          <button type="button" onClick={() => setOpen(true)} className="text-emerald-700 hover:underline">
+          <button type="button" onClick={() => setOpen(true)} className="shrink-0 text-emerald-700 hover:underline">
             Mark returned
           </button>
         )}
