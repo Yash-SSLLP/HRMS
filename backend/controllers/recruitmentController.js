@@ -1099,8 +1099,12 @@ const myInterviews = asyncHandler(async (req, res) => {
       }
     });
   });
-  // Open rounds first (soonest schedule at the top), decided ones after.
-  const openRank = (i) => (['Pending', 'Scheduled'].includes(i.status) ? 0 : 1);
+  // Open rounds first (soonest schedule at the top), then the ones On Hold,
+  // decided ones after — the order the clients' three sections read in.
+  const openRank = (i) => {
+    if (i.status === 'OnHold') return 1;
+    return ['Cleared', 'Rejected'].includes(i.status) ? 2 : 0;
+  };
   interviews.sort((a, b) =>
     openRank(a) - openRank(b) ||
     new Date(a.scheduledAt || 8640000000000000) - new Date(b.scheduledAt || 8640000000000000)

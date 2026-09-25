@@ -199,7 +199,16 @@ Downloading the PDF works in two steps: you **request** the payslip, and HR **re
 
 ### 7.2 Loans and advances
 
-Request a Salary Advance, Personal Loan, Emergency loan, or Other, giving the principal and a reason. Track it through Pending, Approved, Active, and Closed. HR sets the EMI, tenure and balance; once active, the EMI is deducted from your salary automatically and appears on your payslip as Loan Recovery.
+Ask for an advance by filling in the **Advance Request Form** — the same form as the printed one. Your name, employee ID, designation and department are filled in for you. You enter:
+
+- **Amount requested** — at most three times your monthly salary. The form shows your limit.
+- **Purpose of advance** — chosen from the list HR keeps.
+- **Request date of disbursement** — the day you would like the money.
+- **Repayment start month** and **total repayment months** — the monthly deduction is worked out for you: the amount divided by the months.
+
+Read the terms & conditions and tick the declaration to accept them. The form cannot be submitted without it, and the date and time you accepted are printed on the form. Once it is in, **View form** opens the filled-in form as a PDF to print or keep — HR prints the same form for signing.
+
+Track the request through Pending, Approved, Active, and Closed. HR may adjust the repayment plan when approving; after that the monthly deduction comes off your salary automatically and appears on your payslip as Salary Advance Recovery.
 
 ### 7.3 Tax declaration
 

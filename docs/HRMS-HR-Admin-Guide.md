@@ -170,7 +170,7 @@ The pipeline from job post to converted employee.
 
 [!NOTE] The match is made on the applicant's email address, or on a phone number typed exactly as before. A rejection recorded before this existed has no stored date, so it is dated from when the record last changed and shown as "around" that day.
 
-**Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, a written assessment, timings and a meeting link. You can generate a real meeting link and email a branded invitation with the résumé attached.
+**Interview rounds** are scheduled after shortlisting. Each round carries a status, an assigned interviewer who then sees it under My Interviews, a written assessment, timings and a meeting link. The status is Pending, Scheduled, On Hold, Cleared or Rejected. On Hold pauses a round without deciding it: the interviewer keeps it under an On hold heading in My Interviews, is not reminded about it and does not have it counted as waiting on them until it moves on. You can generate a real meeting link and email a branded invitation with the résumé attached.
 
 **The assessment** is the record of why a round went the way it did. Open a round and it holds a rating per competency (technical skill, communication, problem solving, relevant experience, ownership and culture fit), strengths, concerns for the next round to probe, a hiring recommendation from Strong Hire to No Hire, and the overall remarks. Every round shows whoever opens it what the EARLIER rounds said, so the panel builds on itself instead of starting again each time. Nothing on the form is compulsory: the interviewer records the round with whatever they have entered, and a thin write-up is flagged to them rather than refused.
 
@@ -331,7 +331,9 @@ Worked examples: no leave taken earns two extra days' pay; three days taken mean
 
 Setting a **Manager**'s structure or CTC needs the *Manager profiles* permission (section 1), and nobody sets their own. A CEO or MD limited to certain companies works only on those companies' employees.
 
-**Loans and advances** — approve requests, set the EMI, tenure and disbursement, and record repayments until the balance closes.
+**Loans and advances** — approve requests, set the EMI, tenure and disbursement, and record repayments until the balance closes. Employees ask on the **Advance Request Form**: the amount (at most three times their monthly salary), a purpose from your list, the date they want the money, the repayment start month and number of months, and a tick accepting the terms & conditions. Every loan opens as that form filled in — **Form**, a PDF — to print and sign; its management section fills itself in once the loan is approved.
+
+**Form settings** on the same page is where the purposes of advance and the terms & conditions are written, by HR, the CEO, the MD or the Backend. Nobody can submit a request until at least one purpose exists, and the terms start as the printed form's seven until you change them. A request keeps the purpose and the exact terms it was submitted with, whatever is edited later.
 
 **Tax declarations** — review each Form 12BB and verify or reject it with a note.
 

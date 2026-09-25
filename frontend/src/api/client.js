@@ -115,6 +115,10 @@ const EXEC_WRITE_PATHS = [
   // mode (routes/payrollRoutes.js mounts the decision above the payroll.manage
   // gate) — the request is addressed to them.
   /\/payroll\/salary-changes\/[^/]+\/(approve|reject)(\?|$)/,
+  // THE ADVANCE REQUEST FORM'S purposes and terms. The CEO and MD write them in
+  // either mode — routes/loanRoutes.js names them in requireLoanFormEditor — so
+  // the save must not be refused here first.
+  /\/loans\/form(\?|$)/,
 ];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job

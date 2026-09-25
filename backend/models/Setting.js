@@ -292,6 +292,29 @@ const settingSchema = new mongoose.Schema(
       dailyDigestAt: { type: String, default: '18:00', trim: true },
     },
 
+    // ===== Advance Request Form =====
+    // The two parts of the loan request form the company writes for itself
+    // (config/loanForm.js has the rest of the form). Edited from Admin → Loans &
+    // Advances → Form settings by a SuperAdmin, CEO, MD, or an HR Manager who
+    // holds loans.manage.
+    loanForm: {
+      // The "Purpose of Advance" dropdown, in the order it is shown. Empty until
+      // somebody fills it — which also means nobody can file a request until
+      // then, and both clients say so. A loan stores the words it was filed
+      // under, so removing a purpose never rewrites an old request.
+      purposes: { type: [String], default: [] },
+      // The numbered Terms & Conditions. Only read when `termsCustom` is true;
+      // until then the paper form's own seven (DEFAULT_TERMS) apply. A flag
+      // rather than "empty means default" because an empty list is a legitimate
+      // choice somebody can make.
+      terms: { type: [String], default: [] },
+      termsCustom: { type: Boolean, default: false },
+      // Who last saved either list, and when — shown beside the editor.
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      updatedByName: { type: String, trim: true, default: '' },
+      updatedAt: { type: Date },
+    },
+
     // Letterhead branding, uploaded by a SuperAdmin from Admin → Email & Letter
     // Templates and applied to every generated document (offer, appointment,
     // payslip). Images are GridFS keys, same as User.photo — see services/storage.js.

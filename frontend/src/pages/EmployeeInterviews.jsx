@@ -13,6 +13,10 @@
  * previous panels first is the whole point — a Round 3 interviewer who has seen
  * Rounds 1 and 2 probes what they flagged instead of re-asking their questions.
  *
+ * Three lists: Upcoming (still to be run — the only one counted on the badge),
+ * On hold (paused, so nothing to do until it moves) and Completed (Cleared or
+ * Rejected).
+ *
  * Loads from GET /recruitment/my-interviews, saves via
  * PATCH /recruitment/my-interviews/:candidateId/round, opens the candidate
  * résumé as an auth blob download.
@@ -25,13 +29,17 @@ import PageHeader from '../components/PageHeader';
 import { formatDateTime12 } from '../utils/time';
 import {
   AssessmentForm, AssessmentView, PreviousRounds, PriorRejectionChip, PriorRejections, RoundBadge,
-  ROUND_STATUS_STYLES, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
+  ROUND_STATUS, ROUND_STATUS_STYLES, roundStatusLabel, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
 } from '../components/InterviewAssessment';
 
-const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
 // The two results that close a round — and the two the server will not accept
 // without a written assessment behind them.
 const DECIDED = ['Cleared', 'Rejected'];
+// Paused: not decided, but nothing to do on it either — it has its own section,
+// opens closed like a decided round, and is not on anybody's badge.
+const HELD = 'OnHold';
+// A round still to be run: the Upcoming list, and the only kind that opens ready to write.
+const isOpenRound = (s) => !DECIDED.includes(s) && s !== HELD;
 const fmtDateTime = (d) => formatDateTime12(d);
 
 // What the card holds while it is being edited. Split from the server copy so a
@@ -64,10 +72,10 @@ export default function EmployeeInterviews() {
       const d = {};
       data.interviews.forEach((iv) => { d[key(iv)] = draftOf(iv); });
       setDrafts(d);
-      // An interview still to be run opens ready to write; a decided one opens
-      // as the record it now is, and takes a click to reopen.
+      // An interview still to be run opens ready to write; a decided (or held)
+      // one opens as the record it now is, and takes a click to reopen.
       const open = {};
-      data.interviews.forEach((iv) => { if (!DECIDED.includes(iv.status)) open[key(iv)] = true; });
+      data.interviews.forEach((iv) => { if (isOpenRound(iv.status)) open[key(iv)] = true; });
       setOpenKeys(open);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load your interviews');
@@ -90,12 +98,15 @@ export default function EmployeeInterviews() {
       setInterviews((list) => list.map((x) => (key(x) === k ? data.interview : x)));
       setDrafts((p) => ({ ...p, [k]: draftOf(data.interview) }));
       const decided = DECIDED.includes(data.interview.status);
-      if (decided) setOpenKeys((p) => ({ ...p, [k]: false }));
-      // Three different acts, three different confirmations — "recorded" on a
-      // round that was already decided reads as though the verdict just changed.
-      toast.success(decided
-        ? (draft.status !== iv.status ? `Round ${data.interview.status.toLowerCase()}` : 'Assessment updated')
-        : 'Assessment saved');
+      const nowHeld = data.interview.status === HELD;
+      if (decided || nowHeld) setOpenKeys((p) => ({ ...p, [k]: false }));
+      // Different acts, different confirmations — "recorded" on a round that
+      // was already decided reads as though the verdict just changed.
+      const changed = draft.status !== iv.status;
+      toast.success(nowHeld && changed ? 'Round put on hold'
+        : decided
+          ? (changed ? `Round ${data.interview.status.toLowerCase()}` : 'Assessment updated')
+          : 'Assessment saved');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not save');
     } finally { setSavingKey(''); }
@@ -105,8 +116,9 @@ export default function EmployeeInterviews() {
     downloadFile(`/recruitment/my-interviews/${iv.candidateId}/resume`, `${iv.candidateName.replace(/\s+/g, '_')}_resume.pdf`)
       .catch((err) => toast.error(err.response?.data?.message || 'Could not open the résumé'));
 
-  const { open, done } = useMemo(() => ({
-    open: interviews.filter((iv) => !DECIDED.includes(iv.status)),
+  const { open, held, done } = useMemo(() => ({
+    open: interviews.filter((iv) => isOpenRound(iv.status)),
+    held: interviews.filter((iv) => iv.status === HELD),
     done: interviews.filter((iv) => DECIDED.includes(iv.status)),
   }), [interviews]);
 
@@ -120,6 +132,7 @@ export default function EmployeeInterviews() {
     const expanded = !!openKeys[k];
     const saveLabel = savingKey === k ? 'Saving…'
       : decidingNow ? `Record ${draft.status.toLowerCase()}`
+        : draft.status === HELD && iv.status !== HELD ? 'Put on hold'
         : DECIDED.includes(iv.status) ? 'Update assessment'
           : 'Save assessment';
 
@@ -147,7 +160,7 @@ export default function EmployeeInterviews() {
           {/* Only the round's status here: the recommendation and the average
               belong to the write-up below, and printing them in both places
               read as two different facts about the same round. */}
-          <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[iv.status]}`}>{iv.status}</span>
+          <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[iv.status] || ROUND_STATUS_STYLES.Pending}`}>{roundStatusLabel(iv.status)}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 mt-3">
@@ -177,7 +190,7 @@ export default function EmployeeInterviews() {
             a previous rejection is the thing to know before the first question. */}
         {iv.priorRejection && (
           <div className="mt-3">
-            <PriorRejections flag={iv.priorRejection} defaultOpen={!DECIDED.includes(iv.status)} />
+            <PriorRejections flag={iv.priorRejection} defaultOpen={isOpenRound(iv.status)} />
           </div>
         )}
 
@@ -185,7 +198,7 @@ export default function EmployeeInterviews() {
             to be read before the interview, not after the verdict is typed. */}
         {iv.previousRounds?.length > 0 && (
           <div className="mt-3">
-            <PreviousRounds rounds={iv.previousRounds} defaultOpen={!DECIDED.includes(iv.status)} />
+            <PreviousRounds rounds={iv.previousRounds} defaultOpen={isOpenRound(iv.status)} />
           </div>
         )}
 
@@ -236,7 +249,7 @@ export default function EmployeeInterviews() {
                           : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                       }`}
                     >
-                      {s}
+                      {roundStatusLabel(s)}
                     </button>
                   ))}
                 </div>
@@ -296,7 +309,7 @@ export default function EmployeeInterviews() {
         </div>
       ) : (
         <div className="space-y-6">
-          {[['Upcoming', open], ['Completed', done]].map(([title, list]) => list.length > 0 && (
+          {[['Upcoming', open], ['On hold', held], ['Completed', done]].map(([title, list]) => list.length > 0 && (
             <div key={title}>
               <h2 className="text-sm font-semibold text-gray-600 mb-2">{title}</h2>
               <div className="space-y-3">{list.map(card)}</div>

@@ -41,12 +41,19 @@ const REC_STYLES = {
   'No Hire': 'bg-red-100 text-red-700',
 };
 
+// Mirrors ROUND_STATUS in models/Candidate.js, in the order the pickers offer it.
+export const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'Cleared', 'Rejected'];
+
 export const ROUND_STATUS_STYLES = {
   Pending: 'bg-gray-100 text-gray-600',
   Scheduled: 'bg-blue-100 text-blue-700',
+  OnHold: 'bg-amber-100 text-amber-800',
   Cleared: 'bg-green-100 text-green-700',
   Rejected: 'bg-red-100 text-red-700',
 };
+
+/** A round status as people say it — the stored "OnHold" reads "On Hold". */
+export const roundStatusLabel = (s) => (s === 'OnHold' ? 'On Hold' : s || 'Pending');
 
 // The length a write-up is nudged towards. ADVICE, never a gate — nothing here
 // or on the server refuses a shorter one. Mirrors SUGGESTED_REMARK_CHARS in
@@ -108,7 +115,9 @@ export function RoundBadge({ children, className = '' }) {
  * @returns {string}
  */
 export function roundBoxClass(status) {
-  const tone = { Cleared: 'is-cleared', Rejected: 'is-rejected', Scheduled: 'is-scheduled' }[status] || 'is-pending';
+  const tone = {
+    Cleared: 'is-cleared', Rejected: 'is-rejected', Scheduled: 'is-scheduled', OnHold: 'is-onhold',
+  }[status] || 'is-pending';
   return `round-box ${tone}`;
 }
 
@@ -454,7 +463,7 @@ export function PriorRejections({ flag, defaultOpen = false, className = '' }) {
                           <RoundBadge>{r.label || `Round ${r.index + 1}`}</RoundBadge>
                           {r.interviewerName || r.decidedByName || 'Interviewer not recorded'}
                         </span>
-                        <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>{r.status}</span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>{roundStatusLabel(r.status)}</span>
                       </div>
                       <AssessmentView round={r} dense />
                     </div>
@@ -507,7 +516,7 @@ export function PreviousRounds({ rounds = [], title = 'What the earlier rounds s
                   </span>
                 </div>
                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded ${ROUND_STATUS_STYLES[r.status] || ROUND_STATUS_STYLES.Pending}`}>
-                  {r.status}
+                  {roundStatusLabel(r.status)}
                 </span>
               </div>
               <AssessmentView round={r} dense />

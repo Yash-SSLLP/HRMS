@@ -41,7 +41,7 @@ import { isExternalAccount, hasPermission } from '../config/permissions';
 import { formatDateTime12 } from '../utils/time';
 import {
   AssessmentForm, AssessmentView, PriorRejectionChip, PriorRejections, RoundBadge,
-  ROUND_STATUS_STYLES, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
+  ROUND_STATUS_STYLES, roundStatusLabel, assessmentOf, hasAssessment, SUGGESTED_REMARK_CHARS,
 } from '../components/InterviewAssessment';
 
 // The ids are the server's (consultancyController sectionOf); the labels are
@@ -411,7 +411,7 @@ export default function ConsultancyCandidates() {
                   <div key={x.index} className="border border-gray-200 rounded-lg p-2.5 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-medium text-gray-800">{x.label}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${ROUND_STATUS_STYLES[x.status] || ROUND_STATUS_STYLES.Pending}`}>{x.status}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${ROUND_STATUS_STYLES[x.status] || ROUND_STATUS_STYLES.Pending}`}>{roundStatusLabel(x.status)}</span>
                     </div>
                     <div className="text-[11px] text-gray-500 mt-1">
                       {x.scheduledAt ? formatDateTime12(x.scheduledAt) : (open ? 'Not scheduled yet' : 'Not dated')}

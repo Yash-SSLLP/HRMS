@@ -5,8 +5,11 @@ const mongoose = require('mongoose');
 // letters, onboarding, and finally conversion into a User + EmployeeProfile.
 // `stage` is the ordered pipeline position; Hired/Rejected are terminal.
 const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
-// Per interview-round outcome: Pending -> not yet set; Scheduled -> slot booked; Cleared -> passed; Rejected -> failed.
-const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
+// Per interview-round outcome: Pending -> not yet set; Scheduled -> slot booked;
+// OnHold -> paused, neither passed nor failed (shown as "On Hold": the round
+// waits on something — the candidate, the panel, the opening — and nobody is
+// asked to act on it meanwhile); Cleared -> passed; Rejected -> failed.
+const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'Cleared', 'Rejected'];
 const NUM_ROUNDS = 4;
 
 // ===== The written assessment behind a round's verdict =====

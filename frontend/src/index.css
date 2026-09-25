@@ -572,6 +572,10 @@ a.plain-link:hover { text-decoration: underline; }
   border-color: color-mix(in srgb, #2563eb 38%, var(--border));
   border-left-color: #3b82f6;
 }
+.round-box.is-onhold {
+  border-color: color-mix(in srgb, #d97706 40%, var(--border));
+  border-left-color: #f59e0b;
+}
 .round-box.is-pending {
   border-left-color: #9ca3af;
 }

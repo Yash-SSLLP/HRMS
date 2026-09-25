@@ -25,6 +25,7 @@ import {
   AssessmentForm, AssessmentView, PreviousRounds, RecommendationChip,
   PriorRejectionChip, PriorRejections, RoundBadge,
   assessmentOf, hasAssessment, averageRating,
+  ROUND_STATUS, ROUND_STATUS_STYLES as ROUND_STYLES, roundStatusLabel,
 } from '../components/InterviewAssessment';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
@@ -157,13 +158,6 @@ const lastInterviewDate = (candidate) => {
   const cleared = dated.filter((r) => r.status === 'Cleared');
   const pool = cleared.length ? cleared : dated;
   return toDateInput(pool.reduce((a, b) => (new Date(b.at) > new Date(a.at) ? b : a)).at);
-};
-const ROUND_STATUS = ['Pending', 'Scheduled', 'Cleared', 'Rejected'];
-const ROUND_STYLES = {
-  Pending: 'bg-gray-100 text-gray-600',
-  Scheduled: 'bg-blue-100 text-blue-700',
-  Cleared: 'bg-green-100 text-green-700',
-  Rejected: 'bg-red-100 text-red-700',
 };
 // `locations` is the list of places the opening is hiring for (Job.locations);
 // the legacy single `location` is not in the form at all any more — the server
@@ -393,6 +387,7 @@ export default function AdminRecruitment() {
 
   // ----- Shortlist / reject a job's applicants from a modal -----
   const [jobCandJob, setJobCandJob] = useState(null);   // the job whose candidates are shown
+  const [jobCandTab, setJobCandTab] = useState('new');   // 'new' | 'rejected'
   const [jobCands, setJobCands] = useState([]);
   const [jobCandsLoading, setJobCandsLoading] = useState(false);
 
@@ -410,6 +405,7 @@ export default function AdminRecruitment() {
 
   const openJobCandidates = (job) => {
     setJobCandJob(job);
+    setJobCandTab('new');
     setJobCands([]);
     fetchJobCands(job._id);
   };
@@ -762,6 +758,13 @@ export default function AdminRecruitment() {
   // A consultancy's candidate joins only once the agency has SHORTLISTED them
   // at Round 1 — before that there is nothing here for HR to schedule, and a
   // Round 1 rejection is the agency's call (both live on Consultancy Candidates).
+  // The applicants window's two tabs (user ask 2026-09-24): the NEW applicants
+  // still waiting on a yes or no, and the ones already REJECTED — kept reachable
+  // for a "Shortlist instead", but never mixed in with the decisions still to
+  // make. Rejecting a new applicant moves them across; nothing is refetched.
+  const newApplicants = jobCands.filter((c) => c.stage === 'Applied');
+  const rejectedApplicants = jobCands.filter((c) => c.stage === 'Rejected');
+
   const shortlistedCandidates = candidates.filter((c) => c.stage !== 'Applied' && c.stage !== 'Rejected'
     && !(c.consultancy?.user && c.rounds?.[0]?.status !== 'Cleared'));
 
@@ -999,7 +1002,7 @@ export default function AdminRecruitment() {
                             <div className="flex items-center justify-between mb-2">
                               <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
                               <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>
-                                {r.status === 'Cleared' ? 'Shortlisted' : r.status}
+                                {r.status === 'Cleared' ? 'Shortlisted' : roundStatusLabel(r.status)}
                               </span>
                             </div>
                             <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-700 mb-2">
@@ -1039,7 +1042,7 @@ export default function AdminRecruitment() {
                           <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
                             <div className="flex items-center justify-between mb-2">
                               <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
-                              <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
+                              <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{roundStatusLabel(r.status)}</span>
                             </div>
                             <select
                               value={r.status}
@@ -1047,7 +1050,7 @@ export default function AdminRecruitment() {
                               disabled={viewOnly}
                               className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2 disabled:bg-gray-50 disabled:text-gray-500"
                             >
-                              {ROUND_STATUS.map((s) => <option key={s}>{s}</option>)}
+                              {ROUND_STATUS.map((s) => <option key={s} value={s}>{roundStatusLabel(s)}</option>)}
                             </select>
                             {/* Scoped to the job's department by default, with
                                 search and a one-click widen to everyone. */}
@@ -1156,7 +1159,7 @@ export default function AdminRecruitment() {
                             </div>
                             {/* Audit trail: who last changed the status */}
                             {r.decidedByName && (
-                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${h.status} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
+                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${roundStatusLabel(h.status)} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
                                 Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
                                 {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
                                 {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
@@ -1208,7 +1211,7 @@ export default function AdminRecruitment() {
                     {r.decidedAt ? ` · decided ${fmtDateTime(r.decidedAt)}` : ''}
                   </p>
                 </div>
-                <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{r.status}</span>
+                <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{roundStatusLabel(r.status)}</span>
               </div>
 
               {/* Above the earlier rounds of THIS attempt, because it outranks
@@ -1241,7 +1244,7 @@ export default function AdminRecruitment() {
                   <ul className="space-y-0.5">
                     {r.history.map((h, i) => (
                       <li key={i} className="text-[11px] text-gray-500">
-                        <span className="font-medium text-gray-700">{h.status}</span>
+                        <span className="font-medium text-gray-700">{roundStatusLabel(h.status)}</span>
                         {h.recommendation ? ` · ${h.recommendation}` : ''}
                         {' · '}{h.byName || 'Unknown'}{h.at ? ` · ${fmtDateTime(h.at)}` : ''}
                       </li>
@@ -1640,6 +1643,40 @@ export default function AdminRecruitment() {
                 className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100 text-xl leading-none">×</button>
             </div>
 
+            {/* New or Rejected, one list at a time — the tab strip the approval
+                inboxes use (LeaveApprovalsInbox's tabBtn). Outside the scrolling
+                body, so it stays put while a long list scrolls under it. */}
+            <div className="px-5 pt-4">
+              <div className="flex sm:inline-flex items-center gap-1 p-1 rounded-xl bg-gray-100 border border-gray-200">
+                {[['new', 'New applicants', newApplicants.length], ['rejected', 'Rejected', rejectedApplicants.length]].map(([key, label, count]) => {
+                  const on = jobCandTab === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setJobCandTab(key)}
+                      aria-pressed={on}
+                      className={`inline-flex flex-auto justify-center sm:flex-initial sm:justify-start items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                        on
+                          ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+                          : 'text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      {label}
+                      {/* A dash until the list has arrived: a 0 would read as "nobody". */}
+                      <span
+                        className={`text-[11px] font-bold leading-none px-1.5 py-0.5 rounded-full tabular-nums ${
+                          on ? 'accent-bg on-accent' : 'bg-gray-200 text-gray-600'
+                        }`}
+                      >
+                        {jobCandsLoading ? '–' : count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* min-h-0: as a flex item this body's min-height resolves to its
                 content height and outranks max-h-[60vh], so on a short viewport
                 it refused to shrink and the panel's hidden overflow clipped the
@@ -1655,12 +1692,19 @@ export default function AdminRecruitment() {
               ) : (() => {
                 // Only candidates still awaiting a decision belong here — once
                 // shortlisted they've moved into the interview process, so drop
-                // them (and everything downstream) from this queue.
-                const pending = jobCands.filter((c) => c.stage === 'Applied' || c.stage === 'Rejected');
-                if (pending.length === 0) {
-                  return <p className="text-sm text-gray-500 text-center py-6">No applicants awaiting a decision.</p>;
+                // them (and everything downstream) from this queue. The tab above
+                // picks which half: the new applicants, or the ones rejected.
+                const list = jobCandTab === 'rejected' ? rejectedApplicants : newApplicants;
+                if (!list.length) {
+                  return (
+                    <p className="text-sm text-gray-500 text-center py-6">
+                      {jobCandTab === 'rejected'
+                        ? 'Nobody has been rejected for this opening.'
+                        : 'No new applicants waiting for a decision.'}
+                    </p>
+                  );
                 }
-                return pending.map((c) => (
+                return list.map((c) => (
                   <div key={c._id} className="border border-gray-100 rounded-lg p-3">
                     {/* Stacked on a phone: the three buttons beside the text
                         left the applicant's name ~30px to live in. */}

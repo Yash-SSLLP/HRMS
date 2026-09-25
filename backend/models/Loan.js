@@ -24,6 +24,42 @@ const loanSchema = new mongoose.Schema(
     balance: { type: Number, default: 0, min: 0 }, // outstanding amount still to be recovered
     status: { type: String, enum: LOAN_STATUS, default: 'Pending', index: true },
     reason: { type: String, trim: true },
+
+    // ----- The Advance Request Form (config/loanForm.js) -----
+    // "Purpose of Advance", chosen from the list HR keeps (Setting.loanForm).
+    // The WORDS are stored, not a reference, so trimming the list later never
+    // changes what an old request says it was for. An employee's request also
+    // copies it into `reason`, which older screens still read.
+    purpose: { type: String, trim: true },
+    // "Request Date of disbursement" — the day the employee asked to be paid.
+    // An IST calendar day as 'YYYY-MM-DD' rather than a Date, for the same
+    // reason recoveryStart* is a pair of numbers: there is no timezone to slip
+    // it onto the day before. (disbursedOn is when it was actually paid.)
+    requestedDisbursementOn: { type: String, match: /^\d{4}-\d{2}-\d{2}$/ },
+    // The form's Employee Details, as they stood when it was filled in. A form
+    // is a record: a later promotion must not rewrite the one already signed.
+    // Absent on loans older than the form — the PDF reads the profile then.
+    applicant: {
+      type: new mongoose.Schema({
+        name: { type: String, trim: true },
+        employeeCode: { type: String, trim: true },
+        designation: { type: String, trim: true },
+        department: { type: String, trim: true },
+      }, { _id: false }),
+      default: undefined,
+    },
+    // The terms the employee ticked, word for word, and when. Present only when
+    // the employee filed the form themselves — a loan HR opened on somebody's
+    // behalf was never accepted online, so its PDF leaves the declaration for
+    // a signature on paper.
+    acceptance: {
+      type: new mongoose.Schema({
+        acceptedAt: { type: Date, required: true },
+        terms: { type: [String], default: [] },
+        declaration: { type: String },
+      }, { _id: false }),
+      default: undefined,
+    },
     disbursedOn: Date,
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewNote: { type: String },

@@ -657,11 +657,13 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     // chain does not put somebody else's interview in your diary.
     //
     // `$nin` rather than `$in: ['Pending','Scheduled']`, to match the page
-    // exactly (EmployeeInterviews splits on DECIDED = Cleared|Rejected). A round
-    // whose status was never set is shown there as Pending, so it has to be
-    // counted here too — `$in` would silently miss it.
+    // exactly (EmployeeInterviews lists as Upcoming whatever is neither decided
+    // — Cleared|Rejected — nor On Hold). A round whose status was never set is
+    // shown there as Pending, so it has to be counted here too — `$in` would
+    // silently miss it. An On Hold round is paused: nobody is asked to act on
+    // it, so it is not a number on anybody's badge.
     Candidate.countDocuments({
-      rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected'] } } },
+      rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected', 'OnHold'] } } },
     }),
     // Tasks on this person right now, plus submissions waiting on their word.
     //

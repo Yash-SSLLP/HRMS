@@ -27,6 +27,36 @@ export async function downloadFile(url, suggestedName) {
 }
 
 /**
+ * Fetch a protected PDF and open it in a new tab, where it can be read, printed
+ * or saved. Bearer token attached by the axios interceptor, as everywhere.
+ *
+ * A refusal comes back as a Blob too (responseType is fixed before the status
+ * is known), so the server's JSON message is read back out of it — that is the
+ * sentence worth showing, not "Request failed with status code 404".
+ * @param {string} url - API path, e.g. `/loans/me/<id>/form.pdf`
+ * @param {string} [fallbackMessage] - shown when the server said nothing useful
+ * @throws {Error} carrying the server's message
+ */
+export async function openProtectedPdf(url, fallbackMessage = 'Could not open the PDF') {
+  let res;
+  try {
+    res = await api.get(url, { responseType: 'blob' });
+  } catch (err) {
+    let msg = fallbackMessage;
+    try {
+      const text = err.response?.data instanceof Blob ? await err.response.data.text() : null;
+      if (text) msg = JSON.parse(text).message || msg;
+    } catch { /* keep the fallback */ }
+    throw new Error(msg);
+  }
+  const blobUrl = URL.createObjectURL(res.data);
+  window.open(blobUrl, '_blank', 'noopener');
+  // Long enough for the new tab to have read it; the Blob is not held for the
+  // life of the page after that.
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+}
+
+/**
  * Convert an already-loaded table into a real .xlsx via the backend and trigger
  * a download. Keeps the column layout on the client while producing a genuine
  * Excel file (no spreadsheet library in the browser bundle).
