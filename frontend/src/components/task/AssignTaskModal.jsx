@@ -8,15 +8,21 @@
  * it is for. Everything else is one tap from the icon row along the bottom —
  * a link, a file, an image, the reminders, the recording.
  *
- * ── THE FORM DECIDES WHAT IT IS MAKING ──────────────────────────────────────
+ * ── ANYBODY, YOURSELF INCLUDED (2026-09-25) ─────────────────────────────────
  *
- * Work goes DOWN the reporting line or ACROSS it; nobody hands work upward. So
- * the people picker marks who may be given a task and who may only be ASKED,
- * and the moment the selection is all seniors the form turns into a request —
- * different wording, no points, a different button. The server decides this for
- * real (services/taskAccess.resolveAssignmentKind); this only makes it visible
- * before the person presses the button, so they are never told no after typing
- * a paragraph.
+ * The user: *"everyone can assign task to anyone"*, *"remove the option for
+ * ask"*, and *"if nobody is selected in the dropdown then it will assign to
+ * that user by default"*. So there is no request mode any more — no "ask only"
+ * people, no form that turns itself into something else — and an empty "Assign
+ * to" box means the task is yours: the server fills it in
+ * (taskController.createTask). The picker opens on the people you are most
+ * likely to want (yourself, your team, your line, your department) and
+ * searches everybody by name, code, designation or department.
+ *
+ * A task that is only yours carries no points and no review step: nobody
+ * scores work they set themselves (services/taskPoints.award), and reviewing
+ * your own submission is a round trip to nowhere. The form hides both rather
+ * than offering switches that could not do anything.
  *
  * ── POINTS ──────────────────────────────────────────────────────────────────
  *
@@ -32,11 +38,11 @@
  * for the same person for the same day, and retyping that four times is the
  * friction the whole screen exists to remove.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
   FiX, FiPlus, FiLink, FiPaperclip, FiImage, FiBell, FiFlag, FiRepeat,
-  FiCalendar, FiAward, FiUsers, FiEye, FiTag, FiSend, FiTrash2, FiCheck, FiSettings,
+  FiCalendar, FiAward, FiUsers, FiEye, FiTag, FiTrash2, FiCheck, FiSettings,
   FiGitBranch,
 } from 'react-icons/fi';
 import { VoiceRecorder } from './VoiceNote';
@@ -92,10 +98,8 @@ export default function AssignTaskModal({
   onCreated,
   meta,
   prefill = null,
-  /** Pre-select one person — used by "ask for help" on a task detail page. */
+  /** Pre-select people — a caller that already knows who it is for. */
   presetAssignees = null,
-  /** Force a request rather than letting the direction rule decide. */
-  forceRequest = false,
   linkedTask = null,
 }) {
   const [form, setForm] = useState(EMPTY);
@@ -149,26 +153,19 @@ export default function AssignTaskModal({
 
   useEffect(() => { setCategories(meta?.categories || []); }, [meta?.categories]);
 
-  // ===== Task or request? =====
-  //
-  // The picker knows who may be assigned to. If EVERY person chosen is somebody
-  // this caller may only ask, the form is making a request — see the docblock.
+  // ===== Whose task is it? =====
   const people = meta?.people || [];
-  const byId = useMemo(() => new Map(people.map((p) => [String(p._id), p])), [people]);
+  // Who is filling this in. `meta.me` from a current server; the row marked
+  // `self` from an older one.
+  const myId = String(meta?.me || people.find((p) => p.relation === 'self')?._id || '');
 
-  const isRequest = useMemo(() => {
-    if (forceRequest) return true;
-    if (!form.assignees.length) return false;
-    return form.assignees.every((id) => byId.get(String(id))?.canAssign === false);
-  }, [forceRequest, form.assignees, byId]);
-
-  // A selection that mixes the two cannot be one row — say so here rather than
-  // letting the server refuse it after everything has been typed.
-  const mixedSelection = useMemo(() => {
-    if (forceRequest || form.assignees.length < 2) return false;
-    const flags = form.assignees.map((id) => byId.get(String(id))?.canAssign !== false);
-    return flags.some(Boolean) && flags.some((f) => !f);
-  }, [forceRequest, form.assignees, byId]);
+  /**
+   * Nobody chosen, or only yourself: it is YOUR task. The server assigns an
+   * empty box to its setter, gives a self-only task no points and completes it
+   * without a review — so the form says so and hides what would not apply.
+   */
+  const selfOnly = form.assignees.length === 0
+    || (form.assignees.length === 1 && String(form.assignees[0]) === myId);
 
   const recurring = form.repeat.frequency !== 'ONCE';
 
@@ -207,11 +204,6 @@ export default function AssignTaskModal({
 
   const submit = useCallback(async () => {
     if (!form.title.trim()) { toast.error('Give the task a title.'); titleRef.current?.focus(); return; }
-    if (!form.assignees.length) { toast.error('Choose who this is for.'); return; }
-    if (mixedSelection) {
-      toast.error('Pick either people you can set work for, or people you want to ask — not both.');
-      return;
-    }
 
     // The pieces are checked here rather than after the task exists: a task
     // created and then refused its split leaves somebody looking at a row they
@@ -221,7 +213,7 @@ export default function AssignTaskModal({
       toast.error('Give every piece a name, or remove the blank one.');
       return;
     }
-    const budget = isRequest ? 0 : Number(form.points) || 0;
+    const budget = selfOnly ? 0 : Number(form.points) || 0;
     const pinned = wanted.reduce(
       (sum, p) => sum + (p.points === '' || p.points === null ? 0 : Math.max(0, Math.round(Number(p.points) || 0))),
       0
@@ -234,15 +226,17 @@ export default function AssignTaskModal({
     setSaving(true);
     try {
       const body = {
-        kind: isRequest ? 'REQUEST' : 'TASK',
+        kind: 'TASK',
         title: form.title.trim(),
         description: form.description.trim(),
+        // Left empty on purpose when nobody was picked: the server assigns it
+        // to whoever set it (the brief's "assign to that user by default").
         assignees: form.assignees,
         loopUsers: form.loopUsers,
         category: form.category,
         priority: form.priority,
         points: budget,
-        requiresApproval: form.requiresApproval !== false,
+        requiresApproval: selfOnly ? false : form.requiresApproval !== false,
         dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : null,
         repeat: form.repeat,
         reminders: form.reminders,
@@ -252,8 +246,8 @@ export default function AssignTaskModal({
       const { task } = await T.createTask(body, { voice, files });
 
       toast.success(
-        isRequest ? 'Request sent.'
-          : recurring ? 'Repeating task set up.'
+        recurring ? 'Repeating task set up.'
+          : selfOnly ? 'Added to your tasks.'
             : 'Task assigned.'
       );
 
@@ -298,7 +292,7 @@ export default function AssignTaskModal({
     } finally {
       setSaving(false);
     }
-  }, [form, isRequest, mixedSelection, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose]);
+  }, [form, selfOnly, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose]);
 
   if (!open) return null;
 
@@ -311,7 +305,7 @@ export default function AssignTaskModal({
         {/* ── Header ─────────────────────────────────────────────── */}
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
           <h2 className="text-base font-semibold text-gray-900">
-            {isRequest ? 'Ask for something' : recurring ? 'Set a repeating task' : 'Assign New Task'}
+            {recurring ? 'Set a repeating task' : 'Assign New Task'}
           </h2>
           <button
             type="button"
@@ -327,14 +321,14 @@ export default function AssignTaskModal({
           {/* ── Title & details ──────────────────────────────────── */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="task-title">
-              {isRequest ? 'What do you need?' : 'Task title'}
+              Task title
             </label>
             <input
               id="task-title"
               ref={titleRef}
               value={form.title}
               onChange={(e) => set({ title: e.target.value })}
-              placeholder={isRequest ? 'e.g. April sales figures' : 'e.g. Create the sales report for tax calculation'}
+              placeholder="e.g. Create the sales report for tax calculation"
               className="min-h-[40px] w-full rounded-xl border border-gray-200 px-3 text-sm"
               maxLength={300}
             />
@@ -352,17 +346,17 @@ export default function AssignTaskModal({
           {/* ── Who, and under what ──────────────────────────────── */}
           <div className="grid gap-3 sm:grid-cols-2">
             <PeoplePicker
-              label={isRequest ? 'Ask' : 'Assign to'}
+              label="Assign to"
               icon={FiUsers}
               people={people}
               value={form.assignees}
               onChange={(ids) => set({ assignees: ids })}
-              // The picker greys the people this caller may only ask, and says
-              // so on the row, rather than hiding them — "why can I not see my
-              // manager in this list" is a worse question than a clear label.
-              markKey="canAssign"
-              markLabel="ask only"
-              placeholder="Choose a teammate…"
+              // "Myself" heads the list, and an empty box means the same thing
+              // — the server assigns it to whoever set it.
+              allowSelf
+              selfId={myId}
+              placeholder="Myself — or search anyone"
+              hint={form.assignees.length ? null : 'Nobody chosen: it will be assigned to you.'}
             />
 
             <div>
@@ -462,8 +456,16 @@ export default function AssignTaskModal({
             })}
           </div>
 
+          {/* ── Your own task: what does not apply, said once ────── */}
+          {selfOnly && (
+            <p className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              This goes on <strong>your own list</strong>. You mark it done yourself — there is no
+              review step, and a task you set yourself earns no points.
+            </p>
+          )}
+
           {/* ── Points ───────────────────────────────────────────── */}
-          {!isRequest && (
+          {!selfOnly && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
                 <FiAward size={12} /> Points
@@ -487,32 +489,32 @@ export default function AssignTaskModal({
           {/* On by default. When it is on, their "Complete" is a SUBMISSION —
               the server coerces it (config/tasks.effectiveTarget) — and the row
               waits in your review queue until you approve it or send it back. */}
-          <label className="flex items-start gap-2 text-xs text-gray-600">
-            <input
-              type="checkbox"
-              checked={form.requiresApproval !== false}
-              onChange={(e) => set({ requiresApproval: e.target.checked })}
-              className="mt-0.5 rounded border-gray-300"
-              style={{ accentColor: 'var(--accent)' }}
-            />
-            <span>
-              {isRequest
-                ? 'I want to see the answer before this is closed off'
-                : 'I want to review this before it is marked done'}
-              <span className="block text-[11px] text-gray-400">
-                {form.requiresApproval !== false
-                  ? 'They hand it in, it waits in your review queue, and you approve it or send it back.'
-                  : 'Their Complete finishes it outright — nothing comes back to you.'}
+          {!selfOnly && (
+            <label className="flex items-start gap-2 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={form.requiresApproval !== false}
+                onChange={(e) => set({ requiresApproval: e.target.checked })}
+                className="mt-0.5 rounded border-gray-300"
+                style={{ accentColor: 'var(--accent)' }}
+              />
+              <span>
+                I want to review this before it is marked done
+                <span className="block text-[11px] text-gray-400">
+                  {form.requiresApproval !== false
+                    ? 'They hand it in, it waits in your review queue, and you approve it or send it back.'
+                    : 'Their Complete finishes it outright — nothing comes back to you.'}
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          )}
 
           {/* ── Delegate it straight away ────────────────────────── */}
           {/* A manager who already knows the three pieces should not have to
               assign the task, find it again and split it. The rows are the same
               ones DelegateModal collects and they are POSTed to /split the
               moment the task has an id — see the submit handler. */}
-          {!isRequest && (
+          {!selfOnly && (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
               <button
                 type="button"
@@ -551,7 +553,7 @@ export default function AssignTaskModal({
                     rows={pieces}
                     onRows={setPieces}
                     budget={Number(form.points) || 0}
-                    people={people.filter((p) => p.canAssign !== false)}
+                    people={people}
                     defaultOpenTo={(meta?.team?.direct || []).map(String)}
                     maxPieces={meta?.maxPieces || 50}
                     remainderLabel="stays on the task"
@@ -753,20 +755,6 @@ export default function AssignTaskModal({
               onClose={() => setShowReminders(false)}
             />
           )}
-
-          {/* ── What the form has worked out ─────────────────────── */}
-          {mixedSelection && (
-            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              You have picked people you can set work for AND people you can only ask.
-              That cannot be one row — raise the upward ones as a separate request.
-            </p>
-          )}
-          {isRequest && !mixedSelection && (
-            <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-              This goes up the line, so it is sent as a <strong>request</strong> rather than a task —
-              it is not scored and carries no points.
-            </p>
-          )}
         </div>
 
         {/* ── Footer ───────────────────────────────────────────── */}
@@ -793,11 +781,11 @@ export default function AssignTaskModal({
             <button
               type="button"
               onClick={submit}
-              disabled={saving || mixedSelection}
+              disabled={saving}
               className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 min-h-[40px]"
             >
-              {isRequest ? <FiSend size={14} /> : <FiCheck size={14} />}
-              {saving ? 'Saving…' : isRequest ? 'Send request' : 'Assign task'}
+              <FiCheck size={14} />
+              {saving ? 'Saving…' : selfOnly ? 'Add to my tasks' : 'Assign task'}
             </button>
           </div>
         </div>

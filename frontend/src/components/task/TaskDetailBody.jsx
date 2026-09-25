@@ -72,7 +72,6 @@ import ChildTaskList from './ChildTaskList';
 import ExtensionModal from './ExtensionModal';
 import DelegateModal from './DelegateModal';
 import TransferModal from './TransferModal';
-import AssignTaskModal from './AssignTaskModal';
 import { accentFor, accentStyle, priorityColor, tintStyle, useIsDark } from './taskColors';
 import * as T from '../../api/tasks';
 import {
@@ -212,7 +211,6 @@ export default function TaskDetailBody({
   const [extension, setExtension] = useState(null);   // { mode, requestId }
   const [delegating, setDelegating] = useState(false);
   const [transferring, setTransferring] = useState(false);
-  const [asking, setAsking] = useState(false);
 
   const noteRef = useRef(null);
   const titleRef = useRef(null);
@@ -1244,17 +1242,9 @@ export default function TaskDetailBody({
           </section>
         )}
 
-        {/* Anybody on a task may raise a REQUEST about it — the "I need X to
-            finish this" case the direction rule exists to serve. */}
-        {!viewOnly && (
-          <button
-            type="button"
-            onClick={() => setAsking(true)}
-            className={`${BTN} ${TONES.ghost} w-full`}
-          >
-            <FiCornerUpRight size={14} /> Ask somebody for help with this
-          </button>
-        )}
+        {/* "Ask somebody for help with this" lived here until 2026-09-25, when
+            the user removed asking altogether ("remove the option for ask") —
+            anybody may now simply be given a task, or this one delegated. */}
       </div>
 
       {/* ══════════════ RIGHT: the talk ═════════════════════════════════ */}
@@ -1486,19 +1476,6 @@ export default function TaskDetailBody({
         task={task}
         meta={meta}
         onDone={refresh}
-      />
-
-      <AssignTaskModal
-        open={asking}
-        onClose={() => setAsking(false)}
-        /* Reload rather than announce: AssignTaskModal has already said
-           "Request sent." by the time it calls back (it toasts before
-           onCreated), and a second identical toast read as two requests. */
-        onCreated={refresh}
-        meta={meta}
-        forceRequest
-        linkedTask={task._id}
-        prefill={{ title: `Need help with: ${task.title}` }}
       />
     </div>
   );

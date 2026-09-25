@@ -256,21 +256,21 @@ export const adminNav = [
     // the page itself decides from GET /tasks/meta (2026-09-21 rework).
     // The separate Task Workflows page went with the workflow builder.
     //
-    // KANBAN TOOK TEMPLATES' PLACE IN THE STRIP (user decision, 2026-09-22).
-    // It is the two-board screen — everything assigned TO me over everything
-    // assigned BY me, four columns each — and it is what people open the module
-    // for, which a tab five along from a template library was not. Templates
-    // did NOT go: they are reached from a button in the page header, because
-    // "Save as template" on a row has to lead somewhere.
+    // SIMPLIFIED 2026-09-25 (user: "it is too much complicated now"). The page
+    // is two piles — Assigned to me / Assigned by me, plus All tasks for
+    // tasks.manage — with a filter, the five figures and a status dropdown on
+    // every row. Kanban and Requests are gone; the report and the template
+    // library are reached from the header. These ids are what `?tab=` accepts.
     { to: '/admin/tasks', label: 'Tasks', icon: FiList,
       badge: 'taskApproval',
       keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'assign', 'delegate',
-        'transfer', 'request', 'overdue', 'kanban', 'board', 'review', 'approve', 'submit',
-        'progress', 'piece', 'pieces', 'subtask', 'template', 'templates', 'recurring',
-        'repeat', 'reminder', 'voice note', 'dashboard', 'points'],
-      tabs: [{ id: 'mine', label: 'My Tasks' }, { id: 'delegated', label: 'Delegated' },
-        { id: 'all', label: 'All Tasks' }, { id: 'requests', label: 'Requests' },
-        { id: 'kanban', label: 'Kanban' }, { id: 'dashboard', label: 'Dashboard' }] },
+        'transfer', 'overdue', 'review', 'approve', 'reject', 'submit', 'completed',
+        'assigned to me', 'assigned by me', 'assign myself', 'progress', 'piece', 'pieces',
+        'subtask', 'template', 'templates', 'recurring', 'repeat', 'reminder', 'voice note',
+        'report', 'dashboard', 'points'],
+      tabs: [{ id: 'mine', label: 'Assigned to me' }, { id: 'delegated', label: 'Assigned by me' },
+        { id: 'all', label: 'All tasks' }, { id: 'report', label: 'Report' },
+        { id: 'templates', label: 'Templates' }] },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
     // Items employees asked to hand back from My Assets, waiting on an answer.
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
@@ -473,7 +473,9 @@ export const employeeNav = [
     // showed nothing, for the same page.
     { to: '/employee/tasks', label: 'Tasks', icon: FiList,
       badge: 'taskApproval',
-      keywords: ['task', 'tasks', 'to do', 'todo', 'my work', 'assignment', 'submit', 'accept', 'overdue', 'deadline'] },
+      keywords: ['task', 'tasks', 'to do', 'todo', 'my work', 'assignment', 'assign', 'submit',
+        'approve', 'reject', 'overdue', 'deadline', 'assigned to me', 'assigned by me', 'assign myself'],
+      tabs: [{ id: 'mine', label: 'Assigned to me' }, { id: 'delegated', label: 'Assigned by me' }] },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     // The register, for holders of the standalone Assets grant with no admin

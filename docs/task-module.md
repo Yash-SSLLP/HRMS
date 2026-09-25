@@ -1,8 +1,46 @@
 # Task Module
 
 Reworked **2026-09-22** (third pass), on top of the 2026-09-21 rework that
-replaced the twelve-status workflow engine of 2026-09-17. The through-line has
-not changed: a task app a business owner can work without being taught.
+replaced the twelve-status workflow engine of 2026-09-17, and **simplified
+2026-09-25** (see the section right below). The through-line has not changed: a
+task app a business owner can work without being taught.
+
+### What the 2026-09-25 pass changed — "it is too much complicated now"
+
+The user sent a sketch of the page they wanted and five rules. Each, and where
+it lives:
+
+| the brief | what it is |
+|---|---|
+| a sketch: two big cards "Assign to me" / "Assign by me", a Filter button, one bar of five figures, the rows with a dropdown on each | `pages/Tasks.jsx` + `TaskPileCards`, `TaskStatBar`, `TaskStatusMenu`; the app's `TasksScreen` + `TaskStatusSheets`. Kanban, the Requests tab and the List/Report switch are gone; Report and Templates are header buttons |
+| *"in that dropdown these status should be there: approve, reject, delegate, transfer, In Review, completed"* | `statusActions(task)` in `utils/taskLifecycle.js` (web) and `utils/taskStatus.js` (app) — the SAME function in both, reading only the server's `can`. Approve/Reject mean accept/decline to the doer and approve/send-back to the assigner |
+| *"the filter should be based on the department, name, task due date, search by name of assignee or assigner, priority"* | the search box matches title/code/category AND `assignees.name`, `assignees.employeeCode`, `createdByName`, `approverName`; the Filter panel holds due date, department, people, priority and the sort. Category and frequency left the panel (the server still answers both) |
+| *"remove the option for ask"* + *"everyone can assign task to anyone"* | `taskAccess.resolveAssignmentKind` now always answers TASK — the direction rule no longer refuses or converts anything (§3). Delegation and pieces follow it |
+| *"show relevant one in the dropdown and we can find other by searching the name or employee code or designation or department"* | `GET /tasks/meta` now carries `employeeCode`, `designation`, `department` on every person, plus `me` and `departments`. Every picker opens on Myself → My team → Their teams → Reporting line → my department, and searches everybody on all four fields |
+| *"ability to assign myself (if nobody is selected … it will assign to that user by default)"* | `createTask` assigns an empty `assignees` to the setter. A self-only task is stored with 0 points and no review step |
+
+**Nobody scores a task they set themselves** (`taskPoints.award`). This was MY
+call, flagged to the user, not part of the brief: the moment assigning yourself
+became one tap, a hundred-point task you set and ticked yourself would have been
+a way to write your own score — and points settle in rupees. The row still
+finishes and counts towards completion; it earns nothing. Reverse it in one
+line if the user disagrees.
+
+**Server additions the new clients use** (old clients ignore them):
+`withScopes=1` on `GET /tasks` returns `scopes: { mine, delegated, all? }` —
+the pile cards' figures in the same request, with the list's filters but NOT the
+clicked figure; `department=` (scope-aware: on "to me" it is the ASSIGNER's
+department, on "by me" the ASSIGNEES', elsewhere either; matched exactly and
+case-insensitively, so "Sales" is not "Sales & Marketing"); `overdue=false`
+(so the Pending figure — which on the new bar is pending + in progress — can be
+clicked and list exactly what it counted). With no `kind` asked for, every row
+is listed, legacy requests included; `scope=requests` still answers for an
+older APK, and the dashboard still asks for TASK explicitly.
+
+**Remarks.** The engine still refuses a silent move. The dropdown asks for a
+remark only where somebody else cannot act without it (Reject → decline or send
+back); elsewhere an empty box sends a default ("Approved.", "Submitted for
+review.", "Marked completed.") so the feed still says what happened.
 
 This is the module's map: what is where, why the shape is what it is, and the
 handful of rules that are load-bearing enough to be worth writing down twice.
@@ -174,16 +212,18 @@ not promote it.
 ### …and on the clients
 
 ```
-frontend/src/pages/Tasks.jsx              the page: tabs, stat tiles, List/Board
+frontend/src/pages/Tasks.jsx              the page: pile cards, search/filter, figures, rows (2026-09-25)
 frontend/src/pages/TaskDetail.jsx         a thin shell around the detail body
-frontend/src/utils/taskLifecycle.js       the shared web vocabulary
+frontend/src/utils/taskLifecycle.js       the shared web vocabulary (+ PILES, STAT_BAR, statusActions)
 frontend/src/components/task/
   taskColors.js        ONE accentFor(task) — prefers the server's `accent`
-  TaskStatTiles.jsx    the five clickable counters
+  TaskPileCards.jsx    "Assigned to me" / "Assigned by me" (+ "All tasks")
+  TaskStatBar.jsx      the five figures as one bar; each is a filter
+  TaskStatusMenu.jsx   the status dropdown on every row
+  TaskActionDialog.jsx the one-line remark a status move asks for
   TaskRow.jsx          one list row, tinted, with its serial
-  TaskBoard.jsx        the four columns
-  TaskCard.jsx         one board card
   TaskDetailBody.jsx   the detail, page- and modal-safe
+  (TaskStatTiles, TaskBoard and TaskCard were deleted 2026-09-25)
   TaskModal.jsx        the modal shell
   SplitTaskModal.jsx   pieces + the point distribution
   ChildTaskList.jsx    the pieces under a parent
@@ -193,16 +233,24 @@ frontend/src/components/task/
    CategoryManager, TaskTemplates, TaskDashboard
 
 mobile/src/api/tasks.js                   every call, one file
-mobile/src/utils/taskStatus.js            the shared app vocabulary
-mobile/src/screens/TasksScreen.js         tiles + list + sort sheet
+mobile/src/utils/taskStatus.js            the shared app vocabulary (+ PILES, statusActions)
+mobile/src/screens/TasksScreen.js         pile cards + search/filter + figures + cards (2026-09-25)
 mobile/src/screens/TaskDetailScreen.js    the can-driven buttons
-mobile/src/screens/AssignTaskScreen.js    the form
-mobile/src/components/…                   the update, split and extension sheets
+mobile/src/screens/AssignTaskScreen.js    the form; people pickers are sheets with a focused search
+mobile/src/components/TaskStatusSheets.js the status button's sheets (the web dropdown's twin)
+mobile/src/components/…                   the update, split, delegate, transfer and extension sheets
 ```
 
 ---
 
-## 3. The direction rule — tasks go down and across, never up
+## 3. The direction rule — RETIRED 2026-09-25
+
+> **Superseded.** The user: *"everyone can assign task to anyone"* and *"remove
+> the option for ask"*. `resolveAssignmentKind` now always returns TASK,
+> delegation and pieces accept anybody, and no client offers "Ask" any more.
+> `directionOf` and the tree walks below are still in the code because the
+> pickers use the reporting tree to decide who to show FIRST. What follows is
+> the rule as it stood, kept for the reasoning.
 
 Work travels DOWN the reporting line or ACROSS it. It does not travel up.
 
@@ -244,6 +292,13 @@ the team dashboard, and removing a category.
 ---
 
 ## 3a. Every person dropdown: your team first, everybody by search
+
+> **2026-09-25:** the empty box now opens on **Myself** (where the form allows
+> it) → My team → Their teams → Reporting line → your own department, and the
+> search matches name, employee code, designation AND department (the meta
+> response carries all three). Nobody is greyed "ask only" — anybody may be
+> given a task. On the phone, opening any of these pickers puts the cursor in
+> the search box with the keyboard up.
 
 The brief: *"anyone can create task but only assign from there branch (team)
 only top to bottom only, and by searching we can find other people too … for all

@@ -9,8 +9,7 @@
  *              delegate                      transfer
  *   answerable  ME — I become the approver    the new person's own approver
  *   updates     I hear about every one        I hear nothing, ever again
- *   direction   down or across only           anywhere — a mistake can point
- *                                             in any direction
+ *   direction   anybody (since 2026-09-25)    anybody
  *   progress    kept                          reset; they did not do it
  *
  * So this modal is deliberately not shaped like the delegate one. It is short,
@@ -19,12 +18,10 @@
  * nothing else to go on), and it asks a `tone: 'warning'` confirm naming both
  * people before it fires.
  *
- * ITS PICKER IS NOT TEAM-RESTRICTED (`teamFirst={false}`). Every other picker in
- * the module opens on your own team, because work travels down or across. This
- * one opens on the whole company, because the assumption that the right person
- * is somewhere under you is exactly what produced the mis-assignment. The
- * server agrees: transferTask is the one operation that skips the direction
- * rule (the company wall still applies).
+ * ITS PICKER IS NOT TEAM-FIRST (`teamFirst={false}`). Every other picker in the
+ * module opens on your own team. This one opens on the whole company, because
+ * the assumption that the right person is somewhere under you is exactly what
+ * produced the mis-assignment (the company wall still applies).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';

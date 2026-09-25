@@ -131,7 +131,7 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   const {
     scope = 'all', range = 'all', from, to,
     category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late,
-    includeSubtasks, parentTask,
+    includeSubtasks, parentTask, department,
     // `overrides` lets a caller pin one parameter without faking a request
     // object. Spreading an Express `req` copies own properties only and quietly
     // loses `user`, which is how the dashboard first lost its company wall.
@@ -140,13 +140,21 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   const filter = await access.visibleFilter(req, scope === 'requests' ? 'all' : scope);
   const and = [filter];
 
-  // A request is its own pile: it never appears among the tasks, because "what
-  // is on my plate" and "what have I asked for" are different questions.
-  // Through kindFilter, so a row set before `kind` existed still counts as the
-  // task it is — see config/tasks.kindFilter.
+  /**
+   * WHICH KIND OF ROW.
+   *
+   * Until 2026-09-25 a request was its own pile and never appeared among the
+   * tasks. Requests are retired now (anybody may set anybody a task), so with
+   * no `kind` asked for, EVERY row is listed — the handful of requests raised
+   * before the change among them, rather than stranded behind a tab the
+   * current clients no longer draw. The Tasks badge never filtered on kind,
+   * so this is also what keeps a live request from badging somebody over an
+   * empty list. `scope=requests` still answers for an older Android build,
+   * and the dashboard still asks for TASK explicitly (a score is over work
+   * that was set, and a request carries no points).
+   */
   if (scope === 'requests') and.push({ kind: kindFilter(KIND_REQUEST) });
   else if (kind && TASK_KINDS.includes(kind)) and.push({ kind: kindFilter(kind) });
-  else and.push({ kind: kindFilter(KIND_TASK) });
 
   /**
    * The window applies to the DEADLINE — "this week" is the work due this week,
@@ -180,6 +188,33 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
 
   const setters = listParam(assignedBy).map(oid).filter(Boolean);
   if (setters.length) and.push({ createdBy: { $in: setters } });
+
+  /**
+   * DEPARTMENT (2026-09-25) — the department of the OTHER side of the task.
+   *
+   * On "Assigned to me" every row is mine, so filtering on my own department
+   * would change nothing; the useful question there is which department the
+   * work came FROM. On "Assigned by me" it is which department it went TO.
+   * Anywhere else (the admin's company-wide view) either side will do.
+   *
+   * Departments are free text on the employee profile, so this is two steps:
+   * the people in those departments, then the tasks they are on. Matched
+   * case-insensitively and exactly — "Sales" must not also pull in "Sales &
+   * Marketing". A department nobody is in returns nothing, honestly, rather
+   * than being dropped as if it had not been asked for.
+   */
+  const depts = listParam(department);
+  if (depts.length) {
+    const exact = depts.map((d) => new RegExp(`^${d.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'));
+    const inDept = await EmployeeProfile.find({ department: { $in: exact } })
+      .select('user').lean();
+    const people = inDept.map((p) => p.user).filter(Boolean);
+    const from = { createdBy: { $in: people } };
+    const onIt = { 'assignees.user': { $in: people } };
+    if (scope === 'mine') and.push(from);
+    else if (scope === 'delegated') and.push(onIt);
+    else and.push({ $or: [from, onIt] });
+  }
 
   const freqs = listParam(frequency).filter((f) => FREQUENCIES.includes(f));
   if (freqs.length) and.push({ 'repeat.frequency': { $in: freqs } });
@@ -226,6 +261,21 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
       status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
       dueDate: { $lt: new Date() },
     });
+  } else if (overdue === 'false' || overdue === '0') {
+    /**
+     * …AND ITS OPPOSITE, so the Pending tile can be clicked honestly.
+     *
+     * The tiles never overlap — a late pending task is counted as Overdue, not
+     * Pending — but there was no way to ASK for "pending and not late", so
+     * clicking Pending listed the late ones too and the rows disagreed with the
+     * figure above them. Anything that is not open-and-past-its-deadline.
+     */
+    and.push({
+      $nor: [{
+        status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
+        dueDate: { $lt: new Date() },
+      }],
+    });
   }
 
   // The In Time / Delayed split, for when somebody clicks one of those two
@@ -237,10 +287,24 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   if (late === 'true' || late === '1') and.push({ completedLate: true });
   else if (late === 'false' || late === '0') and.push({ completedLate: { $ne: true } });
 
+  /**
+   * THE SEARCH BOX — the task, and the people on either side of it.
+   *
+   * The brief (2026-09-25): *"search by name of assignee or assigner"*. Both
+   * names are snapshotted onto the row (assignees[].name, createdByName), so
+   * this needs no join — and a snapshot is also what keeps a task findable by
+   * the name it was given to after that person has left.
+   */
   const search = String(q || '').trim();
   if (search) {
     const rx = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    and.push({ $or: [{ title: rx }, { description: rx }, { code: rx }, { category: rx }] });
+    and.push({
+      $or: [
+        { title: rx }, { description: rx }, { code: rx }, { category: rx },
+        { 'assignees.name': rx }, { 'assignees.employeeCode': rx },
+        { createdByName: rx }, { approverName: rx },
+      ],
+    });
   }
 
   return and.length === 1 ? and[0] : { $and: and };
@@ -570,13 +634,35 @@ const listTasks = asyncHandler(async (req, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const { sort, key: sortKey, dir: sortDir } = resolveSort(req.query);
 
-  const [rows, total, counters] = await Promise.all([
+  /**
+   * THE FIGURES ON THE PILE CARDS (2026-09-25), when asked for.
+   *
+   * The page opens on two big cards — "Assigned to me" and "Assigned by me"
+   * (plus "All tasks" for whoever holds tasks.manage) — and each wears its own
+   * numbers, not just the one on screen. Answered here, in the same request,
+   * rather than by two more calls from the client: on a phone that is two more
+   * slots of Android's five per host on every filter change.
+   *
+   * The same filters as the list (window, search, department, priority…) but
+   * NOT the tile the reader clicked — picking "Overdue" must not make the card
+   * above it claim there are only overdue tasks in that pile.
+   */
+  const withScopes = req.query.withScopes === '1' || req.query.withScopes === 'true';
+  const scopeKeys = withScopes
+    ? ['mine', 'delegated', ...(access.seesEverything(req.user) ? ['all'] : [])]
+    : [];
+
+  const [rows, total, counters, ...scopeCounters] = await Promise.all([
     sortedRows(filter, sort, sortKey, (page - 1) * limit, limit),
     Task.countDocuments(filter),
     countersFor(filter),
+    ...scopeKeys.map(async (key) => countersFor(
+      await buildQuery(req, { scope: key, status: '', overdue: '', late: '' })
+    )),
   ]);
 
   res.json({
+    ...(withScopes ? { scopes: Object.fromEntries(scopeKeys.map((k, i) => [k, scopeCounters[i]])) } : {}),
     // `can` per row, not just on the detail response.
     //
     // The list draws Accept / Decline / In progress / Complete straight on the
@@ -897,12 +983,16 @@ async function buildAssignees(userIds) {
 }
 
 /**
- * POST /api/tasks — hand work over, or ask for something.
+ * POST /api/tasks — hand work over.
  *
- * The direction rule decides which of those it is: see
- * services/taskAccess.resolveAssignmentKind. There is no separate "raise a
- * request" endpoint, because whether an ask is upward is a fact about the org
- * chart and not something a client should be trusted to assert.
+ * Since 2026-09-25 it is always a TASK, whoever it is for — the upward
+ * "request" and the "Ask" button that raised one are gone (see
+ * services/taskAccess.resolveAssignmentKind).
+ *
+ * NOBODY CHOSEN MEANS "MINE". The user's words: *"if nobody is selected in the
+ * dropdown then it will assign to that user by default"*. So an empty
+ * `assignees` is no longer a 400; the task lands on whoever set it — a
+ * personal to-do, with the same deadline, reminders and feed as any other.
  */
 const createTask = asyncHandler(async (req, res) => {
   const body = parseBody(req);
@@ -910,15 +1000,17 @@ const createTask = asyncHandler(async (req, res) => {
   const title = String(body.title || '').trim();
   if (!title) bad(res, 'Give the task a title.');
 
-  const wanted = (body.assignees || []).map(String).filter(Boolean);
-  if (!wanted.length) bad(res, 'Choose at least one person for this task.');
+  let wanted = (body.assignees || []).map(String).filter(Boolean);
+  if (!wanted.length) wanted = [String(req.user._id)];
 
-  // Direction first — it decides what we are even creating.
-  const { kind } = await access.resolveAssignmentKind(
-    req.user,
-    wanted,
-    body.kind === KIND_REQUEST ? KIND_REQUEST : null
-  );
+  const { kind } = await access.resolveAssignmentKind(req.user, wanted);
+
+  /**
+   * A task set ONLY on yourself scores nothing — see taskPoints.award, which
+   * refuses to credit anybody for a task they set themselves. Storing 0 here as
+   * well means the row does not advertise a hundred points it can never pay.
+   */
+  const selfOnly = wanted.every((id) => id === String(req.user._id));
 
   const assignees = await buildAssignees(wanted);
   if (!assignees.length) bad(res, 'None of the people chosen are available any more.');
@@ -958,7 +1050,7 @@ const createTask = asyncHandler(async (req, res) => {
     loopUsers: [...new Set((body.loopUsers || []).map(String))]
       .filter(mongoose.Types.ObjectId.isValid),
     priority: normalisePriority(body.priority) || DEFAULT_PRIORITY,
-    points: kind === KIND_TASK ? pts : 0,
+    points: kind === KIND_TASK && !selfOnly ? pts : 0,
     /**
      * Does the assigner want to see it before it counts as done?
      *
@@ -993,7 +1085,7 @@ const createTask = asyncHandler(async (req, res) => {
     by: req.user._id,
     byName: personName(req.user),
     to: task.status,
-    note: kind === KIND_REQUEST ? 'Raised this request.' : 'Set this task.',
+    note: selfOnly ? 'Set this task for themselves.' : 'Set this task.',
   });
 
   // A repeating task becomes a schedule, and the worker mints the occurrences.
@@ -1699,10 +1791,31 @@ const taskMeta = asyncHandler(async (req, res) => {
     points.taskSettings(),
   ]);
 
-  // Which of them may be given a task, and which may only be asked. Computed
-  // once here so the picker can mark them, rather than the client guessing.
-  const assignable = new Set(await access.assignableUserIds(req, people.map((p) => p._id)));
-  const canAsk = new Set(await access.requestableUserIds(req));
+  /**
+   * WHAT EACH PERSON CAN BE FOUND BY (2026-09-25).
+   *
+   * The brief: *"we can find other by searching the name or employee code or
+   * designation or department"*. Code, designation and department live on the
+   * employee profile, not the login, so they are joined here once — the picker
+   * then searches all four on the device, with no round trip per keystroke.
+   * Somebody with no profile (a CEO/MD) simply has none of the three.
+   */
+  const profiles = await EmployeeProfile.find({ user: { $in: people.map((p) => p._id) } })
+    .select('user employeeCode designation department')
+    .lean();
+  const profileOf = new Map(profiles.map((p) => [String(p.user), p]));
+
+  /**
+   * The departments the filter offers: the ones people are actually in, each
+   * spelled once. Free text on the profile, so "sales" and "Sales" are folded
+   * together under whichever spelling is met first.
+   */
+  const deptSeen = new Map();
+  for (const p of profiles) {
+    const d = String(p.department || '').trim();
+    if (d && !deptSeen.has(d.toLowerCase())) deptSeen.set(d.toLowerCase(), d);
+  }
+  const departments = [...deptSeen.values()].sort((a, b) => a.localeCompare(b));
 
   /**
    * …AND WHERE EACH OF THEM STANDS (2026-09-22).
@@ -1730,19 +1843,27 @@ const taskMeta = asyncHandler(async (req, res) => {
       name: personName(p),
       role: p.role,
       photo: p.photo || null,
-      canAssign: assignable.has(String(p._id)),
-      canRequest: canAsk.has(String(p._id)),
+      employeeCode: profileOf.get(String(p._id))?.employeeCode || '',
+      designation: profileOf.get(String(p._id))?.designation || '',
+      department: profileOf.get(String(p._id))?.department || '',
+      // Anybody may be given a task since 2026-09-25. Still sent, and always
+      // true, because an older app greys anyone it reads `false` on as "ask
+      // only" and turns its form into a request.
+      canAssign: true,
+      canRequest: false,
       // Where they stand: 'self' | 'direct' | 'indirect' | 'manager' | 'chain' | 'peer'.
       relation: p.relation,
-      direction: p.direction,
-      depth: p.depth,
       // Somebody working out their notice keeps their login but takes no new
       // work — the portal-wide rule. Marked rather than dropped, so a task they
       // are ALREADY on still renders their name (utils/peopleOptions).
       departed: departed.has(String(p._id)),
     })),
+    // Who is asking — so a picker can offer "Myself" and a form can say that
+    // leaving the box empty assigns the task to you.
+    me: String(req.user._id),
     team,
     hasTeam,
+    departments,
     categories,
     priorities: TASK_PRIORITY,
     // ONE palette, served rather than hard-coded in two clients — see

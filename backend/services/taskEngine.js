@@ -435,9 +435,9 @@ async function decline({ taskId, user, reason = '' }) {
  * NOT the same as reassigning (PATCH /:id, the assigner's). This is the DOER
  * passing their own job on, and it carries three rules:
  *
- *  1. THE DIRECTION RULE APPLIES. You may delegate down or across, never up —
- *     otherwise delegation would be the hole in the wall that the whole
- *     task/request split exists to close.
+ *  1. ANYBODY MAY RECEIVE IT (since 2026-09-25). This used to be "down or
+ *     across, never up"; the user retired that rule for every assignment —
+ *     *"everyone can assign task to anyone"* — and delegation follows it.
  *  2. THE DELEGATOR KEEPS HEARING ABOUT IT. They drop out of `assignees` but
  *     stay in the task's audience for good, because they are still the person
  *     who was asked (models/Task.originalAssignees, and the trail here).
@@ -459,7 +459,8 @@ async function delegate({ taskId, user, to, note = '' }) {
   if (targetId === String(user._id)) throw fail('That is already you.');
   if (task.isDoer(targetId)) throw fail('They are already on this task.');
 
-  // Rule 1 — the same check the assign form makes.
+  // Rule 1 — the same check the assign form makes (which only insists on
+  // somebody being chosen now).
   await access.resolveAssignmentKind(user, [targetId], task.kind);
 
   const User = require('../models/User');
@@ -831,22 +832,9 @@ async function splitTask({ taskId, user, items = [] }) {
     throw fail(`A task can hold ${MAX_SUBTASKS} pieces. Split it into two tasks instead.`);
   }
 
-  // ===== The direction rule, per piece =====
-  // Handing a piece UP is the hole the whole task/request split exists to
-  // close, so it is refused here by name rather than quietly turned into a
-  // request — a "piece" that scores nobody is not what the splitter asked for.
+  // Whoever the pieces are named for. Handing a piece UPWARD used to be
+  // refused here; since 2026-09-25 anybody may be given work, pieces included.
   const named = [...new Set(clean.map((c) => c.assignee).filter(Boolean))];
-  if (named.length && !access.isTopOfTree(user)) {
-    for (const id of named) {
-      const dir = await access.directionOf(user._id, id);
-      if (dir === 'UP') {
-        throw fail(
-          'A piece of a task can only go to your own team or across to a colleague. '
-          + 'To ask somebody senior for something, raise a request instead.'
-        );
-      }
-    }
-  }
 
   // ===== The points =====
   const budget = Math.max(0, (Number(parent.points) || 0) - (Number(parent.distributedPoints) || 0));

@@ -588,6 +588,26 @@ a.plain-link:hover { text-decoration: underline; }
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
 }
 
+/* ---------------------------------------------------------------------------
+   Tasks page (2026-09-25, the simplified page — pages/Tasks.jsx).
+     .task-pile.is-active  the "Assigned to me / by me" card you are on: a soft
+                           accent wash and a glow. Paint only — the card keeps
+                           the same 1px border in both states (its colour is
+                           the accent-border utility), so choosing a pile moves
+                           nothing (layout-stability rule).
+   Mixed into the theme's own tokens, so one rule holds in light and dark.
+--------------------------------------------------------------------------- */
+.task-pile.is-active {
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 65%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 12px 28px -16px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-pile, .task-row { transition: none; }
+  .task-pile:hover, .task-row:hover { transform: none; }
+}
+
 /* Star buttons — a small lift on hover/focus, and a visible focus ring since
    these replaced a native <select>. The two star colours are set here rather
    than with text-* utilities: the dark-mode block below remaps those utilities
@@ -1571,6 +1591,9 @@ html.dark [class*="divide-indigo-"] > * { border-color: color-mix(in srgb, #3b82
 
 html.dark .hover\:bg-gray-50:hover { background-color: var(--surface-2) !important; }
 html.dark .hover\:bg-gray-100:hover { background-color: var(--surface-3) !important; }
+/* Keyboard focus on a menu row (the task status menu, 2026-09-25) paints the
+   same wash as hovering it — a variant is its own selector, so it needs its own. */
+html.dark .focus\:bg-gray-50:focus { background-color: var(--surface-2) !important; }
 
 /* `disabled:bg-gray-*` is its own selector, so the plain remaps above never
    reached it — a read-only field (the locked Employee picker on an existing

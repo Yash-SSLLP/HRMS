@@ -86,6 +86,20 @@ async function award(task, assignee, actor) {
   if (assignee.pointsAwardedAt) return null;           // already paid for
 
   /**
+   * NOBODY SCORES A TASK THEY SET THEMSELVES (2026-09-25).
+   *
+   * Assigning yourself became a first-class move that day — pick nobody and the
+   * task is yours. Points settle in rupees and feed every leaderboard, so a
+   * person who could set themselves a hundred-point task and tick it off would
+   * be writing their own score. The row still finishes, is still reported and
+   * still counts towards completion; it simply earns nothing. The creator row
+   * on a task they share with somebody else is skipped the same way — the
+   * others earn as usual.
+   */
+  const setter = String(task.createdBy?._id || task.createdBy || '');
+  if (setter && setter === String(assignee.user?._id || assignee.user || '')) return null;
+
+  /**
    * WHAT IS LEFT ON THIS TASK, not what it started with.
    *
    * Changed 2026-09-22, when a task became splittable. `points` is the pool;

@@ -193,7 +193,9 @@ There is no separate holidays page. Company holidays appear in the **Calendar** 
 
 Your payslips are listed by period with gross, deductions, net, and status. Opening one shows the full breakdown: working, payable, unpaid, half and late days; every earning including Leave Incentive; every deduction including Loss of Pay and Late coming; and the payment date and reference.
 
-Downloading the PDF works in two steps: you **request** the payslip, and HR **releases** it. This lets HR check and correct a slip before it goes out. Once released, the PDF is yours to download and it carries your statutory and bank details, the day counts, the earnings and deductions tables, and the net amount in words.
+Getting the PDF works in two steps: you **request** the payslip, and HR **releases** it. This lets HR check and correct a slip before it goes out. Once released, the PDF is yours, and it carries your statutory and bank details, the day counts, the earnings and deductions tables, and the net amount in words.
+
+On the phone a released payslip has two buttons: **View payslip** opens it in your phone's PDF viewer so you can read it, and **Share** sends it to WhatsApp, email or your files.
 
 [!NOTE] If HR edits a payslip after releasing it, the download is withdrawn until it is released again. That is deliberate — it stops an outdated slip circulating.
 
@@ -266,7 +268,7 @@ There are three to choose from:
 - **Day-wise summary** — one line per day: how many entries, cash in, cash out, and the closing balance.
 - **Category-wise summary** — what each category has cost.
 
-Each can be downloaded as a **PDF** to send or print, or as an **Excel** file to work with. On the phone it goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
+Each can be downloaded as a **PDF** to read, send or print, or as an **Excel** file to work with. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
 
 [!NOTE] Only approved entries count towards the totals. Anything rejected or reversed is still listed, struck through, so a report never hides part of the history.
 
@@ -304,15 +306,30 @@ A question you have already answered is never asked again, and a lesson you have
 
 ### 9.1 Tasks
 
-Work handed to you, and work you have handed on. Every task carries a priority, a deadline, a category and a points value, and it moves through four stages:
+Work handed to you, and work you have handed on. The screen opens on two cards — **Assigned to me** and **Assigned by me** — each showing how much is still open, what is overdue and what is waiting on a review. Tap one to see that pile. Under them are a **search** box (a task's name, or the name of whoever set it or holds it), a **Filter** button (due date, department, people, priority and the order), and one bar of five figures — **Total, Overdue, Pending, In review, Completed**. Tap a figure to see only those tasks; tap it again to see them all.
 
-**To do** — it has been given to you and you have not answered yet. Press **Accept** to take it on, which also starts it, or **Decline** with a reason if it is not yours to do.
+Every task has a **status button** on the right. Tap it to see what you can do with that task right now — only the moves that apply to you are offered:
+
+- **Approve** — on a task just given to you, accept it (this also starts it). On a task you set that has been handed in, sign it off as completed.
+- **Reject** — turn down a task given to you, with a reason; or send a handed-in task back with what still needs doing.
+- **Delegate** — hand it to somebody else; you then approve their work.
+- **Transfer** — it reached the wrong person; move it to the right one completely.
+- **In Review** — hand your work in for the person who set it to check.
+- **Completed** — mark it done, where no review is needed.
+
+Everything else — progress, comments, files, asking for more time — is under **Open task** at the bottom of the same list, or tap the task itself.
+
+A task moves through four stages:
+
+**To do** — it has been given to you and you have not answered yet.
 
 **In progress** — you are working on it. Drag the **progress** slider as you go, or tap 25 / 50 / 75 / 100. Nobody can see how far along you are unless you say.
 
-**Review** — you pressed **Submit** and said what you did. It is now with whoever gave it to you. They either **approve** it, which finishes it, or **send it back** with a note saying what still needs doing, which reopens it with everything you have already done still on it.
+**Review** — you handed it in and said what you did. It is now with whoever gave it to you. They either **approve** it, which finishes it, or **send it back** with a note saying what still needs doing, which reopens it with everything you have already done still on it.
 
 **Done** — approved. The points are recorded against your name.
+
+**Setting a task.** Tap **Assign task**. You can give a task to **anyone** in the company. The **Assign to** list opens on yourself, your team, the people you report to and your own department; type to find anybody else by name, employee code, designation or department. **Choose nobody and the task is yours** — handy as a personal to-do. A task you set for yourself has no review step and earns no points.
 
 [!NOTE] A task is coloured by how urgent it is — red for Urgent, amber for Medium, grey for Low — and turns **green** once it is finished. A task past its deadline also carries a red **Overdue** tag.
 
@@ -322,7 +339,7 @@ Work handed to you, and work you have handed on. Every task carries a priority, 
 
 **If a task reached you by mistake**, use **Transfer**. That is not the same as delegating: the task leaves you completely and the new person holds it as if it had always been theirs. You stop hearing about it.
 
-You can see everything as a **list** — with a serial number, and sortable by deadline, day assigned, how long it has been pending, points or priority — or as a **board** with the four stages as columns, shown twice: everything assigned **to** you, and everything assigned **by** you.
+Every task in the list has a serial number, and the **Filter** button can sort by deadline, day assigned, how long it has been pending, points or priority.
 
 ### 9.2 Assets
 
@@ -426,7 +443,7 @@ Almost everything above is in the Android app, organised under a **Menu**:
 - **Money** — Payslips, My Cashbook, Travel, Loans.
 - **Incentive** — My Incentive, which is open to everybody who can earn points; Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard are there only if you run an incentive yourself.
 - **Growth** — Tasks, My Interviews, Goals, Reviews, Learning.
-- **Requests and lifecycle** — My Approvals, Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.
+- **Requests and lifecycle** — Approvals, Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.
 - **Workplace** — Announcements, Surveys, Documents, Assets, Org Chart, and this guide.
 
 **Calendar** and **Notifications** are tabs of their own, and a **search** button in the middle of the tab bar jumps to any screen or looks up a colleague.

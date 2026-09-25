@@ -1,163 +1,317 @@
 /**
- * Task Filters — the modal behind the Filter button.
+ * Task Filters — the panel behind the Filter button.
  *
- * NEW 2026-09-21. Tabs down the left, the choices on the right, Clear and
- * Filter along the bottom — the shape in the brief, and a good one: five
- * dropdowns strung across a toolbar take the same space, hide their state, and
- * cannot be cleared in one go.
+ * REWRITTEN 2026-09-25 around the user's list: *"the filter should be based on
+ * the department, name, task due date, search by name of assignee or assigner,
+ * priority"*. Category and frequency left the panel (the server still answers
+ * both); the date chips that used to sit above the list moved IN, so the page
+ * itself is only the piles, the figures and the rows. The name search is the
+ * box beside the Filter button, not in here — it is used far more often than
+ * any of these.
  *
- * EVERY FILTER RUNS ON THE SERVER. The page holds one page of rows and nothing
- * else, so these are query parameters rather than a predicate over an array —
- * and the counters above the list come from the SAME filter, which is what
- * stops them disagreeing with the rows underneath them.
+ * ONE SCROLLING PANEL, NOT TABS. The old modal hid four of its five groups
+ * behind tabs down the left, so what was set could not be seen at a glance.
+ *
+ * CHANGES ARE NOT LIVE until "Show tasks" is pressed: Escape or Cancel leaves
+ * the list exactly as it was. Every filter runs on the server, and the figures
+ * above the list come from the same filter as the rows.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { FiX, FiSearch, FiCheck } from 'react-icons/fi';
-import { TASK_PRIORITY, FREQUENCIES, FREQUENCY_LABELS } from '../../utils/taskLifecycle';
+import { FiX, FiCalendar, FiBriefcase, FiUser, FiFlag, FiArrowUp, FiArrowDown, FiBarChart2 } from 'react-icons/fi';
+import PeoplePicker from './PeoplePicker';
+import { priorityColor, useIsDark, tintStyle } from './taskColors';
+import { RANGES, TASK_PRIORITY } from '../../utils/taskLifecycle';
 
-const TABS = [
-  ['category', 'Category'],
-  ['assignedTo', 'Assigned to'],
-  ['assignedBy', 'Assigned by'],
-  ['frequency', 'Frequency'],
-  ['priority', 'Priority'],
+/** What "no filter" is — and so what Reset goes back to. The page opens on this. */
+export const DEFAULT_FILTERS = {
+  range: 'month',
+  from: '',
+  to: '',
+  department: '',
+  assignedTo: '',
+  assignedBy: '',
+  priority: '',
+  sort: 'due',
+  dir: '',
+};
+
+/** Comma lists, as the API takes them. */
+const split = (v) => String(v || '').split(',').filter(Boolean);
+const join = (arr) => arr.filter(Boolean).join(',');
+
+/**
+ * How many things are narrowing the list — the number on the Filter button.
+ *
+ * The due-date window is NOT counted: it is always on (the page opens on This
+ * month) and always shown as its own chip under the toolbar, so counting it
+ * would put a "1" on the button of somebody who has set nothing.
+ */
+export function activeFilterCount(f = {}) {
+  return split(f.department).length
+    + split(f.assignedTo).length
+    + split(f.assignedBy).length
+    + split(f.priority).length;
+}
+
+/** The orders, for the moment before GET /tasks/meta lands (mirrors config/tasks.SORTS). */
+export const FALLBACK_SORTS = [
+  { key: 'due', label: 'Due date' },
+  { key: 'assigned', label: 'Day assigned' },
+  { key: 'pending', label: 'Pending days' },
+  { key: 'points', label: 'Points' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'title', label: 'Title' },
+  { key: 'created', label: 'Newest first' },
 ];
 
-/** Which keys this modal owns, so Clear knows exactly what to wipe. */
-export const FILTER_KEYS = TABS.map(([k]) => k);
+function Section({ icon: Icon, title, hint, children }) {
+  return (
+    <section className="py-4 first:pt-1">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <Icon size={13} className="text-gray-400" /> {title}
+      </h3>
+      {hint && <p className="mt-0.5 text-[11px] text-gray-400">{hint}</p>}
+      <div className="mt-2.5">{children}</div>
+    </section>
+  );
+}
 
-export default function TaskFilters({ open, onClose, meta, value = {}, onApply }) {
-  const [tab, setTab] = useState('category');
+/** A chip that toggles. Weight and border on the base, so selecting cannot resize it. */
+function Chip({ on, onClick, children, style }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      style={style}
+      className={`min-h-[34px] inline-flex items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition ${
+        style ? '' : on ? 'accent-border accent-bg on-accent' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export default function TaskFilters({ open, onClose, meta, scope = 'mine', value = DEFAULT_FILTERS, onApply }) {
   const [draft, setDraft] = useState(value);
-  const [query, setQuery] = useState('');
+  const dark = useIsDark();
 
-  // Opening the modal takes a fresh copy: changes are not live until Filter is
-  // pressed, so backing out with Escape leaves the list exactly as it was.
-  useEffect(() => { if (open) { setDraft(value); setQuery(''); } }, [open, value]);
+  // A fresh copy each time it opens, so backing out changes nothing.
+  useEffect(() => { if (open) setDraft({ ...DEFAULT_FILTERS, ...value }); }, [open, value]);
 
-  const options = useMemo(() => {
-    const people = (meta?.people || []).map((p) => ({ key: String(p._id), label: p.name }));
-    return {
-      category: (meta?.categories || []).map((c) => ({ key: c.name, label: c.name })),
-      assignedTo: people,
-      assignedBy: people,
-      frequency: FREQUENCIES.map((f) => ({ key: f, label: FREQUENCY_LABELS[f] })),
-      priority: TASK_PRIORITY.map((p) => ({ key: p, label: p })),
-    };
-  }, [meta]);
-
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = options[tab] || [];
-    return q ? list.filter((o) => o.label.toLowerCase().includes(q)) : list;
-  }, [options, tab, query]);
-
-  const selected = (key) => (draft[tab] || '').split(',').filter(Boolean).includes(key);
-
-  const toggle = (key) => {
-    const current = (draft[tab] || '').split(',').filter(Boolean);
-    const next = current.includes(key) ? current.filter((k) => k !== key) : [...current, key];
-    setDraft({ ...draft, [tab]: next.join(',') });
+  const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
+  const toggleIn = (key, item) => {
+    const cur = split(draft[key]);
+    set({ [key]: join(cur.includes(item) ? cur.filter((x) => x !== item) : [...cur, item]) });
   };
 
-  const countFor = (k) => (draft[k] || '').split(',').filter(Boolean).length;
-  const total = FILTER_KEYS.reduce((n, k) => n + countFor(k), 0);
+  const people = meta?.people || [];
+  const departments = meta?.departments || [];
+  const sorts = meta?.sorts?.length ? meta.sorts : FALLBACK_SORTS;
+
+  /**
+   * Which side of the task the department filter reads — the server decides
+   * (taskController.buildQuery) and this only says it, so nobody wonders why
+   * "Sales" on their own pile changes nothing.
+   */
+  const deptHint = scope === 'mine'
+    ? 'Of whoever assigned the task to you.'
+    : scope === 'delegated'
+      ? 'Of the people you assigned it to.'
+      : 'Of either the assigner or the assignee.';
+
+  const count = useMemo(() => activeFilterCount(draft), [draft]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex w-full max-w-xl flex-col rounded-2xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
-          <h2 className="text-base font-semibold text-gray-900">Filters</h2>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Filter tasks"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Filter tasks</h2>
+            <p className="text-xs text-gray-500">
+              {count ? `${count} filter${count === 1 ? '' : 's'} set` : 'Nothing narrowed down yet'}
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 min-h-[32px] min-w-[32px]"
+            className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 min-h-[32px] min-w-[32px]"
             aria-label="Close"
           >
             <FiX size={18} />
           </button>
         </div>
 
-        <div className="flex min-h-[20rem] flex-col sm:flex-row">
-          {/* Tabs */}
-          <div className="flex shrink-0 flex-wrap gap-1 border-b border-gray-100 p-2 sm:w-40 sm:flex-col sm:flex-nowrap sm:overflow-x-auto sm:border-b-0 sm:border-r">
-            {TABS.map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => { setTab(key); setQuery(''); }}
-                className={`min-h-[36px] flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 text-left text-xs font-medium transition ${
-                  tab === key ? 'bg-gray-100 accent-text' : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                {label}
-                {countFor(key) > 0 && (
-                  <span className="rounded-full accent-bg px-1.5 text-[10px] text-white">{countFor(key)}</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Choices. `min-h-0`: on a short phone the height-capped panel
-              squeezes this column, and without it the list overflowed onto
-              the Clear / Filter footer instead of scrolling. (Cross axis at
-              sm+, where it changes nothing.) */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {(tab === 'assignedTo' || tab === 'assignedBy' || tab === 'category') && (
-              <div className="border-b border-gray-100 p-2">
-                <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-2">
-                  <FiSearch className="shrink-0 text-gray-400" size={14} />
+        <div className="min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto px-5">
+          {/* ── Due date ───────────────────────────────────────── */}
+          <Section
+            icon={FiCalendar}
+            title="Due date"
+            hint="Today, this week and this month always keep unfinished work in view."
+          >
+            <div className="flex flex-wrap gap-1.5">
+              {RANGES.map(([key, label]) => (
+                <Chip key={key} on={draft.range === key} onClick={() => set({ range: key })}>
+                  {label}
+                </Chip>
+              ))}
+            </div>
+            {draft.range === 'custom' && (
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="text-[11px] font-medium text-gray-500">
+                  From
                   <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search…"
-                    className="min-w-0 flex-1 border-0 p-0 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-0 min-h-[34px]"
+                    type="date"
+                    value={draft.from}
+                    onChange={(e) => set({ from: e.target.value })}
+                    className="mt-1 block w-full rounded-xl border border-gray-200 px-3 text-sm min-h-[40px]"
                   />
-                </div>
+                </label>
+                <label className="text-[11px] font-medium text-gray-500">
+                  To
+                  <input
+                    type="date"
+                    value={draft.to}
+                    min={draft.from || undefined}
+                    onChange={(e) => set({ to: e.target.value })}
+                    className="mt-1 block w-full rounded-xl border border-gray-200 px-3 text-sm min-h-[40px]"
+                  />
+                </label>
               </div>
             )}
+          </Section>
 
-            <div className="max-h-72 flex-1 overflow-y-auto p-1">
-              {shown.length === 0 ? (
-                <p className="px-3 py-6 text-center text-xs text-gray-400">Nothing to choose from.</p>
-              ) : (
-                shown.map((o) => (
-                  <button
-                    key={o.key}
-                    type="button"
-                    onClick={() => toggle(o.key)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-gray-50 min-h-[38px]"
-                  >
-                    <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                      selected(o.key) ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300'
-                    }`}>
-                      {selected(o.key) && <FiCheck size={10} />}
-                    </span>
-                    <span className="flex-1 truncate text-gray-700">{o.label}</span>
-                  </button>
-                ))
+          {/* ── Department ─────────────────────────────────────── */}
+          <Section icon={FiBriefcase} title="Department" hint={deptHint}>
+            {departments.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {departments.map((d) => (
+                  <Chip key={d} on={split(draft.department).includes(d)} onClick={() => toggleIn('department', d)}>
+                    {d}
+                  </Chip>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">No departments on file yet.</p>
+            )}
+          </Section>
+
+          {/* ── People ─────────────────────────────────────────── */}
+          {/* Only the side that can vary: on your own pile "Assigned to" would
+              only ever be you, and on the pile you set "Assigned by" likewise. */}
+          <Section icon={FiUser} title="People" hint="Search by name, employee code, designation or department.">
+            <div className="grid gap-3">
+              {scope !== 'mine' && (
+                <PeoplePicker
+                  label="Assigned to"
+                  people={people}
+                  value={split(draft.assignedTo)}
+                  onChange={(ids) => set({ assignedTo: join(ids) })}
+                  teamFirst={false}
+                  allowSelf
+                  selfId={meta?.me}
+                  placeholder="Anyone"
+                />
+              )}
+              {scope !== 'delegated' && (
+                <PeoplePicker
+                  label="Assigned by"
+                  people={people}
+                  value={split(draft.assignedBy)}
+                  onChange={(ids) => set({ assignedBy: join(ids) })}
+                  teamFirst={false}
+                  allowSelf
+                  selfId={meta?.me}
+                  placeholder="Anyone"
+                />
               )}
             </div>
-          </div>
+          </Section>
+
+          {/* ── Priority ───────────────────────────────────────── */}
+          <Section icon={FiFlag} title="Priority">
+            <div className="flex flex-wrap gap-1.5">
+              {TASK_PRIORITY.map((p) => {
+                const colour = priorityColor(p);
+                const on = split(draft.priority).includes(p);
+                return (
+                  <Chip
+                    key={p}
+                    on={on}
+                    onClick={() => toggleIn('priority', p)}
+                    // Painted from the SERVER's palette, like the row tint the
+                    // choice filters by — filled when on, tinted when off.
+                    style={on
+                      ? { backgroundColor: colour.solid, borderColor: colour.solid, color: '#fff' }
+                      : tintStyle(colour, { dark })}
+                  >
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: on ? '#fff' : colour.solid }} />
+                    {p}
+                  </Chip>
+                );
+              })}
+            </div>
+          </Section>
+
+          {/* ── Order ──────────────────────────────────────────── */}
+          <Section icon={FiBarChart2} title="Sort by">
+            <div className="flex items-center gap-2">
+              <select
+                value={draft.sort}
+                onChange={(e) => set({ sort: e.target.value, dir: '' })}
+                aria-label="Sort by"
+                className="min-h-[40px] flex-1 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-700"
+              >
+                {sorts.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={() => set({ dir: draft.dir === 'desc' ? 'asc' : 'desc' })}
+                aria-label="Reverse the order"
+                title={draft.dir === 'desc' ? 'Descending' : draft.dir === 'asc' ? 'Ascending' : 'Natural order — click to reverse'}
+                className="grid w-10 h-10 shrink-0 place-items-center rounded-xl border border-gray-200 text-gray-600 transition hover:border-gray-400"
+              >
+                {draft.dir === 'desc' ? <FiArrowDown size={15} /> : <FiArrowUp size={15} />}
+              </button>
+            </div>
+          </Section>
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-gray-100 px-5 py-3">
           <button
             type="button"
-            onClick={() => setDraft(Object.fromEntries(FILTER_KEYS.map((k) => [k, ''])))}
-            className="rounded-xl border border-gray-200 px-4 text-sm text-gray-600 hover:bg-gray-50 min-h-[40px]"
+            onClick={() => setDraft({ ...DEFAULT_FILTERS })}
+            className="rounded-xl border border-gray-200 px-4 text-sm text-gray-600 transition hover:bg-gray-50 min-h-[40px]"
           >
-            Clear{total > 0 ? ` (${total})` : ''}
+            Reset
           </button>
-          <button
-            type="button"
-            onClick={() => { onApply?.(draft); onClose?.(); }}
-            className="rounded-xl bg-green-600 px-5 text-sm font-medium text-white hover:bg-green-700 min-h-[40px]"
-          >
-            Filter tasks
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl px-4 text-sm text-gray-500 transition hover:bg-gray-50 min-h-[40px]"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { onApply?.(draft); onClose?.(); }}
+              className="rounded-xl bg-green-600 px-5 text-sm font-semibold text-white transition hover:bg-green-700 min-h-[40px]"
+            >
+              Show tasks
+            </button>
+          </div>
         </div>
       </div>
     </div>

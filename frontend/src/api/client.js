@@ -115,6 +115,17 @@ const EXEC_WRITE_PATHS = [
   // mode (routes/payrollRoutes.js mounts the decision above the payroll.manage
   // gate) — the request is addressed to them.
   /\/payroll\/salary-changes\/[^/]+\/(approve|reject)(\?|$)/,
+  // AN HR MANAGER'S OWN PAYSLIP waits for a CEO/MD/Super Admin to sanction it,
+  // in either mode — payrollRoutes.js mounts the decision above the
+  // payroll.manage gate (requireSelfPayslipApprover), because it is addressed
+  // to them. Without this the Sanction button on Payslip Requests was refused
+  // here for a read-only exec, one step before the server would have let it.
+  /\/payroll\/[^/]+\/self-approval\/(approve|reject)(\?|$)/,
+  // THEIR OWN ALERTS. The notification routes run on `protect` alone, which
+  // refuses only the God login, so a read-only CEO/MD may mark their own
+  // alerts read — opening one from the bell, "Mark all read". Nothing here
+  // changes company data.
+  /\/notifications(\/|$|\?)/,
   // THE ADVANCE REQUEST FORM'S purposes and terms. The CEO and MD write them in
   // either mode — routes/loanRoutes.js names them in requireLoanFormEditor — so
   // the save must not be refused here first.

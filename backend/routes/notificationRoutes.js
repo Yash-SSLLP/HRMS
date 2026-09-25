@@ -1,6 +1,6 @@
 /**
  * Notification router — mounted at /api/notifications.
- * In-app notification feed for the current user (list + mark read).
+ * In-app notification feed for the current user (list, mark read or unread, delete).
  * All routes require authentication (router.use(protect)).
  */
 const express = require('express');
@@ -9,6 +9,7 @@ const {
   countNotifications,
   markAllRead,
   markRead,
+  markUnread,
   deleteNotification,
 } = require('../controllers/notificationController');
 const { protect } = require('../middleware/authMiddleware');
@@ -26,6 +27,9 @@ router.get('/count', countNotifications);
 router.patch('/read-all', markAllRead);
 // PATCH /:id/read — mark a single notification read; protected.
 router.patch('/:id/read', markRead);
+// PATCH /:id/unread — put a read one back to unread (the phone's right swipe
+// toggles between the two); protected.
+router.patch('/:id/unread', markUnread);
 // DELETE /:id — take one alert off the caller's feed (swipe-to-delete on the
 // phone). Soft: the record survives, see the controller.
 router.delete('/:id', deleteNotification);

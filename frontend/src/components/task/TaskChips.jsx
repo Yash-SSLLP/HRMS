@@ -268,9 +268,9 @@ export function TaskMarks({ task }) {
   );
 }
 
-/* CounterBar — the compact counter row — is gone (2026-09-22). TaskStatTiles
- * replaced it everywhere, including in the panels it was written for, and
- * nothing had imported it since. A second way to draw the same figures is how
+/* CounterBar — the compact counter row — is gone (2026-09-22), and so are the
+ * TaskStatTiles that replaced it (2026-09-25): TaskStatBar draws the figures
+ * now, as one bar. A second way to draw the same figures is how
  * two surfaces end up disagreeing about what "overdue" counts. */
 
 /** The date-window chips. */
@@ -295,17 +295,26 @@ export function RangeChips({ ranges, value, onChange }) {
   );
 }
 
-/** Nothing here — said in a way that suggests what to do next. */
-export function EmptyTasks({ scope, onAssign }) {
+/**
+ * Nothing here — said in a way that suggests what to do next. `filtered` is
+ * true when a filter, a search or a figure is narrowing the pile, where the
+ * useful next step is loosening it rather than assigning something.
+ */
+export function EmptyTasks({ scope, onAssign, filtered = false, olderHint = true }) {
+  // Said of the default "This month" window: open work always shows, so an
+  // empty pile means nothing is open — and finished work from other months is
+  // one chip away.
+  const older = olderHint ? ' Finished work from other months is under Due: All time.' : '';
   const lines = {
-    mine: ['Nothing on your plate', 'Tasks people set for you land here.'],
-    delegated: ['You have not set any tasks', 'Hand something over and it will show up here.'],
-    all: ['No tasks match', 'Try a wider date range, or clear the filters.'],
-    requests: ['No requests', 'Ask somebody senior for what you need and it will appear here.'],
+    mine: ['Nothing assigned to you', `Tasks people set for you — and the ones you set yourself — land here.${older}`],
+    delegated: ['Nothing you assigned is open', `Hand something over and it will show up here.${older}`],
+    all: ['No open tasks', `Nothing is waiting on anybody.${older}`],
   };
-  const [title, body] = lines[scope] || lines.all;
+  const [title, body] = filtered
+    ? ['Nothing matches', 'Try a wider due date, another figure, or clear the filters.']
+    : (lines[scope] || lines.all);
   return (
-    <div className="rounded-2xl border border-dashed border-gray-200 px-6 py-12 text-center">
+    <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
       <p className="text-sm font-medium text-gray-700">{title}</p>
       <p className="mt-1 text-xs text-gray-500">{body}</p>
       {onAssign && (

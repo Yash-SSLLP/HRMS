@@ -6,6 +6,13 @@
  *
  * ── 1. DIRECTION ────────────────────────────────────────────────────────────
  *
+ * RETIRED AS A RULE ON 2026-09-25 — *"everyone can assign task to anyone"*.
+ * Nothing below refuses an assignment or turns one into a request any more
+ * (see resolveAssignmentKind). The reporting tree survives because the pickers
+ * still open on the people who matter to you first — your team, then your line
+ * — and search everybody else. What follows is the rule as it stood, kept
+ * because `directionOf` and the tree walks it describes are still used.
+ *
  * Work travels DOWN the reporting line or ACROSS it. It does not travel up.
  *
  *   DOWN   to your reports, direct or indirect      → a TASK
@@ -48,11 +55,10 @@
  * work they set and in the loop on the work their people set each other.
  */
 const mongoose = require('mongoose');
-const User = require('../models/User');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { hasPermission } = require('../middleware/authMiddleware');
-const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
-const { KIND_TASK, KIND_REQUEST } = require('../config/tasks');
+const { companyScopeFilter } = require('../utils/employeeScope');
+const { KIND_TASK } = require('../config/tasks');
 
 const MAX_CHAIN = 20; // cycle guard, same depth the leave ladder uses
 
@@ -244,15 +250,27 @@ function isTopOfTree(user) {
 }
 
 /**
- * What kind of row `actor` may create for each of `targetIds`.
+ * What kind of row `actor` may create for `targetIds`.
  *
- * Returns the kind everybody agrees on, or throws when the selection is
- * INCONSISTENT — one task cannot be a downward instruction to one person and
- * an upward question to another, and silently splitting it into two rows would
- * produce a task nobody remembers creating.
+ * ALWAYS A TASK, since 2026-09-25. The user's words: *"everyone can assign task
+ * to anyone"* and *"remove the option for ask"*. Until then an upward
+ * assignment silently became a REQUEST — unscored, no points, filed under its
+ * own tab — and a selection mixing seniors and juniors was refused outright.
+ * Both rules are gone: a task set on your manager is a task like any other.
  *
- * @returns {Promise<{kind:string, directions:Object<string,string>}>}
+ * `requested` is deliberately IGNORED. An Android build from before this change
+ * still has an "Ask" button that posts `kind: 'REQUEST'`; honouring it would
+ * mint a row in a pile the current clients no longer show. It becomes the task
+ * it now is instead. The two REQUEST rows already in the data are listed with
+ * the tasks (taskController.buildQuery), so nothing already raised goes
+ * missing either.
+ *
+ * `directionOf` is kept: the pickers still use the reporting tree to decide who
+ * to show FIRST (annotatePeople), just never to refuse anybody.
+ *
+ * @returns {Promise<{kind:string}>}
  */
+// eslint-disable-next-line no-unused-vars
 async function resolveAssignmentKind(actor, targetIds, requested = null) {
   const ids = [...new Set((targetIds || []).map(String))].filter(Boolean);
   if (!ids.length) {
@@ -260,63 +278,17 @@ async function resolveAssignmentKind(actor, targetIds, requested = null) {
     err.status = 400;
     throw err;
   }
-
-  // The top of the tree assigns downward by definition.
-  if (isTopOfTree(actor)) {
-    return {
-      kind: requested === KIND_REQUEST ? KIND_REQUEST : KIND_TASK,
-      directions: Object.fromEntries(ids.map((id) => [id, 'DOWN'])),
-    };
-  }
-
-  const directions = {};
-  for (const id of ids) directions[id] = await directionOf(actor._id, id);
-
-  const ups = ids.filter((id) => directions[id] === 'UP');
-
-  if (ups.length && ups.length !== ids.length) {
-    const err = new Error(
-      'Pick either people you can set work for, or people you want to ask — not both on one row. '
-      + 'Raise the upward ones as a separate request.'
-    );
-    err.status = 400;
-    throw err;
-  }
-
-  // Everybody is above the actor: this is a request whether they said so or not.
-  if (ups.length) return { kind: KIND_REQUEST, directions };
-
-  // Nobody is above them. They may still deliberately raise a request sideways
-  // or downward ("can you get me X") — asking is never forbidden.
-  return { kind: requested === KIND_REQUEST ? KIND_REQUEST : KIND_TASK, directions };
+  return { kind: KIND_TASK };
 }
 
 /**
- * The people this caller may put on a TASK (as opposed to a request).
- * Used to narrow the assign form's picker, so an impossible selection is not
- * offered in the first place — the server still enforces it either way.
+ * The people this caller may put on a task — everybody offered, since
+ * 2026-09-25 (see resolveAssignmentKind). Kept as a function because the meta
+ * response still stamps `canAssign` on every person, and an older app greys
+ * anybody it reads `false` on as "ask only".
  */
 async function assignableUserIds(req, candidateIds) {
-  if (isTopOfTree(req.user)) return candidateIds.map(String);
-  const out = [];
-  for (const id of candidateIds) {
-    const dir = await directionOf(req.user._id, id);
-    if (dir !== 'UP') out.push(String(id));
-  }
-  return out;
-}
-
-/** The people this caller may raise a REQUEST with — their management chain. */
-async function requestableUserIds(req) {
-  const above = await chainAbove(req.user._id);
-  if (above.length) return above;
-  // Nobody above them in the data: fall back to the company's executives, so a
-  // person whose reporting line is blank can still ask somebody.
-  const scope = await viewerCompanyScope(req);
-  const filter = { isActive: true, role: { $in: ['CEO', 'MD'] } };
-  if (scope?.length) filter.company = { $in: scope };
-  const execs = await User.find(filter).select('_id').lean();
-  return execs.map((u) => String(u._id));
+  return candidateIds.map(String);
 }
 
 /**
@@ -336,9 +308,10 @@ const MANAGER_ROLES = ['Manager', 'HRManager', 'AccountsManager'];
  * web picker and the app's picker group by, computed once on the server.
  *
  * Every dropdown in the module then follows the same rule without re-deriving
- * anything: with an empty search box it shows `relation` of `direct` then
- * `indirect`; typing searches the lot; somebody who can only be ASKED is shown
- * greyed. See the contract in docs/task-module.md §7.
+ * anything: with an empty search box it shows the people most likely to be
+ * wanted — yourself, `direct`, `indirect`, your line, your department — and
+ * typing searches the lot. Nobody is greyed any more: since 2026-09-25 anybody
+ * may be given a task. See docs/task-module.md §3a.
  *
  * @param {import('express').Request} req
  * @param {Array} people - lean User rows, each with `_id` and `role`
@@ -351,8 +324,7 @@ async function annotatePeople(req, people = []) {
   const indirectSet = new Set(indirect);
 
   // The stand-in, for somebody the tree puts nobody under. Only ever WIDENS the
-  // first screen of a dropdown — it changes nothing about who may be assigned,
-  // which stays `directionOf`'s answer and is enforced on write either way.
+  // first screen of a dropdown — who may be assigned is everybody either way.
   let fallback = null;
   if (!direct.length && !indirect.length && isTopOfTree(req.user)) {
     fallback = new Set(
@@ -370,12 +342,9 @@ async function annotatePeople(req, people = []) {
     else if (fallback?.has(id)) relation = 'direct';
     else relation = await relationTo(me, id);
 
-    annotated.push({
-      ...p,
-      relation,
-      direction: isTopOfTree(req.user) ? 'DOWN' : await directionOf(me, id),
-      depth: await depthOf(id),
-    });
+    // No `direction` any more: it only ever decided task-or-request, and every
+    // assignment is a task now (resolveAssignmentKind).
+    annotated.push({ ...p, relation });
   }
 
   return {
@@ -721,7 +690,6 @@ module.exports = {
   isTopOfTree,
   resolveAssignmentKind,
   assignableUserIds,
-  requestableUserIds,
   seesEverything,
   visibleFilter,
   canSee,

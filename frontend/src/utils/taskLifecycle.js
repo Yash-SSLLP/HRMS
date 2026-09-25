@@ -370,24 +370,125 @@ export const SUB_COUNTERS = [
   ['delayed', 'Delayed', 'text-orange-600', 'bg-orange-500'],
 ];
 
+// ===== The simplified page (2026-09-25) =====
+
 /**
- * The five stat tiles above a list.
- *
- * Separate from COUNTERS because `total` is the SUM of the others and so
- * cannot join a row whose whole promise is that its boxes do not overlap — but
- * the tiles are a dashboard, not a breakdown, and a total belongs on one.
- *
- * The icon is named rather than imported: this file is vocabulary, and pulling
- * react-icons in here would make every consumer of `dueLabel` carry the icon
- * set. The page maps the name to the component it already imports.
+ * The two piles the page opens on — the user's sketch had exactly these two
+ * cards — plus the company-wide one for whoever holds tasks.manage. The keys
+ * are the API's `scope` values.
  */
-export const COUNTER_TILES = [
-  { key: 'total', label: 'Total tasks', icon: 'FiList', colour: '#2a78d6' },
-  { key: 'overdue', label: 'Overdue', icon: 'FiAlertCircle', colour: '#D92D20' },
-  { key: 'pending', label: 'Pending', icon: 'FiClock', colour: '#F79009' },
-  { key: 'inReview', label: 'In review', icon: 'FiEye', colour: '#7c3aed' },
-  { key: 'completed', label: 'Completed', icon: 'FiCheckCircle', colour: '#12B76A' },
+export const PILES = [
+  { key: 'mine', label: 'Assigned to me', icon: 'FiInbox' },
+  { key: 'delegated', label: 'Assigned by me', icon: 'FiSend' },
+  { key: 'all', label: 'All tasks', icon: 'FiLayers', adminOnly: true },
 ];
+
+/**
+ * The five figures in the stat bar, and the query each one stands for.
+ *
+ * PENDING here means "not finished and not late" — the server's `pending`
+ * (not started) plus `inProgress` (started). Two boxes for "not done yet" was
+ * one more thing to read on a page the user asked to be simpler, and In
+ * progress never had a box of its own anyway. `overdue=false` is what lets a
+ * click on it list exactly what it counted (taskController.buildQuery).
+ */
+export const STAT_BAR = [
+  {
+    key: 'total', label: 'Total tasks', short: 'Total', icon: 'FiList', colour: '#2a78d6',
+    query: {},
+  },
+  {
+    key: 'overdue', label: 'Overdue', short: 'Overdue', icon: 'FiAlertCircle', colour: '#D92D20',
+    query: { overdue: 'true' },
+  },
+  {
+    key: 'pending', label: 'Pending', short: 'Pending', icon: 'FiClock', colour: '#F79009',
+    query: { status: `${STATUS.PENDING},${STATUS.IN_PROGRESS}`, overdue: 'false' },
+  },
+  {
+    key: 'inReview', label: 'In review', short: 'Review', icon: 'FiEye', colour: '#7c3aed',
+    query: { status: STATUS.SUBMITTED },
+  },
+  {
+    key: 'completed', label: 'Completed', short: 'Done', icon: 'FiCheckCircle', colour: '#12B76A',
+    query: { status: STATUS.COMPLETED },
+  },
+];
+
+/** A stat-bar figure out of the server's counters. */
+export function statValue(counters = {}, key) {
+  if (key === 'pending') return (Number(counters.pending) || 0) + (Number(counters.inProgress) || 0);
+  return Number(counters[key]) || 0;
+}
+
+/**
+ * THE STATUS DROPDOWN ON EVERY ROW — the user's six words, 2026-09-25:
+ * Approve · Reject · Delegate · Transfer · In Review · Completed.
+ *
+ * Presentation only, like everything in this file. WHETHER an item appears is
+ * the server's answer (`task.can`, computed per row by
+ * services/taskAccess.capabilitiesFor); this only turns those flags into menu
+ * items in one fixed order, so the web row and the phone card offer the same
+ * list for the same task.
+ *
+ * Two of the words mean different things depending on which side of the task
+ * you are on, and the `key` says which:
+ *
+ *   Approve   the doer, on a task not yet answered → accept (it starts)
+ *             the assigner, on a submission        → approve (it completes)
+ *   Reject    the doer                             → decline, with a reason
+ *             the assigner, on a submission        → send back, with a reason
+ *
+ * Completed is left out when Approve is offered: on a submission they are the
+ * same move, and two items doing one thing is how a menu stops being trusted.
+ * Claim is not one of the six but is offered on an open piece, because without
+ * it nobody could take one from the list.
+ */
+export function statusActions(task) {
+  const can = task?.can || {};
+  const out = [];
+  if (can.canClaim) {
+    out.push({ key: 'claim', label: 'Pick it up', hint: 'Nobody is on this piece yet — make it yours', tone: 'blue', icon: 'FiUserPlus' });
+  }
+  if (can.canApprove) {
+    out.push({ key: 'approve', label: 'Approve', hint: 'Sign off the work — it is completed', tone: 'green', icon: 'FiCheckCircle' });
+  } else if (can.canAccept) {
+    out.push({ key: 'accept', label: 'Approve', hint: 'Accept it and start working on it', tone: 'green', icon: 'FiThumbsUp' });
+  }
+  if (can.canReject) {
+    out.push({ key: 'sendBack', label: 'Reject', hint: 'Send it back with what still needs doing', tone: 'red', icon: 'FiRotateCcw' });
+  } else if (can.canDecline) {
+    out.push({ key: 'decline', label: 'Reject', hint: 'Turn it down — say why', tone: 'red', icon: 'FiThumbsDown' });
+  }
+  if (can.canDelegate || can.canSplit) {
+    out.push({ key: 'delegate', label: 'Delegate', hint: 'Hand it to someone — you review their work', tone: 'indigo', icon: 'FiGitBranch' });
+  }
+  if (can.canTransfer) {
+    out.push({ key: 'transfer', label: 'Transfer', hint: 'It went to the wrong person — move it fully', tone: 'slate', icon: 'FiRepeat' });
+  }
+  if (can.canSubmit) {
+    out.push({ key: 'submit', label: 'In Review', hint: 'Hand it in for the assigner to check', tone: 'violet', icon: 'FiSend' });
+  }
+  const canComplete = (can.transitions || []).some((t) => t.to === STATUS.COMPLETED);
+  if (canComplete && !can.canApprove) {
+    out.push({ key: 'complete', label: 'Completed', hint: 'Mark it done', tone: 'green', icon: 'FiCheck' });
+  }
+  return out;
+}
+
+/**
+ * What the dropdown's own button says: where the task is, from THIS reader's
+ * side. Two derived states beat the stored one, as on every task surface —
+ * a task everybody refused is "Declined", one nobody has answered yet is "Not
+ * accepted" — and a submission waiting on this reader says so.
+ */
+export function statusBadge(task) {
+  if (!task) return { label: '', key: STATUS.PENDING };
+  if (task.declined) return { label: 'Declined', key: 'DECLINED' };
+  if (task.status === STATUS.SUBMITTED && task.can?.canApprove) return { label: 'Needs your review', key: STATUS.SUBMITTED };
+  if (task.status === STATUS.PENDING && task.awaitingAcceptance) return { label: 'Not accepted', key: STATUS.PENDING };
+  return { label: statusLabel(task.status, task.kind), key: task.status };
+}
 
 // ===== Odds and ends =====
 

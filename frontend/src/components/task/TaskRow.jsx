@@ -1,116 +1,79 @@
 /**
  * One task, as a row.
  *
- * REWRITTEN 2026-09-22. Four things changed with the v4 backend, and every one
- * of them is visible here:
+ * REWRITTEN 2026-09-25 for the simplified page. What changed, and why:
  *
- *   THE WHOLE ROW IS TINTED by its priority — green once it is done, faded grey
- *   once it is called off. The palette is the SERVER's (`task.accent`), read
- *   through taskColors.accentStyle, so the list, the board card, the detail
- *   header and the app cannot drift into four slightly different reds.
+ *   ONE DROPDOWN INSTEAD OF A ROW OF BUTTONS. Accept, Decline, Claim, Submit,
+ *   Approve, Send back and Template used to sit on the row, a different set on
+ *   every row. The user's sketch has one dropdown on the right carrying Approve
+ *   · Reject · Delegate · Transfer · In Review · Completed — TaskStatusMenu,
+ *   whose button also IS the status chip, so the row says where a task is and
+ *   what can be done about it in one place.
  *
- *   THERE IS NO START BUTTON ANY MORE. Accepting a task starts it, so what
- *   somebody is offered on a fresh handover is Accept / Decline and nothing
- *   else. (config/tasks + routes/taskRoutes, 2026-09-22.)
+ *   NO "REQUEST" BADGE. Asking upward is gone (anybody may set anybody a
+ *   task), and the two rows raised as requests before that are listed with the
+ *   rest in the same words.
  *
- *   FINISHING IS A SUBMISSION. Submit hands it in; Approve and Send back are
- *   the assigner's two answers to that. All three carry a note the server will
- *   not let them go without, which is why they OPEN the task rather than firing
- *   on the press — the note box has to appear somewhere, and a row is not it.
+ * STILL TRUE, and load-bearing:
  *
- *   A PIECE IS A TASK. So a row can say "part of TSK-2026-00058", a parent can
- *   say "3 of 5 pieces", and a piece nobody has been named for offers a Claim.
+ *   THE WHOLE ROW IS TINTED by its priority — green once it is done, faded
+ *   grey once it is called off — from the SERVER's palette (`task.accent`), so
+ *   the list, the detail header and the app cannot drift apart.
  *
- * WHAT THE ROW SAYS, in the order a person reads it:
- *   the serial and the code     — which one this is
- *   the title                   — what it is
- *   who set it / who it is on   — whose it is
- *   the deadline                — when, in red once that has passed
- *   the progress bar            — how far along the doer says it is
- *   the chips                   — state, priority, points, pieces, more time
- *   the buttons                 — what THIS person may do about it
+ *   NOTHING HERE DECIDES WHAT ANYBODY MAY DO. The menu reads `task.can`, which
+ *   the server computed for this person and this row.
  *
- * EVERY BUTTON COMES FROM `task.can`. This file re-derives not one permission:
- * the server answered per row (services/taskAccess.capabilitiesFor) and the row
- * draws what it was told. The module this replaces derived its buttons in two
- * places, with two sets of bugs.
+ * WHAT THE ROW SAYS, in the order a person reads it: the serial and the code,
+ * the title, whose it is, the deadline, how far along it is, and — on the right
+ * — overdue / priority / points and the status dropdown.
  */
 import { Link } from 'react-router-dom';
+import { FiUser, FiLayers, FiCornerUpRight, FiUserPlus } from 'react-icons/fi';
 import {
-  FiThumbsUp, FiThumbsDown, FiSend, FiCheck, FiRotateCcw, FiBookmark,
-  FiUserPlus, FiCornerUpRight, FiUser, FiLayers, FiClock,
-} from 'react-icons/fi';
-import {
-  StatusChip, OverdueChip, ReviewChip, PriorityChip, DueChip, PointsChip,
-  PiecesChip, ExtensionChip, TransferredChip, ProgressBar, TaskMarks,
+  OverdueChip, PriorityChip, DueChip, PointsChip, PiecesChip, ExtensionChip,
+  TransferredChip, ProgressBar, TaskMarks,
 } from './TaskChips';
+import TaskStatusMenu from './TaskStatusMenu';
 import { useAccentStyle } from './taskColors';
 import { assigneeNames, personName } from '../../utils/taskLifecycle';
 
-/**
- * One shape for every action on the row.
- *
- * `min-h-[32px]`, never `h-8`: a Tailwind height utility opts the control out
- * of the phone's 40px touch floor (index.css names the exemption explicitly),
- * and a row action is exactly the sort of small target that floor exists for.
- * `bg-white/70` rather than a colour fill keeps the button legible on the
- * tinted row and, usefully, keeps it out of index.css's filled-button rule.
- */
-const ACTION = 'min-h-[32px] inline-flex items-center gap-1 rounded-xl border px-2.5 '
-  + 'text-xs font-medium bg-white/70 transition hover:bg-white';
-
 /** Anything inside one of these answers for itself; the row must not also fire. */
-const INTERACTIVE = 'button, a, input, select, textarea, label, [role="button"]';
+const INTERACTIVE = 'button, a, input, select, textarea, label, [role="button"], [role="menu"]';
 
 export default function TaskRow({
   task,
   base = '/employee/tasks',
-  /** Which side of the task this viewer is on — decides whose name is shown. */
+  /** Which pile this row is in — decides whose name is shown. */
   scope = 'mine',
-  /** Open it. The page shows the modal; the title stays a link for a new tab. */
+  /** The signed-in user's id, so a task you set yourself says "you". */
+  meId = '',
   onOpen,
-  onAccept,
-  onDecline,
-  /** The three note-bearing moves. Each opens the task with the box ready. */
-  onSubmit,
-  onApprove,
-  onReject,
-  onClaim,
-  onTemplate,
+  /** `(actionKey, task)` — a pick from the status dropdown. */
+  onAction,
   viewOnly = false,
 }) {
-  // What the SERVER says this person may do to this row. The list sends it per
-  // task (taskController.listTasks) for exactly this.
-  const can = task.can || null;
   const accent = useAccentStyle(task);
-
-  // A piece carries its parent's id raw on a list row and populated on a detail
-  // one, so both spellings are read rather than one being assumed.
   const parentId = task.parentTask?._id || task.parentTask || null;
 
-  const asking = task.kind === 'REQUEST';
-  // On "my tasks" the interesting name is who SET it; on anything else it is
-  // who it is ON. Showing both on every row is twice the text for half the
-  // information.
-  const who = scope === 'mine'
-    ? {
-      label: asking ? 'Asked by' : 'Assigned by',
-      name: task.createdByName || personName(task.createdBy) || '—',
-    }
-    : {
-      label: asking ? 'Asked of' : 'Assigned to',
-      name: assigneeNames(task.assignees),
-    };
+  const setterId = String(task.createdBy?._id || task.createdBy || '');
+  const byMe = Boolean(meId) && setterId === String(meId);
+  const onlyMe = byMe && (task.assignees || []).length === 1
+    && String(task.assignees[0].user?._id || task.assignees[0].user) === String(meId);
+
+  // On "Assigned to me" the interesting name is who SET it; on anything else it
+  // is who it is ON. Both on every row is twice the text for half the news.
+  const who = onlyMe
+    ? { label: 'Your own task', name: '' }
+    : scope === 'mine'
+      ? { label: 'Assigned by', name: byMe ? 'you' : (task.createdByName || personName(task.createdBy) || '—') }
+      : { label: 'Assigned to', name: task.isOpenPiece ? 'nobody yet' : assigneeNames(task.assignees) };
 
   /**
    * Clicking the row opens the task — except on something that is itself
-   * clickable. Without the guard, pressing Accept would fire the button AND
-   * open the modal behind it, which reads as the button having done the wrong
-   * thing.
-   *
-   * No `role="button"` on the wrapper: it contains a link and several buttons,
-   * and a button containing buttons is invalid and unusable with a keyboard.
-   * The title link is the keyboard route into the task.
+   * clickable, or the dropdown's menu would open AND the task behind it.
+   * No `role="button"` on the wrapper: it contains a link and a button, and a
+   * button containing buttons is invalid and unusable from a keyboard. The
+   * title link is the keyboard route in.
    */
   const openRow = (e) => {
     if (!onOpen) return;
@@ -118,20 +81,10 @@ export default function TaskRow({
     onOpen(task);
   };
 
-  /**
-   * THE BUG THIS REWRITE FIXES.
-   *
-   * The className used to be pasted INSIDE the `to` prop — `to={`${base}/${id}
-   * text-sm font-medium …`}` — so every title pointed at a URL with a stylesheet
-   * in it and none of them was styled. It stayed invisible because the row also
-   * had no other link to compare against.
-   *
-   * And NO `hover:underline` here, ever: index.css restyles every element
-   * carrying that class into a filled pill button, which is right for a row's
-   * action and very wrong for a title.
-   */
+  // A modified click is somebody asking for a new tab — let the browser have it.
+  // (And NO `hover:underline` on the title: index.css turns anything carrying
+  // that class into a filled pill button.)
   const openFromTitle = (e) => {
-    // A modified click is somebody asking for a new tab. Let the browser do it.
     if (!onOpen || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
     onOpen(task);
@@ -141,227 +94,103 @@ export default function TaskRow({
     <div
       onClick={openRow}
       style={accent}
-      className={`rounded-2xl px-3 py-2.5 shadow-sm transition hover:shadow sm:px-4 sm:py-3 ${
+      className={`task-row group rounded-2xl px-3 py-3 shadow-sm transition duration-200 hover:-translate-y-px hover:shadow-md sm:px-4 ${
         onOpen ? 'cursor-pointer' : ''
       }`}
     >
-      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-        {/* ── Which one it is ────────────────────────────────── */}
-        {/* Tabular figures so a column of serials lines up; the server numbers
-            them across pages (row 51 is "51"), so this is a serial rather than
-            an index and quoting "number 3" stays unambiguous. */}
-        <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-[11px] tabular-nums text-gray-400">
-          {task.serial ? `#${task.serial}` : ''}
-        </span>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        {/* ── Which one it is, and what ─────────────────────────── */}
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          {/* Tabular figures so a column of serials lines up; the server
+              numbers them across pages, so "#51" on page two is row 51. */}
+          <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-[11px] tabular-nums text-gray-400">
+            {task.serial ? `#${task.serial}` : ''}
+          </span>
 
-        {/* ── What it is ─────────────────────────────────────── */}
-        <div className="min-w-[12rem] flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {task.code && (
-              <span className="shrink-0 font-mono text-[11px] text-gray-400">{task.code}</span>
-            )}
-            <Link
-              to={`${base}/${task._id}`}
-              onClick={openFromTitle}
-              className="text-sm font-medium text-gray-900 transition-colors hover:text-blue-600"
-            >
-              {task.title}
-            </Link>
-            {asking && (
-              <span className="min-h-[20px] inline-flex items-center gap-1 rounded-lg bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600">
-                <FiCornerUpRight size={10} /> Request
-              </span>
-            )}
-          </div>
-
-          {/* Where this piece came from. A piece is a task of its own now, so
-              without this line its owner has no way of telling that the job
-              they are looking at is one fifth of something. */}
-          {task.isPiece && (
-            <div className="mt-1 text-[11px] text-gray-500">
-              <FiLayers size={10} className="mr-1 inline align-[-1px] text-gray-400" />
-              part of{' '}
-              {parentId ? (
-                <Link
-                  to={`${base}/${parentId}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-gray-600 transition-colors hover:text-blue-600"
-                  title={task.parentTitle || undefined}
-                >
-                  {task.parentCode || task.parentTitle || 'the parent task'}
-                </Link>
-              ) : (
-                <span className="text-gray-600">{task.parentCode || task.parentTitle || 'another task'}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              {task.code && (
+                <span className="shrink-0 font-mono text-[11px] text-gray-400">{task.code}</span>
               )}
+              <Link
+                to={`${base}/${task._id}`}
+                onClick={openFromTitle}
+                className="min-w-0 break-words text-sm font-semibold text-gray-900 transition-colors hover:text-blue-600"
+              >
+                {task.title}
+              </Link>
             </div>
-          )}
 
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-            <span className="inline-flex items-center gap-1">
-              <FiUser size={11} className="text-gray-400" />
-              <span className="text-gray-400">{who.label}</span>
-              <span className="text-gray-600">{who.name}</span>
-            </span>
-            <DueChip task={task} />
-            {task.category && <span className="text-gray-500">{task.category}</span>}
-            {task.frequencyLabel && task.frequencyLabel !== 'One time' && (
-              <span className="text-gray-500">{task.frequencyLabel}</span>
+            {/* Where a piece came from — without it, the person holding one
+                cannot tell the job in front of them is a fifth of something. */}
+            {task.isPiece && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                <FiLayers size={10} className="mr-1 inline align-[-1px] text-gray-400" />
+                part of{' '}
+                {parentId ? (
+                  <Link
+                    to={`${base}/${parentId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-gray-600 transition-colors hover:text-blue-600"
+                    title={task.parentTitle || undefined}
+                  >
+                    {task.parentCode || task.parentTitle || 'the parent task'}
+                  </Link>
+                ) : (
+                  <span className="text-gray-600">{task.parentCode || task.parentTitle || 'another task'}</span>
+                )}
+              </div>
             )}
-            {/* Passed on — so the row says the work has moved without needing
-                the delegation trail opened. */}
-            {task.delegationCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-gray-400">
-                <FiCornerUpRight size={11} /> passed on
+
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <FiUser size={11} className="shrink-0 text-gray-400" />
+                <span className="text-gray-400">{who.label}</span>
+                {who.name && <span className="truncate text-gray-600">{who.name}</span>}
               </span>
-            )}
-            <TaskMarks task={task} />
-          </div>
+              <DueChip task={task} />
+              {task.category && <span className="text-gray-500">{task.category}</span>}
+              {task.delegationCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-gray-400">
+                  <FiCornerUpRight size={11} /> passed on
+                </span>
+              )}
+              {task.isOpenPiece && (
+                <span className="inline-flex items-center gap-1 font-medium text-sky-700">
+                  <FiUserPlus size={11} /> open — pick it up
+                </span>
+              )}
+              <TaskMarks task={task} />
+            </div>
 
-          {/* How far along, as the doer declared it. Drawn only once there is
-              something to say: a 0% bar on every pending row is a page of grey
-              lines that mean nothing. */}
-          {Number(task.progress) > 0 && (
-            <ProgressBar task={task} className="mt-2 max-w-[220px]" />
-          )}
-        </div>
-
-        {/* ── The state, as chips ────────────────────────────── */}
-        {/* max-w-full: a shrink-0 flex item is as wide as ALL its chips on one
-            line, so on a phone the row of chips ran off the right edge instead
-            of wrapping — capping it at the row's width is what lets its own
-            flex-wrap happen. */}
-        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
-          {/* Two derived states matter more than the stored status does.
-              Declined wins: a task everybody has refused is not usefully
-              described as "Pending". */}
-          {task.declined ? (
-            <span className="min-h-[22px] inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-              <FiThumbsDown size={10} /> Declined
-            </span>
-          ) : task.awaitingAcceptance && task.status === 'PENDING' ? (
-            <span className="min-h-[22px] inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-              <FiClock size={10} /> Not yet accepted
-            </span>
-          ) : can?.canApprove ? (
-            // In review AND it is this person's to answer. "Needs your review"
-            // is the one thing a manager scanning a list is looking for, and
-            // "In review" does not say it.
-            <ReviewChip task={task} yours />
-          ) : (
-            <StatusChip task={task} />
-          )}
-
-          {/* Late. Solid red, beside the status rather than instead of it —
-              being late and being in progress are two facts, and the tint
-              deliberately stays the priority's so a late Low task still reads
-              as Low. */}
-          <OverdueChip task={task} />
-
-          {/* A piece nobody has been named for. Dashed, because it is an offer
-              rather than a state of the work. */}
-          {task.isOpenPiece && (
-            <span className="min-h-[22px] inline-flex items-center gap-1 rounded-lg border border-dashed border-gray-400 bg-white/60 px-2 py-0.5 text-xs font-medium text-gray-600">
-              <FiUserPlus size={10} /> Open — pick this up
-            </span>
-          )}
-
-          <PriorityChip priority={task.priority} />
-          <PiecesChip task={task} />
-          <ExtensionChip task={task} />
-          <TransferredChip task={task} />
-          {!asking && <PointsChip task={task} earned={task.status === 'COMPLETED'} />}
-        </div>
-
-        {/* ── What can be done about it ──────────────────────── */}
-        {!viewOnly && can && (
-          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
-            {/* ACCEPT AND DECLINE COME FIRST, and only while the handover is
-                unanswered — they are the first thing somebody handed work has
-                to decide, and burying them behind the detail page is how a task
-                sits unacknowledged for a week. Accepting also STARTS it, which
-                is why there is no third button beside them. */}
-            {can.canAccept && (
-              <button
-                type="button"
-                onClick={() => onAccept?.(task)}
-                title="Take this on — it starts straight away"
-                className={`${ACTION} border-emerald-200 text-emerald-700`}
-              >
-                <FiThumbsUp size={11} /> Accept
-              </button>
-            )}
-            {can.canAccept && can.canDecline && (
-              <button
-                type="button"
-                onClick={() => onDecline?.(task)}
-                className={`${ACTION} border-gray-200 text-gray-600 hover:border-red-300 hover:text-red-600`}
-              >
-                <FiThumbsDown size={11} /> Decline
-              </button>
-            )}
-
-            {can.canClaim && (
-              <button
-                type="button"
-                onClick={() => onClaim?.(task)}
-                className={`${ACTION} border-blue-200 text-blue-700`}
-              >
-                <FiUserPlus size={11} /> Claim
-              </button>
-            )}
-
-            {/* Handing it in, and the two answers to that. Each opens the task
-                because the server will not take any of them silently — see
-                services/taskEngine.move. */}
-            {can.canSubmit && (
-              <button
-                type="button"
-                onClick={() => onSubmit?.(task)}
-                className={`${ACTION} border-violet-200 text-violet-700`}
-              >
-                <FiSend size={11} /> {asking ? 'Answer' : 'Submit'}
-              </button>
-            )}
-            {can.canApprove && (
-              <button
-                type="button"
-                onClick={() => onApprove?.(task)}
-                className={`${ACTION} border-green-200 text-green-700`}
-              >
-                <FiCheck size={11} /> Approve
-              </button>
-            )}
-            {can.canReject && (
-              <button
-                type="button"
-                onClick={() => onReject?.(task)}
-                title="Send it back for more work — say what is missing"
-                className={`${ACTION} border-amber-200 text-amber-700`}
-              >
-                <FiRotateCcw size={11} /> Send back
-              </button>
-            )}
-
-            {onTemplate && !asking && (
-              <button
-                type="button"
-                onClick={() => onTemplate(task)}
-                title="Save this as a template"
-                className={`${ACTION} border-gray-200 text-gray-600 hover:text-blue-600`}
-              >
-                <FiBookmark size={11} /> Template
-              </button>
+            {/* Drawn once there is something to say: a 0% bar on every pending
+                row is a page of grey lines that mean nothing. */}
+            {Number(task.progress) > 0 && (
+              <ProgressBar task={task} className="mt-2 w-full max-w-[240px]" />
             )}
           </div>
-        )}
+        </div>
+
+        {/* ── The state, and what can be done about it ──────────── */}
+        {/* On a phone this becomes its own line under the title, chips left
+            and the dropdown right; from sm up it sits at the end of the row. */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pl-11 sm:shrink-0 sm:justify-end sm:pl-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <OverdueChip task={task} />
+            <PriorityChip priority={task.priority} />
+            <PiecesChip task={task} />
+            <ExtensionChip task={task} />
+            <TransferredChip task={task} />
+            <PointsChip task={task} earned={task.status === 'COMPLETED'} />
+          </div>
+          <TaskStatusMenu task={task} viewOnly={viewOnly} onAction={onAction} onOpen={onOpen} />
+        </div>
       </div>
 
-      {/* The reason a task was cancelled or reopened belongs on the row, not
-          behind a click — it is usually the only thing anybody wants to know. */}
+      {/* Why it was called off belongs on the row — it is usually the only
+          thing anybody wants to know about a cancelled task. */}
       {task.stateNote && task.status === 'CANCELLED' && (
-        <p className="mt-2 border-t border-black/5 pt-2 text-xs text-gray-500">
-          {task.stateNote}
-        </p>
+        <p className="mt-2 border-t border-black/5 pt-2 text-xs text-gray-500">{task.stateNote}</p>
       )}
     </div>
   );

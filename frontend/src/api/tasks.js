@@ -56,8 +56,9 @@ export const listTasks = (params = {}) => api.get('/tasks', { params }).then((r)
 /** The counters alone, for a badge — or beside a board with a tile filter on. */
 export const taskCounters = (params = {}) => api.get('/tasks/counters', { params }).then((r) => r.data);
 
-/** The four columns, already grouped and capped by the server — see TaskBoard. */
-export const taskBoard = (params = {}) => api.get('/tasks/board', { params }).then((r) => r.data);
+/* No `taskBoard` wrapper since 2026-09-25: the Kanban tab went with the
+ * page's simplification. GET /tasks/board still answers — an Android build
+ * that has not updated draws its board from it. */
 
 /** One task, its whole feed, and what the caller may do to it. */
 export const getTask = (id) => api.get(`/tasks/${id}`).then((r) => r.data);
@@ -71,7 +72,7 @@ export const overdueReport = (params = {}) => api.get('/tasks/dashboard/overdue'
 
 // ===== Writing =====
 
-/** Hand work over. The server decides whether it is a task or a request. */
+/** Hand work over. Empty `assignees` means "mine" — the server assigns it to its setter. */
 export const createTask = (body, upload) => {
   const { data } = toFormData(body, upload);
   return api.post('/tasks', data).then((r) => r.data);
@@ -121,7 +122,7 @@ export const declineTask = (id, reason) =>
  * Pass your own piece to somebody else.
  *
  * Not the same as reassigning (`updateTask`): this is the DOER handing their
- * job on, the direction rule still applies, and they keep being notified about
+ * job on (to anybody, since 2026-09-25), and they keep being notified about
  * it afterwards.
  */
 export const delegateTask = (id, to, note) =>

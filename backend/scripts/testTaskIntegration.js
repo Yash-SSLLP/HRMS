@@ -166,9 +166,10 @@ async function run() {
     Boolean(await refused(() => engine.splitTask({
       taskId: parent._id, user: manager, items: [{ title: 'More', points: 50 }],
     }))), true);
-  check('work cannot be pushed UPWARD as a piece', Boolean(await refused(() => engine.splitTask({
-    taskId: parent._id, user: dev, items: [{ title: 'Do this', assignee: ceo._id }],
-  }))), true);
+  // "Work cannot be pushed UPWARD as a piece" was checked here until
+  // 2026-09-25, when anybody became assignable (services/taskAccess
+  // .resolveAssignmentKind). Removed rather than inverted: the call was refused
+  // and changed nothing, so every figure checked below is unaffected.
 
   // ---- 3. claiming the open piece -----------------------------------------
   console.log('\nSomebody picks the open piece up');

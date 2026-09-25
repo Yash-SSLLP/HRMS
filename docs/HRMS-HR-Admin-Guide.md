@@ -426,7 +426,9 @@ There is no month picker on a leaderboard, because neither figure belongs to a m
 
 ## 10. Work and resources
 
-**Tasks.** Anybody can set a task; who they may set it for is decided by the org chart rather than by a permission. Work travels **down** the reporting line or **across** it — an upward ask becomes a **request** instead, which carries no points and is never counted in anybody's score. Every person picker opens on your own team and searches the whole company when you type.
+**Tasks.** Anybody can set a task, and anybody can be given one — there is no longer an upward "request" or an **Ask** button (September 2026). Every person picker opens on the person filling it in, their team, the people they report to and their own department, and searches the whole company by name, employee code, designation or department. Leaving **Assign to** empty makes it the setter's own task; a task you set yourself has no review step and **earns no points**, so nobody can score work they set themselves.
+
+The page is two piles — **Assigned to me** and **Assigned by me** (plus **All tasks** for anyone holding the tasks permission) — with a search box that also finds a task by the assignee's or assigner's name, a **Filter** for due date, department, people, priority and order, and one bar of five figures. Every task has a **status dropdown** offering only the moves that person may make: **Approve**, **Reject**, **Delegate**, **Transfer**, **In Review** and **Completed** (Approve and Reject mean accept and decline to the person doing it, and approve and send back to the person who set it). A department filter reads the other side of the pile: on your own tasks, the department of whoever set them; on the ones you set, the department of whoever holds them.
 
 A task moves through **To do → In progress → Review → Done**. Accepting it starts it; submitting it sends it to whoever set it, who approves it or sends it back with a note. Turn off **"I want to review this before it is marked done"** on the form if a particular task does not need that step.
 
@@ -436,7 +438,7 @@ A task can be **split into pieces**, each a task in its own right with its own o
 
 Doers can **ask for more time**; the person who set the task grants or refuses it, and granting it moves the deadline. Whether a delivery was punctual is fixed at the moment it was **handed in**, not the moment it was approved, so a slow review never makes somebody late.
 
-Above every list are five figures — Total, Overdue, Pending, Review and Completed — which never double-count, and a **Dashboard** tab scores each person on what they were given, what they finished, and how much of it was on time. Points settle into the same pool as the other incentives, but only once a SuperAdmin turns on **Settings → Tasks → points to pool**; until then they score without becoming money.
+The five figures — Total, Overdue, Pending, In review and Completed — never double-count, and the **Report** button scores each person on what they were given, what they finished, and how much of it was on time. Points settle into the same pool as the other incentives, but only once a SuperAdmin turns on **Settings → Tasks → points to pool**; until then they score without becoming money.
 
 **Projects** are maintained here alongside them.
 
@@ -515,9 +517,9 @@ Once an exit is **Completed**, a **Relieving Letter** button on it opens the let
 HR and managers get an admin surface in the Android app as well:
 
 - **Admin Hub** — organisation statistics, today's split, trend charts, the attendance heatmap, headcount by department, pending leave and upcoming holidays. Executives see a read-only badge.
-- **My Approvals** — the same chain inbox as the web, covering leave, regularizations, work-on-leave claims, resignations and clearance.
+- **Approvals** — one entry holding both inboxes: **Waiting on me** (the same chain inbox as the web — leave, regularizations, work-on-leave claims, resignations and clearance) and **HR desk** (the company-wide queues — leave, expenses, travel, regularizations, loans, profile changes, document swaps and salary changes). Each side shows its own count, and the screen opens on whichever has something waiting.
 - **My Team**, **today's and monthly attendance**, **directory**, **employee detail**, **add employee**, and **work locations**.
-- **Payroll** — list, approve, mark paid, and PDF.
+- **Payroll** — list, approve, mark paid, and the payslip PDF: **View** opens it, **Share** sends it on.
 - **Incentive** — Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard, for whoever holds a role in an incentive. It is its own group rather than a row under Payroll, and it is there whether or not that person has an admin section at all.
 - **Recruitment** — jobs, candidates and interview rounds.
 - **Rewards and Recognition** — pick the winners, save a draft, and announce.

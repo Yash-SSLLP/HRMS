@@ -502,6 +502,72 @@ async function testDateChips() {
     ['COMPLETED', 'CANCELLED', 'Done', 'APPROVED', 'DECLINED'].some((s) => open.includes(s)), false);
 }
 
+// ===== 2026-09-25: anybody assigns anybody, yourself included =====
+
+async function testAnyoneAssigns() {
+  console.log('\nAnybody may be given a task (2026-09-25)');
+  const junior = { _id: A, role: 'Employee', permissions: [] };
+
+  ok('an assignment is always a task',
+    (await access.resolveAssignmentKind(junior, [String(B)])).kind, 'TASK');
+  ok('…even when an old app asks for a request',
+    (await access.resolveAssignmentKind(junior, [String(B)], 'REQUEST')).kind, 'TASK');
+  let refused = null;
+  try { await access.resolveAssignmentKind(junior, []); } catch (e) { refused = e.status; }
+  ok('…but somebody still has to be named', refused, 400);
+
+  // Nobody scores a task they set themselves — checked before any settings or
+  // database read, so this is pure.
+  const points = require('../services/taskPoints');
+  const own = new Task({ title: 'x', createdBy: A, points: 100, assignees: [{ user: A }] });
+  ok('the setter earns nothing on their own task', await points.award(own, own.assignees[0], junior), null);
+  ok('…and the row is left unstamped', own.assignees[0].pointsAwardedAt, undefined);
+
+  const req = (query = {}) => ({ user: junior, query });
+  const clauses = (f) => f.$and || [];
+
+  // Requests are listed with the tasks now; only the old Requests tab and an
+  // explicit ask filter on kind.
+  ok('no kind asked for: every row, requests included',
+    clauses(await buildQuery(req(), { scope: 'mine' })).some((x) => 'kind' in x), false);
+  ok('an old app\'s Requests tab still gets its pile',
+    clauses(await buildQuery(req(), { scope: 'requests' })).some((x) => x.kind === 'REQUEST'), true);
+  ok('the dashboard\'s explicit TASK still narrows',
+    clauses(await buildQuery(req(), { scope: 'mine', kind: 'TASK' })).some((x) => 'kind' in x), true);
+
+  const searched = clauses(await buildQuery(req(), { scope: 'mine', q: 'ravi' }))
+    .find((x) => Array.isArray(x.$or) && x.$or.some((b) => b.title));
+  ok('search reaches the assignee and the assigner',
+    ['assignees.name', 'createdByName', 'assignees.employeeCode']
+      .every((k) => searched?.$or.some((b) => k in b)), true);
+
+  ok('Pending can be asked for without the late ones',
+    clauses(await buildQuery(req(), { scope: 'mine', overdue: 'false' })).some((x) => Array.isArray(x.$nor)), true);
+
+  // The department filter reads profiles — stubbed, so still no database.
+  const EmployeeProfile = require('../models/EmployeeProfile');
+  const realFind = EmployeeProfile.find;
+  let asked = null;
+  EmployeeProfile.find = (q) => {
+    asked = q;
+    return { select: () => ({ lean: async () => [{ user: B }, { user: C }] }) };
+  };
+  try {
+    const dept = async (scope) => clauses(await buildQuery(req(), { scope, department: 'Sales' }));
+    ok('department on "to me" = where the work came from',
+      (await dept('mine')).some((x) => x.createdBy?.$in?.length === 2), true);
+    ok('department on "by me" = where it went',
+      (await dept('delegated')).some((x) => x['assignees.user']?.$in?.length === 2), true);
+    ok('department elsewhere = either side',
+      (await dept('all')).some((x) => Array.isArray(x.$or) && x.$or.some((b) => b.createdBy) && x.$or.some((b) => b['assignees.user'])), true);
+    const rx = asked?.department?.$in?.[0];
+    ok('…matched exactly, so Sales is not Sales & Marketing',
+      [rx?.test('Sales'), rx?.test('sales'), rx?.test('Sales & Marketing')], [true, true, false]);
+  } finally {
+    EmployeeProfile.find = realFind;
+  }
+}
+
 async function run() {
   console.log('Task module — rules');
   testVocabulary();
@@ -513,6 +579,7 @@ async function run() {
   await testSubtasksAndFollowers();
   testLegacyRows();
   await testDateChips();
+  await testAnyoneAssigns();
 
   console.log(`\n${passed} passed, ${failed} failed.`);
   process.exit(failed ? 1 : 0);

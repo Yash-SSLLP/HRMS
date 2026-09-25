@@ -427,17 +427,18 @@ export default function DelegateModal({
 
   const team = useMemo(() => (meta?.team?.direct || []).map(String), [meta]);
 
-  /** Who work may be handed to — never upward, and never somebody on it already. */
+  /**
+   * Who work may be handed to — anybody but the people already on it. It was
+   * "never upward" until 2026-09-25, when anybody became assignable; the server
+   * stopped refusing it the same day (services/taskAccess).
+   */
   const assignable = useMemo(() => {
     const onIt = new Set((task?.assignees || []).map((a) => String(a.user?._id || a.user)));
-    return (meta?.people || []).filter((p) => p.canAssign !== false && !onIt.has(String(p._id)));
+    return (meta?.people || []).filter((p) => !onIt.has(String(p._id)));
   }, [meta, task]);
 
   /** A piece may go to somebody already on the task — they own that bit of it. */
-  const splitTo = useMemo(
-    () => (meta?.people || []).filter((p) => p.canAssign !== false),
-    [meta]
-  );
+  const splitTo = useMemo(() => meta?.people || [], [meta]);
 
   const budget = useMemo(() => {
     const served = Number(rights.pointsBudget);
@@ -583,7 +584,7 @@ export default function DelegateModal({
                 onChange={setTo}
                 max={1}
                 placeholder="Choose somebody…"
-                hint="Your own team first — type a name to search everyone you can set work for."
+                hint="Your own team first — search anyone by name, code, designation or department."
               />
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="delegate-note">

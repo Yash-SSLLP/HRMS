@@ -143,6 +143,37 @@ const markRead = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Mark a single notification UNREAD again (must belong to the caller).
+ *
+ * The phone's right swipe is a toggle (2026-09-25): an unread alert becomes
+ * read, a read one becomes unread — "keep this in front of me" without having
+ * to deal with it now. Clearing `readAt` also takes it out of the retention
+ * sweep's read-a-week-ago rule (services/notificationCleanupWorker.js), which
+ * is right: it is unread again, and unread alerts are never swept.
+ *
+ * Idempotent, like markRead: the phone flips the row before the server answers,
+ * so a retry must not be an error.
+ * @route PATCH /api/notifications/:id/unread
+ * @param {string} req.params.id - notification id
+ * @returns {{notification: Object}}
+ */
+const markUnread = asyncHandler(async (req, res) => {
+  const notification = await Notification.findOne({ _id: req.params.id, recipient: req.user._id });
+  if (!notification) {
+    res.status(404);
+    throw new Error('Notification not found');
+  }
+  if (notification.readAt) {
+    // `undefined`, not null: Mongoose $unsets it, so the document looks exactly
+    // like one that was never opened — every unread query asks `readAt: null`,
+    // which matches a missing field as well as an explicit null.
+    notification.readAt = undefined;
+    await notification.save();
+  }
+  res.json({ notification });
+});
+
+/**
  * Remove one notification from the caller's feed (must belong to the caller).
  *
  * Soft: it stamps `deletedAt` rather than deleting the document — see the
@@ -173,5 +204,5 @@ const deleteNotification = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  listNotifications, countNotifications, markAllRead, markRead, deleteNotification,
+  listNotifications, countNotifications, markAllRead, markRead, markUnread, deleteNotification,
 };
