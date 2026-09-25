@@ -24,18 +24,19 @@
  *   the server computed for this person and this row.
  *
  * WHAT THE ROW SAYS, in the order a person reads it: the serial and the code,
- * the title, whose it is, the deadline, how far along it is, and — on the right
- * — overdue / priority / points and the status dropdown.
+ * the title, who set it and who it is for, the day it was assigned, the
+ * deadline, how far along it is, and — on the right — overdue / priority /
+ * points and the status dropdown.
  */
 import { Link } from 'react-router-dom';
-import { FiUser, FiLayers, FiCornerUpRight, FiUserPlus } from 'react-icons/fi';
+import { FiUser, FiLayers, FiCornerUpRight, FiUserPlus, FiArrowRight, FiCalendar } from 'react-icons/fi';
 import {
   OverdueChip, PriorityChip, DueChip, PointsChip, PiecesChip, ExtensionChip,
   TransferredChip, ProgressBar, TaskMarks,
 } from './TaskChips';
 import TaskStatusMenu from './TaskStatusMenu';
 import { useAccentStyle } from './taskColors';
-import { assigneeNames, personName } from '../../utils/taskLifecycle';
+import { assigneeNames, personName, dayLabel } from '../../utils/taskLifecycle';
 
 /** Anything inside one of these answers for itself; the row must not also fire. */
 const INTERACTIVE = 'button, a, input, select, textarea, label, [role="button"], [role="menu"]';
@@ -43,8 +44,6 @@ const INTERACTIVE = 'button, a, input, select, textarea, label, [role="button"],
 export default function TaskRow({
   task,
   base = '/employee/tasks',
-  /** Which pile this row is in — decides whose name is shown. */
-  scope = 'mine',
   /** The signed-in user's id, so a task you set yourself says "you". */
   meId = '',
   onOpen,
@@ -60,13 +59,19 @@ export default function TaskRow({
   const onlyMe = byMe && (task.assignees || []).length === 1
     && String(task.assignees[0].user?._id || task.assignees[0].user) === String(meId);
 
-  // On "Assigned to me" the interesting name is who SET it; on anything else it
-  // is who it is ON. Both on every row is twice the text for half the news.
-  const who = onlyMe
-    ? { label: 'Your own task', name: '' }
-    : scope === 'mine'
-      ? { label: 'Assigned by', name: byMe ? 'you' : (task.createdByName || personName(task.createdBy) || '—') }
-      : { label: 'Assigned to', name: task.isOpenPiece ? 'nobody yet' : assigneeNames(task.assignees) };
+  // BOTH SIDES ON EVERY ROW, and the day it was handed over (user request
+  // 2026-09-25: "show also who assigned, to whom, date of assigned"). Each
+  // pile used to show only the other side — who set it on "Assigned to me",
+  // who holds it elsewhere — which left "All tasks" and "In the loop" naming
+  // half of every handover. A task you set yourself stays "Your own task".
+  const setBy = byMe ? 'you' : (task.createdByName || personName(task.createdBy) || '—');
+  // Set in somebody's name by somebody else (Task.onBehalf): who sent it.
+  const sentById = String(task.onBehalf?.by?._id || task.onBehalf?.by || '');
+  const sentBy = sentById ? (sentById === String(meId) ? 'you' : (task.onBehalf.byName || '')) : '';
+  const setFor = task.isOpenPiece ? 'nobody yet' : (assigneeNames(task.assignees) || '—');
+  // `assignedAt` moves when a task is transferred — it is the day the CURRENT
+  // holder got it, the same field the "Day assigned" order sorts on.
+  const assignedOn = dayLabel(task.assignedAt || task.createdAt);
 
   /**
    * Clicking the row opens the task — except on something that is itself
@@ -143,11 +148,33 @@ export default function TaskRow({
             )}
 
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <FiUser size={11} className="shrink-0 text-gray-400" />
-                <span className="text-gray-400">{who.label}</span>
-                {who.name && <span className="truncate text-gray-600">{who.name}</span>}
-              </span>
+              {onlyMe ? (
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <FiUser size={11} className="shrink-0 text-gray-400" />
+                  <span className="text-gray-600">Your own task</span>
+                </span>
+              ) : (
+                <>
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <FiUser size={11} className="shrink-0 text-gray-400" />
+                    <span className="text-gray-400">By</span>
+                    <span className="truncate text-gray-600">{setBy}</span>
+                    {sentBy && <span className="shrink-0 text-gray-400">(sent by {sentBy})</span>}
+                  </span>
+                  <span className="inline-flex min-w-0 items-center gap-1">
+                    <FiArrowRight size={11} className="shrink-0 text-gray-400" />
+                    <span className="text-gray-400">To</span>
+                    <span className="truncate text-gray-600">{setFor}</span>
+                  </span>
+                </>
+              )}
+              {assignedOn && (
+                <span className="inline-flex items-center gap-1">
+                  <FiCalendar size={11} className="shrink-0 text-gray-400" />
+                  <span className="text-gray-400">Assigned</span>
+                  <span className="text-gray-600">{assignedOn}</span>
+                </span>
+              )}
               <DueChip task={task} />
               {task.category && <span className="text-gray-500">{task.category}</span>}
               {task.delegationCount > 0 && (

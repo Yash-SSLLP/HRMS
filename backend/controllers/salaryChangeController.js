@@ -47,7 +47,8 @@ async function countPendingSalaryChanges(req) {
 /**
  * List salary changes.
  * @route GET /api/payroll/salary-changes  (payroll.manage; CEO/MD/God read)
- * @param {string} [req.query.status] - Pending (default) | Approved | Rejected | Withdrawn | all
+ * @param {string} [req.query.status] - Pending (default) | Approved | Rejected | Withdrawn | all |
+ *   decided (every one that is no longer Pending — the Approvals page's History)
  * @param {string} [req.query.kind] - setup | revision | structure
  * @param {string} [req.query.employee] - EmployeeProfile id
  * @param {string} [req.query.structure] - SalaryStructure id
@@ -56,12 +57,15 @@ async function countPendingSalaryChanges(req) {
  */
 const listSalaryChanges = asyncHandler(async (req, res) => {
   const status = req.query.status || 'Pending';
-  if (status !== 'all' && !SALARY_CHANGE_STATUSES.includes(status)) {
+  if (status !== 'all' && status !== 'decided' && !SALARY_CHANGE_STATUSES.includes(status)) {
     res.status(400);
-    throw new Error(`status must be one of ${SALARY_CHANGE_STATUSES.join(', ')} or all`);
+    throw new Error(`status must be one of ${SALARY_CHANGE_STATUSES.join(', ')}, decided or all`);
   }
   const base = {};
-  if (status !== 'all') base.status = status;
+  // 'decided' is asked for server-side rather than filtered out of 'all' on the
+  // client: the 200-row cap below would otherwise count waiting rows against it.
+  if (status === 'decided') base.status = { $ne: 'Pending' };
+  else if (status !== 'all') base.status = status;
   if (req.query.kind) {
     if (!SALARY_CHANGE_KINDS.includes(req.query.kind)) {
       res.status(400);

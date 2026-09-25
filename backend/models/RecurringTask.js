@@ -66,6 +66,14 @@ const recurringTaskSchema = new mongoose.Schema(
 
     assignees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     loopUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    // Who set the schedule up on `createdBy`'s behalf, copied onto every
+    // occurrence (see Task.onBehalf), so the person who typed it in can follow
+    // next week's as well as this one.
+    onBehalf: {
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      byName: { type: String, trim: true },
+      at: Date,
+    },
 
     // Copied onto every occurrence. See the docblock.
     voiceNote: {

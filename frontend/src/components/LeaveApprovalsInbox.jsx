@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
+import ApprovalsTabs, { useShowMore } from './ApprovalsTabs';
 import LeaveAmendModal from './LeaveAmendModal';
 import { useAuthStore } from '../store/authStore';
 import { hasPermission, isExecViewer } from '../config/permissions';
@@ -285,53 +286,26 @@ export default function LeaveApprovalsInbox({ onCount }) {
 
   const pendingIds = new Set(pending.map((r) => r._id));
   const others = history.filter((r) => !pendingIds.has(r._id));
+  const { shown, more } = useShowMore(others, history);
 
   // Only the FIRST load takes the panel away. Any later refetch happens under
   // the per-row busy state, so the list a reviewer is reading stays on screen.
   if (loading && !pending.length && !history.length) return <div className="text-gray-500">Loading…</div>;
-
-  // A segmented control, not an underline: these read as the buttons they are,
-  // and the count travels in a chip rather than in dim parentheses. `bg-white`
-  // and `bg-gray-100` both carry a dark-mode remap in index.css, and the active
-  // chip uses the portal accent rather than a hardcoded hue.
-  // On a phone the three do not fit one line (~364px of pills in ~285px), so
-  // the track wraps (index.css) and each pill grows to share its row evenly —
-  // two over one — instead of leaving a ragged gap. From sm up: as before.
-  const tabBtn = (key, label, count) => {
-    const on = tab === key;
-    return (
-      <button
-        type="button"
-        onClick={() => setTab(key)}
-        aria-pressed={on}
-        className={`inline-flex flex-auto justify-center sm:flex-initial sm:justify-start items-center gap-2 px-3.5 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-          on
-            ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
-            : 'text-gray-500 hover:text-gray-800'
-        }`}
-      >
-        {label}
-        <span
-          className={`text-[11px] font-bold leading-none px-1.5 py-0.5 rounded-full tabular-nums ${
-            on ? 'accent-bg on-accent' : 'bg-gray-200 text-gray-600'
-          }`}
-        >
-          {count}
-        </span>
-      </button>
-    );
-  };
 
   return (
     <div>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {/* Tabs: the actionable approval queue is kept separate from history. */}
-      <div className="flex sm:inline-flex items-center gap-1 p-1 mb-4 rounded-xl bg-gray-100 border border-gray-200">
-        {tabBtn('pending', 'To approve', pending.length)}
-        {tabBtn('emergency', 'Emergency', emergency.length)}
-        {tabBtn('history', 'History', others.length)}
-      </div>
+      <ApprovalsTabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'pending', label: 'To approve', count: pending.length },
+          { key: 'emergency', label: 'Emergency', count: emergency.length },
+          { key: 'history', label: 'History', count: others.length },
+        ]}
+      />
 
       {tab === 'pending' && (
         <div>
@@ -471,7 +445,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
             <p className="text-sm text-gray-400 italic">No other requests reference you.</p>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {others.slice(0, 30).map((r) => (
+              {shown.map((r) => (
                 <li key={r._id} className="py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <div className="min-w-0 sm:flex-1">
                     <div className="text-sm text-gray-800">
@@ -536,6 +510,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
               ))}
             </ul>
           )}
+          {more}
         </div>
       )}
       {amending && (

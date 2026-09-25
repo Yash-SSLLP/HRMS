@@ -442,17 +442,26 @@ async function listWorkOnLeaveClaims(userId, scope = 'pending', all = false) {
   // seesAllApprovals): claims are routed to one named approver, so without it a
   // SuperAdmin's inbox shows only the handful pointed at them.
   const mine = all ? {} : { 'workOnLeave.approver': userId };
+  // History also takes the claims this person DECIDED without being their
+  // approver — decideWorkOnLeave lets an HR holding leave.manage override —
+  // or an HR's own decisions would be missing from their own history.
   const filter = scope === 'history'
-    ? { ...mine, 'workOnLeave.status': { $exists: true, $ne: null } }
+    ? {
+      ...(all ? {} : { $or: [{ 'workOnLeave.approver': userId }, { 'workOnLeave.decidedBy': userId }] }),
+      'workOnLeave.status': { $exists: true, $ne: null },
+    }
     : { ...mine, 'workOnLeave.status': 'Pending' };
 
-  const rows = await Attendance.find(filter)
+  let query = Attendance.find(filter)
     .select('employee date checkIn checkOut hoursWorked status remarks workOnLeave')
     .populate({
       path: 'employee',
       select: 'employeeCode designation department user',
       populate: { path: 'user', select: 'firstName lastName email' },
-    })
+    });
+  // Who decided, by name — the record keeps only the id.
+  if (scope === 'history') query = query.populate('workOnLeave.decidedBy', 'firstName lastName');
+  const rows = await query
     .sort({ date: -1 })
     .limit(200)
     .lean();

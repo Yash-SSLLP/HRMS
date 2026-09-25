@@ -380,44 +380,52 @@ export const SUB_COUNTERS = [
 export const PILES = [
   { key: 'mine', label: 'Assigned to me', icon: 'FiInbox' },
   { key: 'delegated', label: 'Assigned by me', icon: 'FiSend' },
+  // Tasks somebody kept this person informed on ("Keep in the loop" on the
+  // assign form) — theirs to follow, not to do. User request 2026-09-25.
+  { key: 'loop', label: 'In the loop', icon: 'FiBell' },
   { key: 'all', label: 'All tasks', icon: 'FiLayers', adminOnly: true },
 ];
 
 /**
- * The five figures in the stat bar, and the query each one stands for.
+ * The six figures in the stat bar, and the query each one stands for.
  *
- * PENDING here means "not finished and not late" — the server's `pending`
- * (not started) plus `inProgress` (started). Two boxes for "not done yet" was
- * one more thing to read on a page the user asked to be simpler, and In
- * progress never had a box of its own anyway. `overdue=false` is what lets a
- * click on it list exactly what it counted (taskController.buildQuery).
+ * SIX since 2026-09-25 (the user's words and order): Total · Not Accepted Yet
+ * · Overdue · In Progress · Under Review · Completed. The five slices do not
+ * overlap — the server counts each task in one of them and Overdue wins
+ * (taskController.countersFor). "Not Accepted Yet" is PENDING: taking a job on
+ * moves it to In progress (taskEngine.accept), so a PENDING task is one nobody
+ * has taken on. `overdue=false` lets a click list exactly what the figure
+ * counted (taskController.buildQuery). Mirrors mobile utils/taskStatus.TILES.
  */
 export const STAT_BAR = [
   {
-    key: 'total', label: 'Total tasks', short: 'Total', icon: 'FiList', colour: '#2a78d6',
+    key: 'total', label: 'Total', icon: 'FiLayers', colour: '#2a78d6',
     query: {},
   },
   {
-    key: 'overdue', label: 'Overdue', short: 'Overdue', icon: 'FiAlertCircle', colour: '#D92D20',
+    key: 'pending', label: 'Not Accepted Yet', icon: 'FiClock', colour: '#DC6803',
+    query: { status: STATUS.PENDING, overdue: 'false' },
+  },
+  {
+    key: 'overdue', label: 'Overdue', icon: 'FiAlertCircle', colour: '#D92D20',
     query: { overdue: 'true' },
   },
   {
-    key: 'pending', label: 'Pending', short: 'Pending', icon: 'FiClock', colour: '#F79009',
-    query: { status: `${STATUS.PENDING},${STATUS.IN_PROGRESS}`, overdue: 'false' },
+    key: 'inProgress', label: 'In Progress', icon: 'FiPlayCircle', colour: '#0086C9',
+    query: { status: STATUS.IN_PROGRESS, overdue: 'false' },
   },
   {
-    key: 'inReview', label: 'In review', short: 'Review', icon: 'FiEye', colour: '#7c3aed',
+    key: 'inReview', label: 'Under Review', icon: 'FiEye', colour: '#7C3AED',
     query: { status: STATUS.SUBMITTED },
   },
   {
-    key: 'completed', label: 'Completed', short: 'Done', icon: 'FiCheckCircle', colour: '#12B76A',
+    key: 'completed', label: 'Completed', icon: 'FiCheckCircle', colour: '#079455',
     query: { status: STATUS.COMPLETED },
   },
 ];
 
-/** A stat-bar figure out of the server's counters. */
+/** A stat-bar figure out of the server's counters — one counter per figure. */
 export function statValue(counters = {}, key) {
-  if (key === 'pending') return (Number(counters.pending) || 0) + (Number(counters.inProgress) || 0);
   return Number(counters[key]) || 0;
 }
 

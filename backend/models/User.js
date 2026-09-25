@@ -166,6 +166,18 @@ const userSchema = new mongoose.Schema(
      * who already holds training.manage (see hasPermission).
      */
     trainingAccess: { type: Boolean, default: false },
+    /**
+     * ASSIGN A TASK ON SOMEBODY ELSE'S BEHALF (user request 2026-09-25).
+     *
+     * A standalone grant a Super Admin switches on per person — the assistant
+     * who hands out work for a director, the coordinator who books jobs for a
+     * department head. With it, the assign form offers "On behalf of": the task
+     * is SET BY that person (createdBy — they approve it, it sits in their
+     * "Assigned by me") and the real sender is kept on the task as
+     * Task.onBehalf. Without it the server refuses the field outright. A Super
+     * Admin holds it by role (services/taskAccess.canAssignOnBehalf).
+     */
+    taskProxyAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

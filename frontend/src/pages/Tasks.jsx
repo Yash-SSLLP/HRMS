@@ -5,7 +5,8 @@
  * sketch of what it should be instead, which this page now is, top to bottom:
  *
  *   TWO BIG CARDS    "Assigned to me" and "Assigned by me" — the two piles of
- *                    work, each wearing its own figures (plus "All tasks" for
+ *                    work, each wearing its own figures (plus "In the loop" —
+ *                    tasks you are kept informed on — and "All tasks" for
  *                    tasks.manage). They replaced a strip of six tabs: My
  *                    Tasks, Delegated, All Tasks, Requests, Kanban, Dashboard.
  *   SEARCH · FILTER  one box that finds a task by its name or by the name of
@@ -61,7 +62,7 @@ import { RANGES, STAT_BAR, TASK_PRIORITY } from '../utils/taskLifecycle';
  * rest are old links (Kanban, Requests, Dashboard) and the two header places,
  * each sent somewhere sensible rather than to an empty screen.
  */
-const TAB_IDS = ['mine', 'delegated', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests'];
+const TAB_IDS = ['mine', 'delegated', 'loop', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests'];
 
 const PAGE_SIZE = 50;
 
@@ -76,6 +77,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
   /** Which pile the list shows. An old link to a retired tab lands on your own. */
   const pile = tab === 'delegated' ? 'delegated'
+    : tab === 'loop' ? 'loop'
     : tab === 'all' && (isAdmin || !meta) ? 'all'
       : 'mine';
   /** The page itself, or one of the two places reached from the header. */

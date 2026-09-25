@@ -102,6 +102,8 @@ const SECTIONS = [
     icon: TbCurrencyRupee,
     tone: 'teal',
     Inbox: SalaryChangeInbox,
+    // The same list Salary Revisions embeds; only here does it carry History.
+    inboxProps: { withHistory: true },
     visible: canApproveSalaryChanges,
   },
 ];
@@ -252,7 +254,7 @@ export default function ApprovalsBoard() {
         <div className="px-4 sm:px-6 py-5">
           {sections.map((s) => (
             <div key={s.key} className={s.key === open.key ? '' : 'hidden'}>
-              <s.Inbox onCount={reporters[s.key]} />
+              <s.Inbox onCount={reporters[s.key]} {...(s.inboxProps || {})} />
             </div>
           ))}
         </div>

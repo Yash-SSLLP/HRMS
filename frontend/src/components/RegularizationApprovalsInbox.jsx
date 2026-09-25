@@ -16,15 +16,22 @@
  * second kind reaches anyone holding `attendance.manage`, walled to their own
  * company, and covers employees with no configured approvers too — those come
  * straight here rather than climbing first.
+ *
+ * HISTORY (2026-09-25): every request whose chain I am on, or that I decided
+ * as HR at the final step — with the named rungs' chips and, below them, who
+ * made the final decision, when, and the note.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
-import { formatTime12 } from '../utils/time';
+import ApprovalsTabs, { useShowMore, OUTCOME_COLORS, HistoryEmpty } from './ApprovalsTabs';
+import { ChainProgress } from './LeaveApprovalsInbox';
+import { formatTime12, formatDateTime12 } from '../utils/time';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 const empName = (r) => `${r.employee?.firstName || ''} ${r.employee?.lastName || ''}`.trim() || 'Employee';
+const personName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 
 // Every time of day in the portal is 12-hour with a meridiem. formatTime12
 // takes both a Date/ISO (the stored punch) and an "HH:mm" string (what the
@@ -64,15 +71,24 @@ function stepLabel(r) {
 
 export default function RegularizationApprovalsInbox({ onCount }) {
   const [rows, setRows] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [tab, setTab] = useState('pending'); // 'pending' | 'history'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [notes, setNotes] = useState({});
 
+  const loadHistory = () => api.get('/approvals/regularizations?scope=history')
+    .then(({ data }) => setHistory(data.requests || []));
+
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/approvals/regularizations?scope=pending');
+      const [{ data }] = await Promise.all([
+        api.get('/approvals/regularizations?scope=pending'),
+        // History failing must not take the queue down with it.
+        loadHistory().catch(() => {}),
+      ]);
       setRows(data.requests || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load regularizations');
@@ -88,6 +104,10 @@ export default function RegularizationApprovalsInbox({ onCount }) {
   // means "all clear" and never "not fetched yet".
   useEffect(() => { if (!loading) onCount?.(rows.length); }, [loading, rows, onCount]);
 
+  // History minus anything still in the actionable list above.
+  const pendingIds = new Set(rows.map((r) => r._id));
+  const others = history.filter((r) => !pendingIds.has(r._id));
+  const { shown, more } = useShowMore(others, history);
 
   const decide = async (id, action) => {
     setBusy(`${id}:${action}`); setError('');
@@ -95,6 +115,8 @@ export default function RegularizationApprovalsInbox({ onCount }) {
       await api.patch(`/approvals/regularizations/${id}/${action}`, { note: notes[id] || undefined });
       // Drop it from the queue: it either advanced to the next approver or ended.
       setRows((prev) => prev.filter((r) => r._id !== id));
+      // Either way it belongs in History now; catch it up quietly.
+      loadHistory().catch(() => {});
     } catch (err) {
       setError(err.response?.data?.message || `Could not ${action} the request`);
     } finally {
@@ -109,7 +131,16 @@ export default function RegularizationApprovalsInbox({ onCount }) {
       {error && (
         <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
-      {rows.length === 0 ? (
+      <ApprovalsTabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'pending', label: 'To approve', count: rows.length },
+          { key: 'history', label: 'History', count: others.length },
+        ]}
+      />
+
+      {tab === 'pending' && (rows.length === 0 ? (
         <ApprovalsEmpty message="No regularizations are waiting on you." hint="These are corrections to a missed or mistaken punch." />
       ) : (
         <div className="space-y-3">
@@ -176,7 +207,53 @@ export default function RegularizationApprovalsInbox({ onCount }) {
             </div>
           ))}
         </div>
-      )}
+      ))}
+
+      {tab === 'history' && (others.length === 0 ? (
+        <HistoryEmpty>No other regularizations reference you.</HistoryEmpty>
+      ) : (
+        <>
+          <ul className="divide-y divide-gray-100">
+            {shown.map((r) => {
+              const finalBy = personName(r.reviewedBy);
+              return (
+                <li key={r._id} className="py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <div className="min-w-0 sm:flex-1">
+                    <div className="text-sm text-gray-800">
+                      {empName(r)}
+                      <span className="text-xs text-gray-500"> · {r.type} · {fmtDate(r.date)}</span>
+                    </div>
+                    <div className="mt-1 space-y-0.5">
+                      <ChangeLine label="In" from={r.previousCheckIn || r.current?.checkIn} to={r.requestedCheckIn} />
+                      <ChangeLine label="Out" from={r.previousCheckOut || r.current?.checkOut} to={r.requestedCheckOut} />
+                    </div>
+                    {r.reason && <div className="text-xs text-gray-600 mt-0.5 break-words">“{r.reason}”</div>}
+                    {r.approvalChain?.length > 0 && (
+                      <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
+                    )}
+                    {/* The final decision is not a chip: HR's rung is not in the
+                        chain. Named here, with when and why. */}
+                    {r.status !== 'Pending' && (finalBy || r.reviewedAt) && (
+                      <div className="text-[11px] text-gray-500 mt-0.5 break-words">
+                        {r.status}{finalBy ? ` by ${finalBy}` : ''}
+                        {r.reviewedAt ? ` · ${formatDateTime12(r.reviewedAt)}` : ''}
+                        {r.reviewNote ? ` — “${r.reviewNote}”` : ''}
+                      </div>
+                    )}
+                    {r.status === 'Pending' && !r.currentApprover && (
+                      <div className="text-[11px] text-gray-500 mt-0.5">With HR for the final decision</div>
+                    )}
+                  </div>
+                  <span className={`inline-block self-start sm:self-center px-2 py-0.5 text-xs rounded-lg shrink-0 ${OUTCOME_COLORS[r.status] || ''}`}>
+                    {r.status}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {more}
+        </>
+      ))}
     </div>
   );
 }

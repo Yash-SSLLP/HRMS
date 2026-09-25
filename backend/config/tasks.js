@@ -438,9 +438,14 @@ const EXTENSION_STATES = Object.values(EXTENSION_STATUS);
  *
  * `priority` cannot sort on the stored string (Low < Medium < Urgent
  * alphabetically is exactly wrong), so the controller sorts on a computed rank.
+ *
+ * `dir` is each order's NATURAL way round — what a request without `?dir=`
+ * gets, and what GET /tasks/meta tells the clients so their arrows show it.
+ * `due` runs latest deadline first since 2026-09-25 (the owner's call: the list
+ * opens on "Due date ↓"); a task with no deadline sorts after every dated one.
  */
 const SORTS = {
-  due: { label: 'Due date', field: 'dueDate', dir: 1 },
+  due: { label: 'Due date', field: 'dueDate', dir: -1 },
   assigned: { label: 'Day assigned', field: 'assignedAt', dir: -1 },
   pending: { label: 'Pending days', field: 'assignedAt', dir: 1, openFirst: true },
   points: { label: 'Points', field: 'points', dir: -1 },

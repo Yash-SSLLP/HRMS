@@ -31,8 +31,10 @@ export const DEFAULT_FILTERS = {
   assignedTo: '',
   assignedBy: '',
   priority: '',
+  // Latest deadline first (the owner's call, 2026-09-25). Sent explicitly, so
+  // the arrow and the list can never disagree.
   sort: 'due',
-  dir: '',
+  dir: 'desc',
 };
 
 /** Comma lists, as the API takes them. */
@@ -53,16 +55,24 @@ export function activeFilterCount(f = {}) {
     + split(f.priority).length;
 }
 
-/** The orders, for the moment before GET /tasks/meta lands (mirrors config/tasks.SORTS). */
+/**
+ * The orders, for the moment before GET /tasks/meta lands (mirrors
+ * config/tasks.SORTS). `dir` is each one's natural way round — what picking it
+ * starts on.
+ */
 export const FALLBACK_SORTS = [
-  { key: 'due', label: 'Due date' },
-  { key: 'assigned', label: 'Day assigned' },
-  { key: 'pending', label: 'Pending days' },
-  { key: 'points', label: 'Points' },
-  { key: 'priority', label: 'Priority' },
-  { key: 'title', label: 'Title' },
-  { key: 'created', label: 'Newest first' },
+  { key: 'due', label: 'Due date', dir: 'desc' },
+  { key: 'assigned', label: 'Day assigned', dir: 'desc' },
+  { key: 'pending', label: 'Pending days', dir: 'asc' },
+  { key: 'points', label: 'Points', dir: 'desc' },
+  { key: 'priority', label: 'Priority', dir: 'asc' },
+  { key: 'title', label: 'Title', dir: 'asc' },
+  { key: 'created', label: 'Newest first', dir: 'desc' },
 ];
+
+/** The way round an order starts on — meta's word, else the fallback's. */
+const naturalDir = (sorts, key) => (sorts.find((s) => s.key === key)?.dir
+  || FALLBACK_SORTS.find((s) => s.key === key)?.dir || 'asc');
 
 function Section({ icon: Icon, title, hint, children }) {
   return (
@@ -109,6 +119,9 @@ export default function TaskFilters({ open, onClose, meta, scope = 'mine', value
   const people = meta?.people || [];
   const departments = meta?.departments || [];
   const sorts = meta?.sorts?.length ? meta.sorts : FALLBACK_SORTS;
+  // The way round in force: the one picked, else the order's natural one — so
+  // the arrow shows what the list is really doing, and reversing always flips it.
+  const dir = draft.dir || naturalDir(sorts, draft.sort);
 
   /**
    * Which side of the task the department filter reads — the server decides
@@ -269,7 +282,7 @@ export default function TaskFilters({ open, onClose, meta, scope = 'mine', value
             <div className="flex items-center gap-2">
               <select
                 value={draft.sort}
-                onChange={(e) => set({ sort: e.target.value, dir: '' })}
+                onChange={(e) => set({ sort: e.target.value, dir: naturalDir(sorts, e.target.value) })}
                 aria-label="Sort by"
                 className="min-h-[40px] flex-1 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-700"
               >
@@ -277,12 +290,12 @@ export default function TaskFilters({ open, onClose, meta, scope = 'mine', value
               </select>
               <button
                 type="button"
-                onClick={() => set({ dir: draft.dir === 'desc' ? 'asc' : 'desc' })}
+                onClick={() => set({ dir: dir === 'desc' ? 'asc' : 'desc' })}
                 aria-label="Reverse the order"
-                title={draft.dir === 'desc' ? 'Descending' : draft.dir === 'asc' ? 'Ascending' : 'Natural order — click to reverse'}
+                title={`${dir === 'desc' ? 'Descending' : 'Ascending'} — click to reverse`}
                 className="grid w-10 h-10 shrink-0 place-items-center rounded-xl border border-gray-200 text-gray-600 transition hover:border-gray-400"
               >
-                {draft.dir === 'desc' ? <FiArrowDown size={15} /> : <FiArrowUp size={15} />}
+                {dir === 'desc' ? <FiArrowDown size={15} /> : <FiArrowUp size={15} />}
               </button>
             </div>
           </Section>

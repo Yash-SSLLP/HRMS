@@ -37,6 +37,28 @@ clicked and list exactly what it counted). With no `kind` asked for, every row
 is listed, legacy requests included; `scope=requests` still answers for an
 older APK, and the dashboard still asks for TASK explicitly.
 
+**Later the same day** (user requests): a fourth pile, **In the loop** —
+`scope=loop`, the tasks whose `loopUsers` hold me ("Keep in the loop" on the
+assign form), to follow rather than do; `scopes` now carries `loop` too. On
+the phone it is a slim bar under the two cards, like "All tasks". Pieces stay
+under their parent there, as on every pile but "Assigned to me". And **the
+bar's figures ignore the clicked figure**, the same rule as the cards: picking
+Overdue on Total 66 · Overdue 52 · Pending 2 used to recount the bar inside
+the 52 (Total 52 · Pending 0). `counters` are now over the list's filters
+minus `status`/`overdue`/`late` **and `q`** (typing in the search box counted
+the bar down letter by letter — a search finds rows, it is not a question about
+the pile); the `scopes` figures drop the same four. `total` still counts the
+rows, for paging. The list opens sorted by deadline **latest first**
+(`SORTS.due.dir = -1`; meta's `sorts` carry each order's natural `dir` so the
+clients draw the right arrow).
+
+**Tasks on behalf** (`User.taskProxyAccess`, `POST /tasks { onBehalfOf }`):
+`createdBy` is the person it is FOR, `onBehalf = { by, byName, at }` records
+who typed it in. The sender KEEPS NOTHING — no pile, no `canSee`, not a
+follower, not in `audience()` (user decision the same day; the first cut
+listed it under their "Assigned by me"). Other grounds still count: an
+assignee, somebody in the loop, or a `tasks.manage` holder sees it as usual.
+
 **Remarks.** The engine still refuses a silent move. The dropdown asks for a
 remark only where somebody else cannot act without it (Reject → decline or send
 back); elsewhere an empty box sends a default ("Approved.", "Submitted for
@@ -217,8 +239,8 @@ frontend/src/pages/TaskDetail.jsx         a thin shell around the detail body
 frontend/src/utils/taskLifecycle.js       the shared web vocabulary (+ PILES, STAT_BAR, statusActions)
 frontend/src/components/task/
   taskColors.js        ONE accentFor(task) — prefers the server's `accent`
-  TaskPileCards.jsx    "Assigned to me" / "Assigned by me" (+ "All tasks")
-  TaskStatBar.jsx      the five figures as one bar; each is a filter
+  TaskPileCards.jsx    "Assigned to me" / "Assigned by me" / "In the loop" (+ "All tasks")
+  TaskStatBar.jsx      the six figures (3×2 on a phone, one row from sm); each is a filter
   TaskStatusMenu.jsx   the status dropdown on every row
   TaskActionDialog.jsx the one-line remark a status move asks for
   TaskRow.jsx          one list row, tinted, with its serial
@@ -989,7 +1011,7 @@ Six sorts (`?sort=&dir=`), from `config/tasks.SORTS`:
 
 | key | means |
 |---|---|
-| `due` | soonest deadline first — the default |
+| `due` | latest deadline first — the default (since 2026-09-25; undated tasks last) |
 | `assigned` | day it was handed over, newest first |
 | `pending` | **how long it has been sitting there**: open work first, oldest first |
 | `points` | what it is worth |

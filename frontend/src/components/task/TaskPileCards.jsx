@@ -7,8 +7,10 @@
  * the API's `scope` — and each wears its own figures, so the pile you are not
  * looking at still says whether it needs you.
  *
- * Whoever holds tasks.manage gets a third, "All tasks": the company-wide view
- * they had before, kept so the simplification takes nothing away from them.
+ * A third, "In the loop" (2026-09-25): the tasks somebody kept this person
+ * informed on — to follow, not to do. Whoever holds tasks.manage gets a fourth,
+ * "All tasks": the company-wide view they had before, kept so the
+ * simplification takes nothing away from them.
  *
  * THE BIG NUMBER IS WHAT IS STILL OPEN — everything not finished or called
  * off. "Total" is on the stat bar below; on a card the question is "how much is
@@ -19,10 +21,17 @@
  * changes its colour and adds a glow drawn with box-shadow, so picking a pile
  * cannot move anything on the page (the layout-stability rule).
  */
-import { FiInbox, FiSend, FiLayers, FiCheck } from 'react-icons/fi';
+import { FiInbox, FiSend, FiLayers, FiCheck, FiBell } from 'react-icons/fi';
 import { PILES } from '../../utils/taskLifecycle';
 
-const ICONS = { FiInbox, FiSend, FiLayers };
+const ICONS = { FiInbox, FiSend, FiLayers, FiBell };
+
+/**
+ * The grid for 2, 3 or 4 cards. Two per row on a phone; from lg up, one row.
+ * With three, the odd one out spans the phone row rather than sitting alone in
+ * half of it. Spelled out because Tailwind only emits classes it can read.
+ */
+const GRID = { 2: 'grid-cols-2', 3: 'grid-cols-2 lg:grid-cols-3', 4: 'grid-cols-2 lg:grid-cols-4' };
 
 /** What is still open in a pile: everything bar the finished and the called-off. */
 export function openCount(c = {}) {
@@ -33,7 +42,7 @@ export default function TaskPileCards({ isAdmin = false, active, onPick, scopes 
   const piles = PILES.filter((p) => !p.adminOnly || isAdmin);
 
   return (
-    <div className={`grid gap-3 sm:gap-4 ${piles.length === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
+    <div className={`grid gap-3 sm:gap-4 ${GRID[piles.length] || GRID[2]}`}>
       {piles.map((pile, i) => {
         const Icon = ICONS[pile.icon] || FiInbox;
         const on = active === pile.key;
@@ -99,7 +108,8 @@ export default function TaskPileCards({ isAdmin = false, active, onPick, scopes 
               {c && review > 0 && (
                 <span className="inline-flex items-center gap-1 text-violet-700">
                   <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />
-                  {review} {pile.key === 'mine' ? 'in review' : 'to review'}
+                  {/* Only the piles you sign off have something "to review". */}
+                  {review} {pile.key === 'delegated' || pile.key === 'all' ? 'to review' : 'in review'}
                 </span>
               )}
               {c && (

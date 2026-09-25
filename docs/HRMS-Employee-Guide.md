@@ -306,9 +306,9 @@ A question you have already answered is never asked again, and a lesson you have
 
 ### 9.1 Tasks
 
-Work handed to you, and work you have handed on. The screen opens on two cards — **Assigned to me** and **Assigned by me** — each showing how much is still open, what is overdue and what is waiting on a review. Tap one to see that pile. Under them are a **search** box (a task's name, or the name of whoever set it or holds it), a **Filter** button (due date, department, people, priority and the order), and one bar of five figures — **Total, Overdue, Pending, In review, Completed**. Tap a figure to see only those tasks; tap it again to see them all.
+Work handed to you, and work you have handed on. The screen opens on two cards — **Assigned to me** and **Assigned by me** — each showing how much is still open, what is overdue and what is waiting on a review. Tap one to see that pile. **In the loop** beside them holds the tasks somebody asked to keep you informed on — yours to follow, not to do. Under them are a **search** box (a task's name, or the name of whoever set it or holds it), a **Filter** button (due date, department, people, priority and the order), and six figures — **Total, Not Accepted Yet, Overdue, In Progress, Under Review, Completed**. **Not Accepted Yet** is work nobody has taken on: accepting a task moves it to In Progress. A late task counts under Overdue only, so the five after Total never add up to more than it. Tap a figure to see only those tasks; tap it again to see them all. The figures themselves stay put when you pick one or type in the search box — they always describe the whole pile.
 
-Every task has a **status button** on the right. Tap it to see what you can do with that task right now — only the moves that apply to you are offered:
+Every task shows who set it, who it is for and the day it was assigned, beside its deadline. If the Backend has allowed you, the assign form also has **On behalf of**: pick whose task it is and it goes out in their name — they approve it, and it shows that you sent it. It is theirs from then on: it does not stay in your own task list. Every task has a **status button** on the right. Tap it to see what you can do with that task right now — only the moves that apply to you are offered:
 
 - **Approve** — on a task just given to you, accept it (this also starts it). On a task you set that has been handed in, sign it off as completed.
 - **Reject** — turn down a task given to you, with a reason; or send a handed-in task back with what still needs doing.
@@ -339,7 +339,7 @@ A task moves through four stages:
 
 **If a task reached you by mistake**, use **Transfer**. That is not the same as delegating: the task leaves you completely and the new person holds it as if it had always been theirs. You stop hearing about it.
 
-Every task in the list has a serial number, and the **Filter** button can sort by deadline, day assigned, how long it has been pending, points or priority.
+Every task in the list has a serial number, and the **Filter** button can sort by deadline, day assigned, how long it has been pending, points or priority. The list opens sorted by deadline, **latest first**. To turn an order round, press the arrow beside it on the web, or tap the order again in the app.
 
 ### 9.2 Assets
 
@@ -385,7 +385,7 @@ Each month HR recognises an **Employee of the Month** for the whole company and 
 
 These appear only when they are relevant to you:
 
-- **Approvals** — if you are anyone's reporting manager, or sit in someone's approval hierarchy, their requests land here for your decision. This covers leave, attendance regularizations, work on a leave day, resignations, and no-dues clearance.
+- **Approvals** — if you are anyone's reporting manager, or sit in someone's approval hierarchy, their requests land here for your decision. This covers leave, attendance regularizations, work on a leave day, resignations, and no-dues clearance. Each type also has its own **History** beside **To approve**: the requests already decided, with who decided each one, when, and the note they left.
 - **My Team** — for managers, a presence board of your direct reports showing who is in, on leave, or absent, with times, WFH tags and hours.
 - **My Interviews** — rounds where you are the interviewer. Open one and you get what the earlier rounds already found: their ratings, what they praised, what they flagged and what they left for you to probe. Join the meeting, read the résumé, then record your own assessment — a score per competency, strengths, concerns, a recommendation, and overall remarks. Nothing is compulsory — whatever you have entered is recorded when you save — but the remarks are the whole record of the round: HR, the next round’s interviewer and the CEO/MD all read them.
 - **Onboarding** — your joining checklist, which you move through as you go.

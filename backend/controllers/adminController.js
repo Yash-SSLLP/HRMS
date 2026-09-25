@@ -694,6 +694,25 @@ const setTrainingAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke "assign tasks on somebody else's behalf" (Task.onBehalf).
+ * Role-independent like the grants above it: the person who hands out work for
+ * a director is usually their assistant, whose role says nothing about it.
+ * @route PATCH /api/admin/users/:id/task-proxy-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, taskProxyAccess}}
+ */
+const setTaskProxyAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.taskProxyAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, taskProxyAccess: user.taskProxyAccess });
+});
+
+/**
  * Give somebody a role in ONE incentive tab — or take it away.
  *
  * Not a switch: the Incentive section holds several incentives and each is run
@@ -1597,6 +1616,7 @@ module.exports = {
   setAssetsAccess,
   setLoansAccess,
   setTrainingAccess,
+  setTaskProxyAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,

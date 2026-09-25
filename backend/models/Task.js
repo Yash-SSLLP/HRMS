@@ -376,6 +376,21 @@ const taskSchema = new mongoose.Schema(
      */
     originalAssignees: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
+    /**
+     * SET ON SOMEBODY ELSE'S BEHALF (2026-09-25). `createdBy` is the person
+     * the task is FROM — they approve it and it is theirs to edit — and this is
+     * who actually typed it in, and when. Only somebody holding
+     * User.taskProxyAccess can write it (taskController.createTask). They can
+     * see the task, it sits in their "Assigned by me", and they hear every
+     * update (taskNotify.followers) — but it is not theirs to approve or edit.
+     * Absent on every task set the ordinary way.
+     */
+    onBehalf: {
+      by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
+      byName: { type: String, trim: true },
+      at: Date,
+    },
+
     // ===== Splitting it up =====
     /**
      * THE TASK THIS IS A PIECE OF. Null on a task in its own right.
@@ -833,6 +848,8 @@ taskSchema.methods.audience = function audience() {
   for (const a of this.assignees || []) ids.add(String(a.user?._id || a.user));
   for (const u of this.loopUsers || []) ids.add(String(u._id || u));
   for (const u of this.originalAssignees || []) ids.add(String(u._id || u));
+  // Not `onBehalf.by`: whoever set it in somebody else's name keeps nothing of
+  // it (services/taskAccess.visibleFilter, user decision 2026-09-25).
   return [...ids].filter(Boolean);
 };
 

@@ -110,6 +110,7 @@ async function mintOccurrence(schedule, dueDate) {
       createdByName: schedule.createdByName,
       assignees: (schedule.assignees || []).map((u) => ({ user: u })),
       loopUsers: schedule.loopUsers,
+      ...(schedule.onBehalf?.by ? { onBehalf: schedule.onBehalf } : {}),
       priority: schedule.priority,
       points: schedule.points,
       dueDate,

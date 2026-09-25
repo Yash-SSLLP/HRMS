@@ -9,6 +9,11 @@
  *   - Salary Revisions — everything waiting, and one employee's on their card;
  *   - Salary Structures — new percentages for a template people are paid on.
  *
+ * HISTORY (2026-09-25), on the Approvals page only (`withHistory`): a second
+ * tab of every change already decided — approved, turned down or withdrawn —
+ * with who decided it, when, and the note. Salary Revisions and Salary
+ * Structures keep the plain queue.
+ *
  * WHAT A VIEWER MAY DO comes from the server on each row (`canDecide`,
  * `canWithdraw`) rather than being worked out here, so a button is only ever
  * offered to somebody the server will let press it.
@@ -17,6 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
+import ApprovalsTabs, { useShowMore, HistoryEmpty } from './ApprovalsTabs';
 import { confirmDialog } from './dialogs';
 import { formatDateTime12 } from '../utils/time';
 import { useNavCountsStore } from '../store/navCountsStore';
@@ -128,15 +134,20 @@ function ChangeLines({ r }) {
  * @param {string} [props.className] - on the outer box, so spacing around an
  *   embedded list disappears with it when `hideWhenEmpty` hides it
  * @param {string} [props.emptyMessage] / [props.emptyHint]
+ * @param {boolean} [props.withHistory] - add a History tab of decided changes
  */
 export default function SalaryChangeInbox({
   onCount, kind, employee, status = 'Pending', reloadKey, onChanged, onOpen,
   hideWhenEmpty = false, title, excludeEmployee, className = '', emptyMessage, emptyHint,
+  withHistory = false,
 }) {
   const [allRows, setRows] = useState([]);
   const rows = useMemo(() => (excludeEmployee
     ? allRows.filter((r) => String(r.employee?._id || r.employee || '') !== String(excludeEmployee))
     : allRows), [allRows, excludeEmployee]);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [tab, setTab] = useState('pending'); // 'pending' | 'history' (withHistory only)
+  const { shown: historyShown, more: historyMore } = useShowMore(historyRows, historyRows);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -145,16 +156,22 @@ export default function SalaryChangeInbox({
   const load = useCallback(async () => {
     setError('');
     try {
-      const { data } = await api.get('/payroll/salary-changes', {
-        params: { status, ...(kind ? { kind } : {}), ...(employee ? { employee } : {}) },
-      });
+      const scope = { ...(kind ? { kind } : {}), ...(employee ? { employee } : {}) };
+      const [{ data }, decided] = await Promise.all([
+        api.get('/payroll/salary-changes', { params: { status, ...scope } }),
+        // History failing must not take the queue down with it.
+        withHistory
+          ? api.get('/payroll/salary-changes', { params: { status: 'decided', ...scope } }).catch(() => null)
+          : null,
+      ]);
       setRows(data.requests || []);
+      if (decided) setHistoryRows(decided.data.requests || []);
     } catch (err) {
       setError(errMsg(err, 'Failed to load salary changes'));
     } finally {
       setLoading(false);
     }
-  }, [status, kind, employee]);
+  }, [status, kind, employee, withHistory]);
 
   useEffect(() => { load(); }, [load, reloadKey]);
   // Held back until the first load finishes, so 0 means "all clear" and never
@@ -222,6 +239,9 @@ export default function SalaryChangeInbox({
     }
   };
 
+  const onHistory = withHistory && tab === 'history';
+  const list = onHistory ? historyShown : rows;
+
   if (loading) return hideWhenEmpty ? null : <div className="text-sm text-gray-500">Loading…</div>;
   if (hideWhenEmpty && rows.length === 0 && !error) return null;
 
@@ -236,14 +256,26 @@ export default function SalaryChangeInbox({
       {error && (
         <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
-      {rows.length === 0 ? (hideWhenEmpty ? null : (
+      {withHistory && (
+        <ApprovalsTabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { key: 'pending', label: 'To approve', count: rows.filter((r) => r.status === 'Pending').length },
+            { key: 'history', label: 'History', count: historyRows.length },
+          ]}
+        />
+      )}
+      {onHistory && historyRows.length === 0 ? (
+        <HistoryEmpty>No salary change has been decided yet.</HistoryEmpty>
+      ) : list.length === 0 ? (hideWhenEmpty ? null : (
         <ApprovalsEmpty
           message={emptyMessage || 'No salary change is waiting for approval.'}
           hint={emptyHint || 'When HR changes a saved salary, revises a CTC or re-splits a salary structure people are paid on, it waits here until a CEO, MD or Super Admin approves it.'}
         />
       )) : (
         <div className="space-y-3">
-          {rows.map((r) => {
+          {list.map((r) => {
             const pending = r.status === 'Pending';
             return (
               <div key={r._id} className="bg-white border border-gray-200 rounded-lg p-4">
@@ -327,6 +359,7 @@ export default function SalaryChangeInbox({
           })}
         </div>
       )}
+      {onHistory && historyMore}
     </div>
   );
 }

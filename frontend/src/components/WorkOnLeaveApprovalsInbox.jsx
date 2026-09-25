@@ -11,29 +11,43 @@
  * Approving returns the leave day to the employee and turns the day into a
  * normal worked one; rejecting keeps the punches on the record for audit but
  * leaves the day as leave. HR is notified either way by the server.
+ *
+ * HISTORY (2026-09-25): the claims already ruled on — routed to me, or decided
+ * by me as an HR override — with who decided, when, and the note.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
-import { formatTime12, formatHours } from '../utils/time';
+import ApprovalsTabs, { useShowMore, OUTCOME_COLORS, HistoryEmpty } from './ApprovalsTabs';
+import { formatTime12, formatHours, formatDateTime12 } from '../utils/time';
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 const empName = (r) =>
   `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
+const personName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
 const t12 = (v) => formatTime12(v) || '—';
 
 export default function WorkOnLeaveApprovalsInbox({ onCount }) {
   const [rows, setRows] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [tab, setTab] = useState('pending'); // 'pending' | 'history'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [notes, setNotes] = useState({});
 
+  const loadHistory = () => api.get('/approvals/work-on-leave?scope=history')
+    .then(({ data }) => setHistory(data.claims || []));
+
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/approvals/work-on-leave?scope=pending');
+      const [{ data }] = await Promise.all([
+        api.get('/approvals/work-on-leave?scope=pending'),
+        // History failing must not take the queue down with it.
+        loadHistory().catch(() => {}),
+      ]);
       setRows(data.claims || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load punch-ins on leave days');
@@ -49,12 +63,18 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
   // means "all clear" and never "not fetched yet".
   useEffect(() => { if (!loading) onCount?.(rows.length); }, [loading, rows, onCount]);
 
+  // History minus anything still in the actionable list above.
+  const pendingIds = new Set(rows.map((r) => r._id));
+  const others = history.filter((r) => !pendingIds.has(r._id));
+  const { shown, more } = useShowMore(others, history);
 
   const decide = async (id, action) => {
     setBusy(`${id}:${action}`); setError('');
     try {
       await api.patch(`/approvals/work-on-leave/${id}/${action}`, { note: notes[id] || undefined });
       setRows((prev) => prev.filter((r) => r._id !== id));
+      // The decision belongs in History now; catch it up quietly.
+      loadHistory().catch(() => {});
     } catch (err) {
       setError(err.response?.data?.message || `Could not ${action} the punch-in`);
     } finally {
@@ -69,7 +89,17 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
       {error && (
         <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
       )}
-      {rows.length === 0 ? (
+
+      <ApprovalsTabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'pending', label: 'To approve', count: rows.length },
+          { key: 'history', label: 'History', count: others.length },
+        ]}
+      />
+
+      {tab === 'pending' && (rows.length === 0 ? (
         <ApprovalsEmpty message="No punch-ins on a leave day to review." hint="One appears here when somebody clocks in on a day they were approved to be away." />
       ) : (
         <div className="space-y-3">
@@ -130,7 +160,52 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
             </div>
           ))}
         </div>
-      )}
+      ))}
+
+      {tab === 'history' && (others.length === 0 ? (
+        <HistoryEmpty>No punch-ins on a leave day have been decided yet.</HistoryEmpty>
+      ) : (
+        <>
+          <ul className="divide-y divide-gray-100">
+            {shown.map((r) => {
+              const claim = r.workOnLeave || {};
+              const decidedBy = personName(claim.decidedBy) || claim.approverName || '';
+              return (
+                <li key={r._id} className="py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <div className="min-w-0 sm:flex-1">
+                    <div className="text-sm text-gray-800">
+                      {empName(r)}
+                      {r.employee?.employeeCode && (
+                        <span className="ml-2 text-xs font-mono text-gray-400">{r.employee.employeeCode}</span>
+                      )}
+                      <span className="text-xs text-gray-500"> · {fmtDate(r.date)} · {claim.leaveType || 'Leave'}</span>
+                    </div>
+                    <div className="text-xs text-gray-600 mt-0.5">
+                      In {t12(r.checkIn)} · Out {t12(r.checkOut)}
+                      {r.hoursWorked > 0 && <span className="text-gray-400"> · {formatHours(r.hoursWorked)}</span>}
+                    </div>
+                    {claim.status && claim.status !== 'Pending' && (
+                      <div className="text-[11px] text-gray-500 mt-0.5 break-words">
+                        {claim.status}{decidedBy ? ` by ${decidedBy}` : ''}
+                        {claim.decidedAt ? ` · ${formatDateTime12(claim.decidedAt)}` : ''}
+                        {claim.status === 'Approved' && claim.leaveDayReturned ? ' · leave day returned' : ''}
+                        {claim.note ? ` — “${claim.note}”` : ''}
+                      </div>
+                    )}
+                    {claim.status === 'Pending' && claim.approverName && (
+                      <div className="text-[11px] text-gray-500 mt-0.5">Waiting on {claim.approverName}</div>
+                    )}
+                  </div>
+                  <span className={`inline-block self-start sm:self-center px-2 py-0.5 text-xs rounded-lg shrink-0 ${OUTCOME_COLORS[claim.status] || ''}`}>
+                    {claim.status || '—'}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {more}
+        </>
+      ))}
     </div>
   );
 }

@@ -424,7 +424,13 @@ const listMyClearances = asyncHandler(async (req, res) => {
  */
 async function regularizationInboxFilter(req, scope) {
   const base = chainInboxFilter(req.user, scope);
-  if (scope !== 'pending' || seesAllApprovals(req.user) || !hasPermission(req.user, 'attendance.manage')) {
+  if (scope === 'history') {
+    // The same gap on the way out: an HR who decided a request at the final
+    // rung is not in its `approvalChain`, so their own decisions were missing
+    // from their own history. decideAsHr stamps `reviewedBy`.
+    return seesAllApprovals(req.user) ? base : { $or: [base, { reviewedBy: req.user._id }] };
+  }
+  if (seesAllApprovals(req.user) || !hasPermission(req.user, 'attendance.manage')) {
     return base;
   }
   const hrQueue = { ...AWAITING_HR };
@@ -435,10 +441,14 @@ async function regularizationInboxFilter(req, scope) {
 const listMyRegularizationApprovals = asyncHandler(async (req, res) => {
   const scope = req.query.scope === 'history' ? 'history' : 'pending';
   const filter = await regularizationInboxFilter(req, scope);
-  const requests = await Regularization.find(filter)
+  let query = Regularization.find(filter)
     .populate('employee', 'firstName lastName email role')
-    .sort({ date: -1 })
-    .lean();
+    .sort({ date: -1 });
+  // History says WHO decided the final rung (HR is not in the chain the chips
+  // draw), and is capped rather than paged — the Backend's history is every
+  // request ever filed.
+  if (scope === 'history') query = query.populate('reviewedBy', 'firstName lastName').limit(200);
+  const requests = await query.lean();
 
   // Attach the day's CURRENT punches so the approver sees "from → to" rather
   // than only the value being asked for. previousCheckIn/Out on the request

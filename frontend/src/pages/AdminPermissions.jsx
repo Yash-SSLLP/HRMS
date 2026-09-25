@@ -80,6 +80,7 @@ const GRANT_HELP = {
   expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
   training: 'Opens the training module: the schedule, and booking on it. They can create a training, set its dates and times, add participants, edit it and cancel it — the same page HR uses, reached from My Portal. A standalone grant because whoever organises training is as often a department lead or a coordinator as HR, and the capability list only reaches HR Manager and Manager accounts.',
+  taskProxy: 'Assign a task on somebody else’s behalf: the assign form offers “On behalf of”, and the task goes out in that person’s name — they approve it and it sits in their “Assigned by me” — while the record keeps who actually sent it. The sender does not keep it: once sent, it leaves their own lists and they hear nothing more about it. For an assistant or coordinator who hands out work for a director or a department head.',
   loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
@@ -308,6 +309,10 @@ function AccessTab({ showGuide, setShowGuide }) {
     path: 'loans-access', field: 'loansAccess', enabled: !u.loansAccess, errorText: 'Could not update loan access',
   });
 
+  const toggleTaskProxy = (u) => toggleAccess(u, {
+    path: 'task-proxy-access', field: 'taskProxyAccess', enabled: !u.taskProxyAccess, errorText: 'Could not update the tasks permission',
+  });
+
   const toggleTraining = (u) => toggleAccess(u, {
     path: 'training-access', field: 'trainingAccess', enabled: !u.trainingAccess, errorText: 'Could not update training access',
   });
@@ -470,7 +475,7 @@ function AccessTab({ showGuide, setShowGuide }) {
   // Capabilities. THIRTEEN — it is the colSpan of the loading skeleton and of
   // the "no accounts match" panel, so a column added above without touching
   // this leaves both a cell short of the table.
-  const COLS = 13;
+  const COLS = 14;
 
   return (
     <div>
@@ -636,6 +641,7 @@ function AccessTab({ showGuide, setShowGuide }) {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.loans}>Loans</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.training}>Training</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.taskProxy}>Tasks on behalf</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.incentive}>Incentive</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
@@ -734,6 +740,17 @@ function AccessTab({ showGuide, setShowGuide }) {
                     {isExternal ? outside : (
                       <ToggleSwitch checked={!!u.trainingAccess} busy={isBusy('trainingAccess')} label="Training"
                         title={GRANT_HELP.training} onChange={() => toggleTraining(u)} />
+                    )}
+                  </td>
+
+                  {/* A Super Admin sets tasks for anybody by role, so there
+                      is nothing to switch on for them. */}
+                  <td className="px-4 py-3">
+                    {isExternal ? outside : u.role === 'SuperAdmin' ? (
+                      <span className="text-xs text-gray-400" title="Holds it by role.">By role</span>
+                    ) : (
+                      <ToggleSwitch checked={!!u.taskProxyAccess} busy={isBusy('taskProxyAccess')} label="Assign tasks on behalf"
+                        title={GRANT_HELP.taskProxy} onChange={() => toggleTaskProxy(u)} />
                     )}
                   </td>
 

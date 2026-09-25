@@ -1010,6 +1010,13 @@ export default function TaskDetailBody({
           <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
             <Fact icon={FiUser} label={isRequest ? 'Asked by' : 'Assigned by'}>
               {task.createdByName || personName(task.createdBy) || '—'}
+              {/* Set in their name by somebody else (Task.onBehalf) — who
+                  actually sent it is part of the record. */}
+              {task.onBehalf?.byName && (
+                <span className="block text-xs font-normal text-gray-500">
+                  Sent by {task.onBehalf.byName} on their behalf
+                </span>
+              )}
             </Fact>
 
             {/* WHO SIGNS IT OFF. After a delegation this is NOT the creator —

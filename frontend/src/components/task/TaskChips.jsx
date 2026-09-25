@@ -308,6 +308,7 @@ export function EmptyTasks({ scope, onAssign, filtered = false, olderHint = true
   const lines = {
     mine: ['Nothing assigned to you', `Tasks people set for you — and the ones you set yourself — land here.${older}`],
     delegated: ['Nothing you assigned is open', `Hand something over and it will show up here.${older}`],
+    loop: ['Nothing to follow', `When somebody keeps you in the loop on a task, it shows up here.${older}`],
     all: ['No open tasks', `Nothing is waiting on anybody.${older}`],
   };
   const [title, body] = filtered

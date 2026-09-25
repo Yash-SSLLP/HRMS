@@ -5,11 +5,15 @@
  * asset/due as it's handed back, add any remarks for HR, and Submit; once every
  * item is ticked the section is cleared. Scoped server-side to sections
  * assigned to the current user.
+ *
+ * HISTORY (2026-09-25): every leaver whose checklist had a section of mine,
+ * newest last working day first — with what I submitted, when and my remarks.
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
+import ApprovalsTabs, { useShowMore, OUTCOME_COLORS, HistoryEmpty } from './ApprovalsTabs';
 import { useAuthStore } from '../store/authStore';
 import { formatDateTime12 } from '../utils/time';
 
@@ -24,6 +28,8 @@ export default function ExitClearanceInbox({ onCount }) {
   const me = useAuthStore((s) => s.user);
   const myId = me?._id || me?.id;
   const [rows, setRows] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [tab, setTab] = useState('pending'); // 'pending' | 'history'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -34,10 +40,17 @@ export default function ExitClearanceInbox({ onCount }) {
   // exit + section; a section with no entry is showing exactly what is saved.
   const [drafts, setDrafts] = useState({});
 
+  const loadHistory = () => api.get('/approvals/clearances?scope=history')
+    .then(({ data }) => setHistory(data.requests || []));
+
   const load = async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/approvals/clearances?scope=pending');
+      const [{ data }] = await Promise.all([
+        api.get('/approvals/clearances?scope=pending'),
+        // History failing must not take the queue down with it.
+        loadHistory().catch(() => {}),
+      ]);
       setRows(data.requests || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load no-dues clearances');
@@ -53,6 +66,12 @@ export default function ExitClearanceInbox({ onCount }) {
   // means "all clear" and never "not fetched yet".
   useEffect(() => { if (!loading) onCount?.(rows.length); }, [loading, rows, onCount]);
 
+  // History minus the leavers still waiting on me above, newest leaver first.
+  const pendingIds = new Set(rows.map((r) => r._id));
+  const others = history
+    .filter((r) => !pendingIds.has(r._id))
+    .sort((a, b) => new Date(b.lastWorkingDay || 0) - new Date(a.lastWorkingDay || 0));
+  const { shown, more } = useShowMore(others, history);
 
   // Only the sections assigned to me on a given exit.
   const mySections = (r) =>
@@ -92,6 +111,7 @@ export default function ExitClearanceInbox({ onCount }) {
       setRows((prev) => (stillMine
         ? prev.map((r) => (r._id === exit._id ? { ...r, clearanceSections: sections } : r))
         : prev.filter((r) => r._id !== exit._id)));
+      loadHistory().catch(() => {});
       if (saved?.completed) {
         toast.success(`${s.title} no-dues cleared for ${empName(exit)} — HR has been told.`);
       } else {
@@ -110,8 +130,17 @@ export default function ExitClearanceInbox({ onCount }) {
   return (
     <div>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      <ApprovalsTabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'pending', label: 'To clear', count: rows.length },
+          { key: 'history', label: 'History', count: others.length },
+        ]}
+      />
+
       {/* No inner card — ApprovalsBoard's section card is the surface. */}
-      <div>
+      {tab === 'pending' && <div>
         {rows.length === 0 ? (
           <ApprovalsEmpty message="No no-dues clearances are waiting on you." hint="A leaver's checklist appears here while your department still has to sign off." />
         ) : (
@@ -225,7 +254,49 @@ export default function ExitClearanceInbox({ onCount }) {
             ))}
           </ul>
         )}
-      </div>
+      </div>}
+
+      {tab === 'history' && (others.length === 0 ? (
+        <HistoryEmpty>No other no-dues checklists reference you.</HistoryEmpty>
+      ) : (
+        <>
+          <ul className="divide-y divide-gray-100">
+            {shown.map((r) => (
+              <li key={r._id} className="py-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                <div className="min-w-0 sm:flex-1">
+                  <div className="text-sm text-gray-800">
+                    {empName(r)}
+                    <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {r.employee?.designation || ''}{r.employee?.department ? ` · ${r.employee.department}` : ''} · last working day {fmtDate(r.lastWorkingDay)}
+                  </div>
+                  {/* The Super Admin's history is every leaver, most with no
+                      section of theirs — show the whole checklist then. */}
+                  {(mySections(r).length ? mySections(r) : (r.clearanceSections || [])).map((s) => {
+                    const ticked = (s.items || []).filter((it) => it.done).length;
+                    return (
+                      <div key={s.key} className="mt-1 text-[11px] text-gray-600 break-words">
+                        <span className="font-medium text-gray-700">{s.title}</span>
+                        {' · '}
+                        {s.completed
+                          ? <span className="text-green-700">Cleared</span>
+                          : <span className="text-amber-700">{ticked} of {(s.items || []).length} ticked</span>}
+                        {s.submittedAt ? ` · submitted ${formatDateTime12(s.submittedAt)}${s.submittedByName ? ` by ${s.submittedByName}` : ''}` : ' · never submitted'}
+                        {s.remarks ? ` — “${s.remarks}”` : ''}
+                      </div>
+                    );
+                  })}
+                </div>
+                <span className={`inline-block self-start px-2 py-0.5 text-xs rounded-lg shrink-0 ${OUTCOME_COLORS[r.status] || ''}`}>
+                  {r.status === 'InClearance' ? 'In notice' : r.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {more}
+        </>
+      ))}
     </div>
   );
 }

@@ -43,7 +43,7 @@ import { toast } from 'react-toastify';
 import {
   FiX, FiPlus, FiLink, FiPaperclip, FiImage, FiBell, FiFlag, FiRepeat,
   FiCalendar, FiAward, FiUsers, FiEye, FiTag, FiTrash2, FiCheck, FiSettings,
-  FiGitBranch,
+  FiGitBranch, FiUserCheck,
 } from 'react-icons/fi';
 import { VoiceRecorder } from './VoiceNote';
 import ReminderEditor from './ReminderEditor';
@@ -77,6 +77,8 @@ const EMPTY = {
   title: '',
   description: '',
   assignees: [],
+  // Whose task this is, when it is set on somebody else's behalf — see below.
+  onBehalfOf: '',
   loopUsers: [],
   category: '',
   priority: 'Medium',
@@ -160,12 +162,26 @@ export default function AssignTaskModal({
   const myId = String(meta?.me || people.find((p) => p.relation === 'self')?._id || '');
 
   /**
+   * ON SOMEBODY ELSE'S BEHALF (user request 2026-09-25) — offered only to
+   * somebody a Super Admin granted it (meta.canAssignOnBehalf); the server
+   * refuses the field from anybody else. The task goes out in THEIR name: they
+   * are its setter and approve it, and an empty "Assign to" means theirs, not
+   * mine. Naming yourself is just an ordinary task.
+   */
+  const onBehalf = meta?.canAssignOnBehalf && form.onBehalfOf && String(form.onBehalfOf) !== myId
+    ? String(form.onBehalfOf) : '';
+  const onBehalfName = onBehalf
+    ? (people.find((p) => String(p._id) === onBehalf)?.name || 'them') : '';
+  /** Whose task an empty box, or only this person, makes it. */
+  const setterId = onBehalf || myId;
+
+  /**
    * Nobody chosen, or only yourself: it is YOUR task. The server assigns an
    * empty box to its setter, gives a self-only task no points and completes it
    * without a review — so the form says so and hides what would not apply.
    */
   const selfOnly = form.assignees.length === 0
-    || (form.assignees.length === 1 && String(form.assignees[0]) === myId);
+    || (form.assignees.length === 1 && String(form.assignees[0]) === setterId);
 
   const recurring = form.repeat.frequency !== 'ONCE';
 
@@ -242,13 +258,14 @@ export default function AssignTaskModal({
         reminders: form.reminders,
         links: form.links,
         ...(linkedTask ? { linkedTask } : {}),
+        ...(onBehalf ? { onBehalfOf: onBehalf } : {}),
       };
       const { task } = await T.createTask(body, { voice, files });
 
       toast.success(
         recurring ? 'Repeating task set up.'
-          : selfOnly ? 'Added to your tasks.'
-            : 'Task assigned.'
+          : selfOnly ? (onBehalf ? `Added to ${onBehalfName}'s tasks.` : 'Added to your tasks.')
+            : onBehalf ? `Task assigned on behalf of ${onBehalfName}. It is on their list now, not yours.` : 'Task assigned.'
       );
 
       /**
@@ -260,7 +277,7 @@ export default function AssignTaskModal({
        * not read as "the task was not assigned", which is the one thing that
        * definitely did happen.
        */
-      if (task?._id && wanted.length) {
+      if (task?._id && wanted.length && !onBehalf) {
         try {
           const { children } = await T.splitTask(task._id, pieceItems(pieces, budget));
           const n = children?.length || wanted.length;
@@ -292,7 +309,7 @@ export default function AssignTaskModal({
     } finally {
       setSaving(false);
     }
-  }, [form, selfOnly, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose]);
+  }, [form, selfOnly, onBehalf, onBehalfName, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose]);
 
   if (!open) return null;
 
@@ -343,6 +360,22 @@ export default function AssignTaskModal({
             maxLength={5000}
           />
 
+          {/* ── On whose behalf ──────────────────────────────────── */}
+          {meta?.canAssignOnBehalf && (
+            <PeoplePicker
+              label="On behalf of"
+              icon={FiUserCheck}
+              people={people.filter((p) => String(p._id) !== myId)}
+              value={form.onBehalfOf}
+              onChange={(id) => set({ onBehalfOf: (Array.isArray(id) ? id[0] : id) || '' })}
+              max={1}
+              placeholder="Yourself — or search whose task this is"
+              hint={onBehalf
+                ? `It goes out in ${onBehalfName}'s name and becomes theirs: they approve it, and it will not stay on your list.`
+                : 'Leave empty to set it yourself.'}
+            />
+          )}
+
           {/* ── Who, and under what ──────────────────────────────── */}
           <div className="grid gap-3 sm:grid-cols-2">
             <PeoplePicker
@@ -356,7 +389,9 @@ export default function AssignTaskModal({
               allowSelf
               selfId={myId}
               placeholder="Myself — or search anyone"
-              hint={form.assignees.length ? null : 'Nobody chosen: it will be assigned to you.'}
+              hint={form.assignees.length ? null
+                : onBehalf ? `Nobody chosen: it will be assigned to ${onBehalfName}.`
+                  : 'Nobody chosen: it will be assigned to you.'}
             />
 
             <div>
@@ -459,8 +494,17 @@ export default function AssignTaskModal({
           {/* ── Your own task: what does not apply, said once ────── */}
           {selfOnly && (
             <p className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-              This goes on <strong>your own list</strong>. You mark it done yourself — there is no
-              review step, and a task you set yourself earns no points.
+              {onBehalf ? (
+                <>
+                  This goes on <strong>{onBehalfName}&apos;s own list</strong>. They mark it done
+                  themselves — there is no review step, and a task set for yourself earns no points.
+                </>
+              ) : (
+                <>
+                  This goes on <strong>your own list</strong>. You mark it done yourself — there is no
+                  review step, and a task you set yourself earns no points.
+                </>
+              )}
             </p>
           )}
 
@@ -514,7 +558,8 @@ export default function AssignTaskModal({
               assign the task, find it again and split it. The rows are the same
               ones DelegateModal collects and they are POSTed to /split the
               moment the task has an id — see the submit handler. */}
-          {!selfOnly && (
+          {/* Not on somebody's behalf: cutting pieces is the setter's act. */}
+          {!selfOnly && !onBehalf && (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
               <button
                 type="button"
@@ -785,7 +830,9 @@ export default function AssignTaskModal({
               className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-5 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50 min-h-[40px]"
             >
               <FiCheck size={14} />
-              {saving ? 'Saving…' : selfOnly ? 'Add to my tasks' : 'Assign task'}
+              {saving ? 'Saving…'
+                : selfOnly ? (onBehalf ? `Add to ${onBehalfName}'s tasks` : 'Add to my tasks')
+                  : 'Assign task'}
             </button>
           </div>
         </div>

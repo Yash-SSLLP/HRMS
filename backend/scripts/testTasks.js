@@ -568,6 +568,39 @@ async function testAnyoneAssigns() {
   }
 }
 
+// ===== 2026-09-25: setting a task on somebody else's behalf =====
+
+async function testOnBehalf() {
+  console.log("\nOn somebody else's behalf (2026-09-25)");
+  const assistant = { _id: A, role: 'Employee', permissions: [], taskProxyAccess: true };
+  const director = { _id: C, role: 'Employee', permissions: [] };
+  ok('the grant opens it', access.canAssignOnBehalf(assistant), true);
+  ok('without it, no', access.canAssignOnBehalf({ _id: B, role: 'Employee', permissions: [] }), false);
+  ok('a Super Admin holds it by role', access.canAssignOnBehalf({ _id: B, role: 'SuperAdmin' }), true);
+
+  // Set BY the director (createdBy), SENT by the assistant, for B.
+  const task = { createdBy: C, onBehalf: { by: A, byName: 'Asha' }, assignees: [{ user: B }] };
+  // The sender KEEPS NOTHING (user decision the same day — the first cut
+  // listed it under their "Assigned by me" and had them follow it).
+  ok('the sender can no longer open it', access.canSee(assistant, task), false);
+  ok('…may not approve it', access.capabilitiesFor(assistant, { ...task, status: 'SUBMITTED' }).canApprove, false);
+  ok('…nor edit it', access.capabilitiesFor(assistant, { ...task, status: 'PENDING' }).canEdit, false);
+  ok('…nor comment on it', access.capabilitiesFor(assistant, { ...task, status: 'PENDING' }).canComment, false);
+  ok('the person it was set for approves it',
+    access.capabilitiesFor(director, { ...task, status: 'SUBMITTED' }).canApprove, true);
+  ok('a sender who is also ON it sees it as a doer',
+    access.canSee(assistant, { ...task, assignees: [{ user: B }, { user: A }] }), true);
+
+  const mine = await access.visibleFilter({ user: assistant, query: {} }, 'delegated');
+  ok('it is not in the sender\'s "Assigned by me"', JSON.stringify(mine).includes('onBehalf'), false);
+  const all = await access.visibleFilter({ user: assistant, query: {} }, 'all');
+  ok('…nor anywhere else they look', JSON.stringify(all).includes('onBehalf'), false);
+
+  const doc = new Task({ title: 'x', createdBy: C, onBehalf: { by: A, byName: 'Asha' }, assignees: [{ user: B }] });
+  ok('the sender hears nothing more (audience)', doc.audience().includes(String(A)), false);
+  ok('the person it was set for does', doc.audience().includes(String(C)), true);
+}
+
 async function run() {
   console.log('Task module — rules');
   testVocabulary();
@@ -580,6 +613,7 @@ async function run() {
   testLegacyRows();
   await testDateChips();
   await testAnyoneAssigns();
+  await testOnBehalf();
 
   console.log(`\n${passed} passed, ${failed} failed.`);
   process.exit(failed ? 1 : 0);

@@ -26,6 +26,7 @@ const {
   setAssetsAccess,
   setLoansAccess,
   setTrainingAccess,
+  setTaskProxyAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,
@@ -155,6 +156,9 @@ router.patch('/users/:id/assets-access', restrictTo('SuperAdmin'), setAssetsAcce
 router.patch('/users/:id/loans-access', restrictTo('SuperAdmin'), setLoansAccess);
 // PATCH /users/:id/training-access — let this account SEE the training schedule; protected, SuperAdmin only.
 router.patch('/users/:id/training-access', restrictTo('SuperAdmin'), setTrainingAccess);
+// PATCH /users/:id/task-proxy-access — let this account assign tasks on somebody
+// else's behalf; protected, SuperAdmin only.
+router.patch('/users/:id/task-proxy-access', restrictTo('SuperAdmin'), setTaskProxyAccess);
 // PATCH /users/:id/incentive-role — set this account's role in ONE incentive
 // tab (manager / picker / none); protected, SuperAdmin only.
 router.patch('/users/:id/incentive-role', restrictTo('SuperAdmin'), setIncentiveRole);

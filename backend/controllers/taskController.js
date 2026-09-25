@@ -396,11 +396,11 @@ async function countersFor(filter) {
  * on the voice note of a task they had handed on. (2026-09-22.)
  */
 const VISIBILITY_FIELDS = 'createdBy approver assignees assignedTo loopUsers openTo '
-  + 'originalAssignees company parentTask';
+  + 'originalAssignees onBehalf company parentTask';
 
 /** What a list row needs, and nothing more. Keeps a 200-row page small. */
 const LIST_FIELDS = 'code kind title category priority status points dueDate startDate '
-  + 'completedAt completedLate createdBy createdByName assignedTo assignees loopUsers '
+  + 'completedAt completedLate createdBy createdByName assignedTo assignees loopUsers onBehalf '
   + 'repeat voiceNote attachments links reminders updateCount stateNote createdAt linkedTask '
   // A row has to show "not yet accepted" and "3 of 5 pieces done" without a
   // second query, so the counters and the delegation trail come with the list.
@@ -643,21 +643,44 @@ const listTasks = asyncHandler(async (req, res) => {
    * rather than by two more calls from the client: on a phone that is two more
    * slots of Android's five per host on every filter change.
    *
-   * The same filters as the list (window, search, department, priority…) but
-   * NOT the tile the reader clicked — picking "Overdue" must not make the card
-   * above it claim there are only overdue tasks in that pile.
+   * The same filters as the list (window, department, priority…) but NOT the
+   * tile the reader clicked, and NOT the search box — see FIGURES_IGNORE below.
    */
   const withScopes = req.query.withScopes === '1' || req.query.withScopes === 'true';
+  // 'loop' (2026-09-25): the tasks this person is only kept informed on — a
+  // fourth card, "In the loop", beside the two piles of work.
   const scopeKeys = withScopes
-    ? ['mine', 'delegated', ...(access.seesEverything(req.user) ? ['all'] : [])]
+    ? ['mine', 'delegated', 'loop', ...(access.seesEverything(req.user) ? ['all'] : [])]
     : [];
+
+  /**
+   * THE BAR'S FIGURES IGNORE THE FIGURE THAT WAS CLICKED — the same rule as the
+   * pile cards above. Reported 2026-09-25: picking "Overdue" on a bar reading
+   * Total 66 · Overdue 52 · Pending 2 turned it into Total 52 · Overdue 52 ·
+   * Pending 0, because the bar was counted over the rows the click had just
+   * narrowed. The segments are choices; a choice must not rewrite its
+   * neighbours.
+   *
+   * NOR DO THEY FOLLOW THE SEARCH BOX (reported the same day: typing a name
+   * made Total and Overdue count down letter by letter). A search is a way of
+   * FINDING rows, not a question about the pile, so the figures hold still
+   * while the rows under them narrow.
+   *
+   * Every other filter (pile, window, department, priority) still applies, so
+   * the bar describes what the rows are picked from — and `total` below still
+   * counts the rows themselves, for the pages.
+   */
+  const FIGURES_IGNORE = { status: '', overdue: '', late: '', q: '' };
+  const narrowed = Object.keys(FIGURES_IGNORE)
+    .some((k) => req.query[k] !== undefined && String(req.query[k]).trim() !== '');
+  const barFilter = narrowed ? await buildQuery(req, FIGURES_IGNORE) : filter;
 
   const [rows, total, counters, ...scopeCounters] = await Promise.all([
     sortedRows(filter, sort, sortKey, (page - 1) * limit, limit),
     Task.countDocuments(filter),
-    countersFor(filter),
+    countersFor(barFilter),
     ...scopeKeys.map(async (key) => countersFor(
-      await buildQuery(req, { scope: key, status: '', overdue: '', late: '' })
+      await buildQuery(req, { scope: key, ...FIGURES_IGNORE })
     )),
   ]);
 
@@ -1000,17 +1023,42 @@ const createTask = asyncHandler(async (req, res) => {
   const title = String(body.title || '').trim();
   if (!title) bad(res, 'Give the task a title.');
 
-  let wanted = (body.assignees || []).map(String).filter(Boolean);
-  if (!wanted.length) wanted = [String(req.user._id)];
+  /**
+   * ON SOMEBODY ELSE'S BEHALF (user request 2026-09-25). With `onBehalfOf`,
+   * the task is SET BY that person — its createdBy, so they approve it and it
+   * sits in their "Assigned by me" — and the caller is kept on it as
+   * `onBehalf`, the one who actually sent it. Only somebody a Super Admin gave
+   * User.taskProxyAccess may (a Super Admin by role), and only for somebody the
+   * task pickers would offer them: the same company wall, the same exclusions.
+   * Naming yourself is simply an ordinary task.
+   */
+  let setter = req.user;
+  let proxy = null;
+  const behalfId = String(body.onBehalfOf || '').trim();
+  if (behalfId && behalfId !== String(req.user._id)) {
+    if (!access.canAssignOnBehalf(req.user)) {
+      bad(res, 'Setting a task on somebody else’s behalf needs a permission only a Super Admin can give.', 403);
+    }
+    if (!mongoose.Types.ObjectId.isValid(behalfId)) bad(res, 'Choose who the task is being set for.');
+    const principal = await User.findOne({ $and: [await pickableUserFilter(req), { _id: behalfId }] })
+      .select('firstName lastName role company');
+    if (!principal) bad(res, 'You cannot set a task for that person — they are not in your company, or no longer active.');
+    setter = principal;
+    proxy = { by: req.user._id, byName: personName(req.user), at: new Date() };
+  }
 
-  const { kind } = await access.resolveAssignmentKind(req.user, wanted);
+  let wanted = (body.assignees || []).map(String).filter(Boolean);
+  // Nobody chosen means the SETTER's own task — so on somebody's behalf, theirs.
+  if (!wanted.length) wanted = [String(setter._id)];
+
+  const { kind } = await access.resolveAssignmentKind(setter, wanted);
 
   /**
    * A task set ONLY on yourself scores nothing — see taskPoints.award, which
    * refuses to credit anybody for a task they set themselves. Storing 0 here as
    * well means the row does not advertise a hundred points it can never pay.
    */
-  const selfOnly = wanted.every((id) => id === String(req.user._id));
+  const selfOnly = wanted.every((id) => id === String(setter._id));
 
   const assignees = await buildAssignees(wanted);
   if (!assignees.length) bad(res, 'None of the people chosen are available any more.');
@@ -1043,9 +1091,10 @@ const createTask = asyncHandler(async (req, res) => {
     title,
     description: String(body.description || '').trim(),
     category: String(body.category || '').trim(),
-    company: req.user.company || companyScope?.[0] || null,
-    createdBy: req.user._id,
-    createdByName: personName(req.user),
+    company: setter.company || req.user.company || companyScope?.[0] || null,
+    createdBy: setter._id,
+    createdByName: personName(setter),
+    ...(proxy ? { onBehalf: proxy } : {}),
     assignees,
     loopUsers: [...new Set((body.loopUsers || []).map(String))]
       .filter(mongoose.Types.ObjectId.isValid),
@@ -1085,7 +1134,10 @@ const createTask = asyncHandler(async (req, res) => {
     by: req.user._id,
     byName: personName(req.user),
     to: task.status,
-    note: selfOnly ? 'Set this task for themselves.' : 'Set this task.',
+    // Who actually did it is the caller; in whose name, the note says.
+    note: proxy
+      ? `Set this task on behalf of ${personName(setter)}.`
+      : (selfOnly ? 'Set this task for themselves.' : 'Set this task.'),
   });
 
   // A repeating task becomes a schedule, and the worker mints the occurrences.
@@ -1109,8 +1161,9 @@ const createTask = asyncHandler(async (req, res) => {
       startDate: startDate,
       until: repeat.until,
       company: task.company,
-      createdBy: req.user._id,
-      createdByName: personName(req.user),
+      createdBy: setter._id,
+      createdByName: personName(setter),
+      ...(proxy ? { onBehalf: proxy } : {}),
     });
     task.recurringTask = schedule._id;
     // The row just created IS the first occurrence — mint its deadline now
@@ -1121,7 +1174,12 @@ const createTask = asyncHandler(async (req, res) => {
     await task.save();
   }
 
-  notify.assigned(task, req.user).catch((e) => console.error('task notify failed:', e.message));
+  // The people on it hear it from the SETTER; the setter hears that it was
+  // sent in their name.
+  notify.assigned(task, setter).catch((e) => console.error('task notify failed:', e.message));
+  if (proxy) {
+    notify.setOnYourBehalf(task, req.user).catch((e) => console.error('task notify failed:', e.message));
+  }
 
   res.status(201).json({ task: decorate(task.toObject()) });
 });
@@ -1861,6 +1919,9 @@ const taskMeta = asyncHandler(async (req, res) => {
     // Who is asking — so a picker can offer "Myself" and a form can say that
     // leaving the box empty assigns the task to you.
     me: String(req.user._id),
+    // Draws "On behalf of" on the assign form (User.taskProxyAccess, or a
+    // Super Admin). The server refuses the field without it regardless.
+    canAssignOnBehalf: access.canAssignOnBehalf(req.user),
     team,
     hasTeam,
     departments,
@@ -1873,7 +1934,9 @@ const taskMeta = asyncHandler(async (req, res) => {
     cancelledColor: CANCELLED_COLOR,
     statuses: TASK_STATUS.map((s) => ({ key: s, label: statusLabel(s, KIND_TASK) })),
     boardColumns: BOARD_COLUMNS.map((c) => ({ ...c, label: c.label })),
-    sorts: SORT_KEYS.map((k) => ({ key: k, label: SORTS[k].label })),
+    // `dir` = the order's natural way round, so a client draws the right arrow
+    // before the reader has touched it.
+    sorts: SORT_KEYS.map((k) => ({ key: k, label: SORTS[k].label, dir: SORTS[k].dir === 1 ? 'asc' : 'desc' })),
     progressSteps: PROGRESS_STEPS,
     maxPieces: MAX_SUBTASKS,
     frequencies: FREQUENCIES.map((f) => ({ key: f, label: FREQUENCY_LABELS[f] })),

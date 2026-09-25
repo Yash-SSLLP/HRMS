@@ -375,6 +375,18 @@ function seesEverything(user) {
 }
 
 /**
+ * May this caller set a task on somebody else's behalf (Task.onBehalf)?
+ *
+ * A Super Admin by role; anybody else only once a Super Admin has switched on
+ * User.taskProxyAccess for them. A standalone grant rather than a capability
+ * key: the people who need it are assistants and coordinators, whose role
+ * holds nothing from the catalogue.
+ */
+function canAssignOnBehalf(user) {
+  return user?.role === 'SuperAdmin' || user?.taskProxyAccess === true;
+}
+
+/**
  * The Mongo filter for "tasks this caller may see", before any UI filter.
  *
  * @param {import('express').Request} req
@@ -398,6 +410,12 @@ async function visibleFilter(req, scope = 'all') {
     // on, and (since 2026-09-22) as whoever it now waits on. A manager who
     // delegated a CEO's task is no longer doing it and is not its creator, but
     // they are the one who has to sign it off, so it belongs on their desk.
+    //
+    // NOT what I set on somebody else's behalf (Task.onBehalf). It went out in
+    // their name and is theirs from that moment; the one who typed it in does
+    // not keep it (user decision 2026-09-25, reversing the first cut, which
+    // listed it here: "don't show this kind of task to who assigned"). Being
+    // the sender grants nothing anywhere: no pile, no detail, no updates.
     base = { $or: [{ createdBy: me }, { approver: me }, { 'delegations.from': me }] };
   } else if (scope === 'loop') {
     base = { loopUsers: me };
@@ -411,6 +429,7 @@ async function visibleFilter(req, scope = 'all') {
         // A piece offered to me; and somebody who once owned the whole thing
         // keeps seeing it after delegating it on.
         { openTo: me }, { originalAssignees: me },
+        // Not what I set on somebody else's behalf — see "delegated" above.
       ],
     };
   }
@@ -444,6 +463,8 @@ function canSee(user, task) {
     || (task.openTo || []).some((u) => String(u?._id || u) === id)
     // Delegating a task on does not stop you following it.
     || (task.originalAssignees || []).some((u) => String(u?._id || u) === id)
+    // Having set it in somebody else's name is NOT on this list: the task is
+    // theirs, and the sender keeps nothing (visibleFilter, "delegated").
   );
 }
 
@@ -462,7 +483,7 @@ async function canSeeThroughParent(user, task) {
   if (!task?.parentTask) return false;
   const Task = require('../models/Task');
   const parent = await Task.findById(task.parentTask)
-    .select('createdBy assignees assignedTo loopUsers openTo originalAssignees company')
+    .select('createdBy assignees assignedTo loopUsers openTo originalAssignees onBehalf company')
     .lean();
   return parent ? canSee(user, parent) : false;
 }
@@ -691,6 +712,7 @@ module.exports = {
   resolveAssignmentKind,
   assignableUserIds,
   seesEverything,
+  canAssignOnBehalf,
   visibleFilter,
   canSee,
   canSeeThroughParent,

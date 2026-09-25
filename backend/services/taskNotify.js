@@ -71,7 +71,12 @@ const ids = (list) => (list || []).map((x) => String(x?.user?._id || x?.user || 
  * the single easiest thing in this file to forget on a new event, and forgetting
  * it is silent.
  */
-const followers = (task) => (task?.originalAssignees || []).map(String);
+const followers = (task) => [
+  ...(task?.originalAssignees || []).map(String),
+  // NOT whoever set it on somebody else's behalf (Task.onBehalf): it is that
+  // person's task, and the sender can no longer open it (taskAccess.canSee), so
+  // an update would be a notification leading nowhere. User decision 2026-09-25.
+];
 
 /**
  * Everyone who should hear, for an event with no special routing.
@@ -107,7 +112,9 @@ async function assigned(task, actor) {
       title: task.kind === KIND_REQUEST
         ? `${nameOf(actor)} needs something from you`
         : `New task from ${nameOf(actor)}`,
-      body: `${taskName(task)}${meta(task)}`,
+      // Set on the sender's behalf: say who actually sent it, so a question
+      // about it goes to somebody who knows.
+      body: `${taskName(task)}${meta(task)}${task.onBehalf?.byName ? ` · sent by ${task.onBehalf.byName}` : ''}`,
       link: employeeTaskLink(task._id),
       data: { taskId: String(task._id), kind: task.kind },
     });
@@ -125,6 +132,27 @@ async function assigned(task, actor) {
       data: { taskId: String(task._id), kind: task.kind },
     });
   }
+}
+
+/**
+ * Tell the person a task was set IN THE NAME OF (Task.onBehalf) that it was.
+ *
+ * They are its setter now — it comes back to them to approve — so they must
+ * not first hear of it when the work is handed in. Sent to the admin portal
+ * like every other "news about work you handed out".
+ */
+async function setOnYourBehalf(task, sender) {
+  const to = recipients([task.createdBy], sender?._id);
+  if (!to.length) return;
+  const who = (task.assignees || []).map((a) => a.name).filter(Boolean).join(', ');
+  await notifyMany(to, {
+    type: 'task',
+    audience: 'admin',
+    title: `${nameOf(sender)} set a ${noun(task)} on your behalf`,
+    body: `${taskName(task)}${who ? ` · for ${who}` : ''}${meta(task)}`,
+    link: adminTaskLink(task._id),
+    data: { taskId: String(task._id), kind: task.kind },
+  });
 }
 
 /**
@@ -614,6 +642,7 @@ async function digest(userId, { pending, overdue }) {
 
 module.exports = {
   assigned,
+  setOnYourBehalf,
   statusMoved,
   accepted,
   declined,
