@@ -1668,10 +1668,10 @@ export default function EmployeeKhata() {
               <input type="checkbox" className="mt-1" checked={report.bills}
                 onChange={(e) => setReport({ ...report, bills: e.target.checked })} />
               <span>
-                Include the bills
+                Attach the bills
                 <span className="block text-xs text-gray-500">
-                  Photographs of the slips are bound into the PDF beside their rows in the entries list. It takes
-                  longer to build.
+                  Every bill — photos, iPhone photos and PDF invoices — is attached in full at the end, one to a
+                  page, and each entry links to it. It takes longer to build.
                 </span>
               </span>
             </label>

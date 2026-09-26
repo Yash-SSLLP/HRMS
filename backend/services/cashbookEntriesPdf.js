@@ -45,14 +45,30 @@
  * differ from the last row's wallet balance once a filter is applied. Both are
  * printed, neither is fudged into agreeing with the other.
  *
+ * THE BILLS ARE IN THE DOCUMENT, NOT BEHIND A LINK (2026-09-26, user report:
+ * "attached bills are not able to open and it not fully attached", from the
+ * phone). A row used to carry a 34pt thumbnail and a link to the bill on the
+ * web: fine on a PC, a dead end in a phone's PDF viewer, and no help at all for
+ * the iPhone photos and scanned PDF invoices pdfkit cannot draw — they were
+ * links only. Now, when bills are asked for, every one of them is printed in
+ * full at the end, one to a page (a PDF bill's own pages drawn in), and each
+ * row's thumbnail and "See bill N" jump to it, with "Back to the entry" on the
+ * bill page. Those are links INSIDE the file: no browser, no network, and they
+ * work for whoever the report is forwarded to. The rows whose bill could not be
+ * attached keep the web link. See services/billAttachments.js for what each
+ * kind of bill is turned into.
+ *
  * Renders in memory and resolves a Buffer; no files are written. The Promise
- * executor is SYNCHRONOUS, so branding and every bill Buffer must already be
- * resolved by the caller — see the `bills` parameter.
+ * executor is SYNCHRONOUS, so branding and every bill must already be resolved
+ * before it runs — the caller reads the bill bytes, and renderReport prepares
+ * them (billAttachments.prepareBills) before drawing and draws the PDF bills'
+ * pages in afterwards (drawPdfBills).
  */
 const PDFDocument = require('pdfkit');
 const { setupFonts } = require('./pdfFonts');
 const { POSTED_STATUSES } = require('../models/CashbookEntry');
 const { summariseByCategory } = require('./cashbookSummaryPdf');
+const { prepareBills, drawPdfBills } = require('./billAttachments');
 
 // The movements filed under a book, and so the only ones the company ever signs
 // off. Held as a local copy rather than imported from services/khataLedger:
@@ -116,6 +132,12 @@ const CONTINUE_TOP = 120;
 const BOTTOM_LIMIT = 716;
 const FOOTER_Y = 726;
 const FOOTER_NUM_X = 466;         // where "Page N of M" begins, on the footer's line
+// A bill page: its caption starts where page 1's book name does, and the bill
+// fills everything from under the caption down to the same bottom line.
+const BILL_TOP = 108;
+// How far above a row "Back to the entry" lands, so the reader arrives with the
+// row in view rather than jammed against the top edge of the screen.
+const BACK_MARGIN = 24;
 
 const IST = 'Asia/Kolkata';
 const fmtDate = new Intl.DateTimeFormat('en-GB', { timeZone: IST, day: '2-digit', month: 'short', year: 'numeric' });
@@ -248,23 +270,36 @@ const imageKind = (buf) => {
 };
 
 /**
- * The bill bytes for one row, as an array of at most two drawable images.
+ * The bill files for one row that can go into the document.
  *
- * `bills` is declared as `Map<string, Buffer>`, but a row can carry more than
- * one bill, so an array value is accepted too and the first two images in it are
- * drawn. Anything that is not a JPEG or a PNG — a scanned PDF invoice, most
- * often — is dropped here and reported as "bill on file" instead.
- * @param {Map<string, Buffer|Buffer[]>|null} bills
+ * renderReport prepares the map before drawing (billAttachments.prepareBills),
+ * so a value is normally an array of `{kind: 'image'|'pdf'|'none', data, ...}`
+ * — a HEIC photo already a JPEG, a PDF already counted. A raw Buffer is still
+ * accepted, for a caller driving the renderer directly the way the tests do: a
+ * JPEG or PNG draws as before, anything else counts as a bill that could not be
+ * attached. A row can carry more than one bill, so an array value is accepted
+ * either way.
+ * @param {Map<string, Buffer|object|Array>|null} bills
  * @param {object} row
- * @returns {{images: Buffer[], other: boolean}}
+ * @returns {{files: Array<{kind: 'image'|'pdf', data: Buffer, pages?: number,
+ *            totalPages?: number}>, missed: number}}
+ *   `missed` is how many of the row's bills could not be attached.
  */
 function billsFor(bills, row) {
-  if (!bills || typeof bills.get !== 'function') return { images: [], other: false };
+  if (!bills || typeof bills.get !== 'function') return { files: [], missed: 0 };
   const raw = bills.get(String(row._id));
-  if (!raw) return { images: [], other: false };
+  if (!raw) return { files: [], missed: 0 };
   const list = Array.isArray(raw) ? raw : [raw];
-  const images = list.filter((b) => imageKind(b)).slice(0, 2);
-  return { images, other: images.length < list.length };
+  const files = [];
+  let missed = 0;
+  for (const item of list) {
+    const file = Buffer.isBuffer(item)
+      ? (imageKind(item) ? { kind: 'image', data: item } : null)
+      : item;
+    if (file && (file.kind === 'image' || (file.kind === 'pdf' && file.pages > 0))) files.push(file);
+    else missed += 1;
+  }
+  return { files, missed };
 }
 
 /**
@@ -436,14 +471,64 @@ function renderCashbookReport(input, kind) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, bufferPages: true });
     const chunks = [];
+    // The frames reserved for a PDF bill's pages — filled in by drawPdfBills
+    // once this document is finished, since pdfkit cannot import pages itself.
+    const pdfFrames = [];
     doc.on('data', (c) => chunks.push(c));
-    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pdfFrames }));
     doc.on('error', reject);
 
     const F = setupFonts(doc);
     // money() already carries the minus for a negative — prefixing another one
     // printed "₹--994", so the sign is pulled out in front of the symbol.
     const rs = (n) => (round2(n) < 0 ? `−${F.rupee}${money(Math.abs(n))}` : `${F.rupee}${money(n)}`);
+
+    // ---- which bills go into the document, and the number each is known by ----
+    // Numbered in the order their rows print, so "See bill 3" on a row and
+    // "Bill 3 of 14" on a page are the same bill without anybody counting. Each
+    // bill takes one page per picture and one per page of a PDF bill. Only the
+    // entries table carries rows, so a layout without it would attach nothing —
+    // every layout ends with it, so every report can carry the bills.
+    //
+    // Each picture is OPENED here, once, and that one image object draws both
+    // the thumbnail and the full page: pdfkit caches an image only when it is
+    // given a file path, so handing it the same Buffer twice would embed the
+    // photo twice and double the file. Opening first also finds a picture that
+    // will not decode BEFORE it has a number — it falls back to its web link
+    // like any other bill that could not be attached, instead of leaving a
+    // numbered page with nothing on it.
+    const opened = new Map();       // bill bytes → pdfkit image
+    const attached = [];
+    const attachedByRow = new Map();
+    let billsMissed = 0;
+    if (sections.includes('entries')) {
+      for (const e of entries) {
+        const { files: candidates, missed } = billsFor(bills, e);
+        billsMissed += missed;
+        const files = candidates.filter((file) => {
+          if (file.kind !== 'image') return true;
+          try {
+            if (!opened.has(file.data)) opened.set(file.data, doc.openImage(file.data));
+            return true;
+          } catch (_) {
+            billsMissed += 1;
+            return false;
+          }
+        });
+        if (!files.length) continue;
+        const pages = [];
+        for (const file of files) {
+          if (file.kind === 'pdf') {
+            for (let p = 0; p < file.pages; p += 1) pages.push({ file, sourcePage: p });
+          } else {
+            pages.push({ file });
+          }
+        }
+        const bill = { no: attached.length + 1, entry: e, files, pages };
+        attached.push(bill);
+        attachedByRow.set(String(e._id), bill);
+      }
+    }
 
     doc.info.Title = `Cashbook report — ${scopeName}`;
     doc.info.Author = company.name || '';
@@ -471,6 +556,22 @@ function renderCashbookReport(input, kind) {
         .text(text, x, y, { width, align, lineBreak: false, characterSpacing: spacing });
       return doc.widthOfString(text, { characterSpacing: spacing });
     };
+    // Which page is being drawn — every page is added through newPage(), which
+    // counts. A link inside the document has to say which page it goes to, and
+    // pdfkit does not otherwise say which one it is on.
+    let pageIndex = 0;
+    // Links INSIDE the document, collected as they are drawn and registered at
+    // the very end (see THE JUMPS): a row is drawn long before the page its bill
+    // lands on exists, so there is nothing for its link to point at yet.
+    const jumps = [];
+    // Make a rectangle clickable. `target` is a web address (a bill that is not
+    // in this document), `{bill: n}` (bill n's page) or `{back: anchor}` (the row
+    // a bill belongs to, where `anchor` is {page, y} recorded when it was drawn).
+    const hotspot = (x, y, w, h, target) => {
+      if (!target) return;
+      if (typeof target === 'string') doc.link(x, y, w, h, target);
+      else jumps.push({ pageIndex, x, y, w, h, ...target });
+    };
     // A clickable run of text: link blue, underlined, with the annotation over
     // exactly the glyphs it drew.
     //
@@ -479,7 +580,7 @@ function renderCashbookReport(input, kind) {
     // places every string absolutely with lineBreak:false, so there is no line
     // box to hang anything off and the rectangle has to be measured and
     // registered by hand. Same reason fit() exists a few lines up.
-    const linkRun = (s, x, y, url, opts = {}) => {
+    const linkRun = (s, x, y, target, opts = {}) => {
       const { size = 6.8, width = BLOCK_W } = opts;
       const text = fit(s, width, { size });
       doc.font(F.regular).fontSize(size).fillColor(LINK_INK)
@@ -490,7 +591,7 @@ function renderCashbookReport(input, kind) {
       doc.strokeColor(BORDER).fillColor(INK);
       // A point of slack above and below: a hit area the exact height of the
       // glyphs is a hard target for a mouse and an impossible one for a thumb.
-      doc.link(x, y - 1, w, size + 3, url);
+      hotspot(x, y - 1, w, size + 3, target);
       return w;
     };
     // Wrapped body text with a hard ceiling, so a 500-character remark can never
@@ -544,6 +645,19 @@ function renderCashbookReport(input, kind) {
       doc.moveTo(x + width - w, y + size * 0.45).lineTo(x + width, y + size * 0.45)
         .lineWidth(0.6).strokeColor(color).stroke();
       doc.strokeColor(BORDER);
+    };
+    // The stand-in for a thumbnail when the bill is a PDF: pdfkit cannot draw a
+    // page of another document, and a blank square would read as a missing
+    // photo. It says what the bill is and how long, which is what a reader
+    // deciding whether to jump to it wants to know.
+    const drawPdfTile = (x, top, file) => {
+      doc.roundedRect(x, top, THUMB, THUMB, 3).fill('#F4F5F7');
+      doc.font(F.bold).fontSize(8.4).fillColor(OUT_INK)
+        .text('PDF', x, top + 8, { width: THUMB, align: 'center', lineBreak: false });
+      const n = file.totalPages || file.pages || 1;
+      doc.font(F.regular).fontSize(5.6).fillColor(MUTED)
+        .text(`${n} page${n === 1 ? '' : 's'}`, x, top + 21, { width: THUMB, align: 'center', lineBreak: false });
+      doc.fillColor(INK);
     };
 
     // ---- masthead band, repeated on every page ---------------------------
@@ -710,6 +824,7 @@ function renderCashbookReport(input, kind) {
     const newPage = () => {
       drawFooter();
       doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
+      pageIndex += 1;
       drawBand();
     };
 
@@ -839,11 +954,13 @@ function renderCashbookReport(input, kind) {
     // column accumulates in the direction the eye travels.
     const drawEntries = () => {
       for (const e of entries) {
-        const bill = billsFor(bills, e);
-        const rowH = bill.images.length ? THUMB_TOP + THUMB + 6 : ROW_H;
+        const bill = attachedByRow.get(String(e._id));
+        const rowH = bill ? THUMB_TOP + THUMB + 6 : ROW_H;
         ensureRoom(rowH);
         const dead = isDead(e);
         const bodyInk = dead ? FAINT : INK;
+        // Where "Back to the entry" on this row's bill page brings the reader.
+        if (bill) bill.anchor = { page: doc.page.dictionary, y };
 
         drawRowFrame(y, rowH);
 
@@ -875,24 +992,27 @@ function renderCashbookReport(input, kind) {
               : { bg: '#FFF6E5', fg: '#8A6100' };
           chip(statusLabel, ENTRY_X[2] - 6 - statusW, y + PAD_TOP + LINE_1 - 1, tint);
         }
-        // Where the full-size bill lives, when the caller gave us somewhere to
-        // point. A 34pt thumbnail proves a bill exists and settles nothing else,
-        // so the picture is the way in rather than the whole answer.
+        // Where the full-size bill is. In THIS document when it was attached —
+        // the row jumps to its page, which works in any viewer, offline, for
+        // whoever the file is forwarded to. Otherwise on the web, when the
+        // caller gave us an address. A 34pt thumbnail proves a bill exists and
+        // settles nothing else, so the picture is the way in rather than the
+        // whole answer.
         const link = billLinkFor(billLinks, e);
-        // Say a bill exists even when its bytes were not fetched (?bills=0) or
-        // could not be drawn (a scanned PDF invoice). Dropping the fact reads
-        // exactly like a row that never had a bill — and on those rows the words
-        // are the ONLY way in, since there is no thumbnail to hang the link on.
-        const billNote = !bill.images.length && (bill.other || e.hasAttachment)
-          ? (link ? 'View bill' : 'bill on file')
-          : '';
+        const target = bill ? { bill: bill.no } : (link || null);
+        // Say a bill exists even when it is not in the document (?bills=0, a
+        // format this report cannot print, past the size cap). Dropping the fact
+        // reads exactly like a row that never had a bill — and on those rows the
+        // words are the ONLY way in, since there is no thumbnail to hang a link on.
+        const billNote = bill ? `See bill ${bill.no}`
+          : ((e.hasAttachment || billsFor(bills, e).missed) ? (link ? 'View bill' : 'bill on file') : '');
         const meta = [
           book ? '' : e.khataName,          // the book is in the title on a one-book report
           e.code,
           showBy && e.byName ? `Added by ${e.byName}` : '',
           // Only when it is NOT a link: a linked run has to be drawn separately
           // so the annotation can sit over exactly the glyphs it opens.
-          link ? '' : billNote,
+          target ? '' : billNote,
         ].filter(Boolean).join(' · ');
         const metaW = dw - (statusW ? statusW + 6 : 0);
         // Room for the link is taken out of the meta line BEFORE it is drawn.
@@ -900,7 +1020,7 @@ function renderCashbookReport(input, kind) {
         // meta left over: a long remark would otherwise eat the whole line and
         // the one clickable thing on the row would silently not be drawn.
         let noteW = 0;
-        if (link && billNote) {
+        if (target && billNote) {
           doc.font(F.regular).fontSize(6.8);
           noteW = doc.widthOfString(`${billNote} · `);
         }
@@ -913,30 +1033,33 @@ function renderCashbookReport(input, kind) {
           const sepW = usedW
             ? write(' · ', dx + usedW, y + PAD_TOP + LINE_1, { size: 6.8, color: FAINT, width: 14 })
             : 0;
-          linkRun(billNote, dx + usedW + sepW, y + PAD_TOP + LINE_1, link,
+          linkRun(billNote, dx + usedW + sepW, y + PAD_TOP + LINE_1, target,
             { size: 6.8, width: metaW - usedW - sepW });
         }
-        if (bill.images.length) {
+        if (bill) {
           let bxx = dx;
-          for (const img of bill.images) {
-            doc.save();
-            doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).clip();
-            // `fit`, not `cover`: a bill is usually a tall photo and cropping to
-            // fill the square lands on the blank middle of the paper.
-            try {
-              doc.image(img, bxx, y + THUMB_TOP, { fit: [THUMB, THUMB], align: 'center', valign: 'center' });
-            } catch (_) { /* unreadable bytes — the frame alone is harmless */ }
-            doc.restore();
-            doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.6).stroke(GRID);
-            doc.strokeColor(BORDER);
-            // The whole square opens the full-size bill. Drawn in link blue so
-            // the picture reads as clickable rather than as decoration — the
-            // thumbnail is the affordance, and a reader has no other cue.
-            if (link) {
-              doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.8).stroke(LINK_INK);
-              doc.strokeColor(BORDER);
-              doc.link(bxx, y + THUMB_TOP, THUMB, THUMB, link);
+          // Two tiles at most — the row is a pointer; the bill's own pages at
+          // the end hold every picture and every page of it.
+          for (const file of bill.files.slice(0, 2)) {
+            if (file.kind === 'pdf') {
+              drawPdfTile(bxx, y + THUMB_TOP, file);
+            } else {
+              doc.save();
+              doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).clip();
+              // `fit`, not `cover`: a bill is usually a tall photo and cropping
+              // to fill the square lands on the blank middle of the paper.
+              try {
+                doc.image(opened.get(file.data), bxx, y + THUMB_TOP,
+                  { fit: [THUMB, THUMB], align: 'center', valign: 'center' });
+              } catch (_) { /* the frame alone is harmless */ }
+              doc.restore();
             }
+            // The whole square opens the bill. Drawn in link blue so the tile
+            // reads as clickable rather than as decoration — it is the
+            // affordance, and a reader has no other cue.
+            doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.8).stroke(LINK_INK);
+            doc.strokeColor(BORDER);
+            hotspot(bxx, y + THUMB_TOP, THUMB, THUMB, target);
             bxx += THUMB + 5;
           }
         }
@@ -975,7 +1098,40 @@ function renderCashbookReport(input, kind) {
     // reader must not lose, and breaking after the total would strand it on a
     // page of its own.
     const TOT_H = 26;
-    const NOTE_H = 34;
+
+    // ---- the small print, worded up front ----------------------------------
+    // Built BEFORE the tables so its height is known when the last Total row
+    // asks for room — it grew a line when the bills moved into the document,
+    // and a fixed allowance would let the last sentence run off the page.
+    const notes = [];
+    if (opening) notes.push(`Opening balance ${rs(opening)} carried in from before this period.`);
+    notes.push('Only money that moved is added up. A reversed entry counts beside the reversal that cancels it, so the'
+      + ' pair comes to nothing; a rejected entry is struck through and an entry still waiting for a decision is'
+      + ' marked, and neither is counted.');
+    // Only where there is something to click: on a document with no links the
+    // sentence is an instruction the reader cannot follow.
+    if (attached.length) {
+      notes.push(`The ${attached.length === 1 ? 'bill is' : `${attached.length} bills are`} attached at the end of this`
+        + ' report, one to a page. Tap a thumbnail or "See bill" on a row to go to its bill, and "Back to the entry"'
+        + ' on the bill to come back.');
+    } else if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
+      notes.push('"View bill" on a row opens that bill online.');
+    }
+    // Bills asked for and not attached — left out against the size caps
+    // (billsSkipped, counted by the caller) or in a format this report cannot
+    // print (billsMissed). Said out loud, in red: a document that quietly drops
+    // bills reads exactly like one that never had any.
+    const unattached = billsSkipped + billsMissed;
+    if (unattached) {
+      notes.push(`${unattached} bill${unattached === 1 ? ' is' : 's are'} not attached — open`
+        + ` ${unattached === 1 ? 'it' : 'them'} from "View bill" on the row`
+        + `${billsSkipped ? ', or narrow the filters and download again' : ''}.`);
+    }
+    const noteText = notes.join(' ');
+    const NOTE_SIZE = 7.4;
+    doc.font(F.regular).fontSize(NOTE_SIZE);
+    const NOTE_H = Math.ceil(doc.heightOfString(noteText, { width: BLOCK_W })) + 4;
+
     const drawTotal = (key, last) => {
       ensureRoom(TOT_H + (last ? 10 + NOTE_H : 0));
       drawRowFrame(y, TOT_H, BAND_BG);
@@ -1023,22 +1179,125 @@ function renderCashbookReport(input, kind) {
     y += 10;
 
     // ---- the small print ---------------------------------------------------
-    const notes = [];
-    if (opening) notes.push(`Opening balance ${rs(opening)} carried in from before this period.`);
-    notes.push('Only money that moved is added up. A reversed entry counts beside the reversal that cancels it, so the'
-      + ' pair comes to nothing; a rejected entry is struck through and an entry still waiting for a decision is'
-      + ' marked, and neither is counted.');
-    // Only where there is something to click: on a document with no links the
-    // sentence is an instruction the reader cannot follow.
-    if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
-      notes.push('Bill thumbnails are links: tap one to open the full-size bill.');
+    doc.font(F.regular).fontSize(NOTE_SIZE).fillColor(unattached ? OUT_INK : FAINT)
+      .text(noteText, X0, y, { width: BLOCK_W });
+    doc.fillColor(INK);
+
+    // ===================== THE BILLS =====================
+    // Every attached bill, in full, one page per picture and one per page of a
+    // PDF bill, in the order their rows print. The caption repeats what the row
+    // said — date, reference, what it was for, the amount — so a bill page can
+    // be checked on its own, or printed and handed over without the table.
+    const statusWords = (e) => (e.status === 'Approved' ? ''
+      : (e.status === 'AwaitingApproval' ? 'With CEO/MD' : String(e.status || '')));
+    const drawBillPage = (b, part, k) => {
+      const e = b.entry;
+      const dead = isDead(e);
+      const parts = b.pages.length;
+      let top = BILL_TOP;
+
+      // Which bill, and its amount on the right in the row's own colours.
+      const amount = rs(amountOf(e));
+      doc.font(F.bold).fontSize(12.5);
+      const amountW = doc.widthOfString(amount);
+      write(`Bill ${b.no} of ${attached.length}${parts > 1 ? `  ·  page ${k + 1} of ${parts}` : ''}`,
+        X0, top, { bold: true, size: 12.5, width: BLOCK_W - amountW - 16 });
+      write(amount, X0, top, {
+        bold: true, size: 12.5, width: BLOCK_W, align: 'right',
+        color: dead ? FAINT : (e.direction === 'to_employee' ? IN_INK : OUT_INK),
+      });
+      top += 20;
+
+      // When, which entry, under what, how paid — and the way back to its row.
+      const back = 'Back to the entry';
+      doc.font(F.regular).fontSize(8.4);
+      const backW = doc.widthOfString(back);
+      const d = new Date(e.date);
+      write([`${fmtDate.format(d)}, ${fmtTime.format(d).toUpperCase()}`, e.code, e.category, e.paymentMode]
+        .filter(Boolean).join('  ·  '), X0, top, { size: 8.4, color: MUTED, width: BLOCK_W - backW - 16 });
+      if (b.anchor) linkRun(back, X0 + BLOCK_W - backW, top, { back: b.anchor }, { size: 8.4, width: backW + 1 });
+      top += 14;
+
+      // What it was for, as filed.
+      top += wrap(e.purpose || '—', X0, top, BLOCK_W, 2, { size: 9.4, color: dead ? FAINT : INK }) + 3;
+
+      const { file } = part;
+      const quiet = [
+        book ? '' : e.khataName,
+        showBy && e.byName ? `Added by ${e.byName}` : '',
+        statusWords(e),
+        file.kind === 'pdf' && file.totalPages > file.pages
+          ? `the first ${file.pages} of its ${file.totalPages} pages are attached` : '',
+      ].filter(Boolean).join('  ·  ');
+      if (quiet) {
+        write(quiet, X0, top, { size: 7.8, color: FAINT, width: BLOCK_W });
+        top += 12;
+      }
+      top += 4;
+      doc.moveTo(X0, top).lineTo(X0 + BLOCK_W, top).lineWidth(0.6).stroke(GRID);
+      doc.strokeColor(BORDER);
+      top += 10;
+
+      // The bill itself: everything from here to the bottom line, scaled to
+      // fit, centred across and hard against the top.
+      const frame = { x: X0, y: top, w: BLOCK_W, h: BOTTOM_LIMIT - top };
+      if (file.kind === 'pdf') {
+        // pdfkit cannot draw a page of another PDF, so drawPdfBills fills this
+        // frame once the document is finished. What is printed here first is
+        // what stays if that fails — never a numbered page with nothing on it.
+        const mid = frame.y + frame.h / 2;
+        write('This bill is a PDF file and could not be drawn into this page.', frame.x, mid - 16,
+          { size: 9.5, color: MUTED, width: frame.w, align: 'center' });
+        const link = billLinkFor(billLinks, e);
+        if (link) {
+          const open = 'Open the bill online';
+          doc.font(F.regular).fontSize(9.5);
+          const openW = doc.widthOfString(open);
+          linkRun(open, frame.x + (frame.w - openW) / 2, mid + 2, link, { size: 9.5, width: openW + 1 });
+        }
+        pdfFrames.push({ pageIndex, ...frame, data: file.data, sourcePage: part.sourcePage });
+        return;
+      }
+      const img = opened.get(file.data);
+      // pdfkit turns a photo with EXIF orientation 5–8 upright, which swaps its
+      // sides; the frame drawn round it has to swap them too.
+      const sideways = img.orientation > 4;
+      const iw = sideways ? img.height : img.width;
+      const ih = sideways ? img.width : img.height;
+      const scale = Math.min(frame.w / iw, frame.h / ih);
+      const w = iw * scale;
+      const h = ih * scale;
+      try {
+        doc.image(img, frame.x, frame.y, { fit: [frame.w, frame.h], align: 'center' });
+      } catch (_) { /* the caption still says which bill belongs here */ }
+      doc.rect(frame.x + (frame.w - w) / 2, frame.y, w, h).lineWidth(0.6).stroke(GRID);
+      doc.strokeColor(BORDER);
+    };
+
+    const billPageOf = new Map();       // bill number → its first page
+    for (const b of attached) {
+      b.pages.forEach((part, k) => {
+        newPage();
+        if (k === 0) billPageOf.set(b.no, doc.page.dictionary);
+        drawBillPage(b, part, k);
+      });
     }
-    if (billsSkipped) {
-      notes.push(`${billsSkipped} bill${billsSkipped === 1 ? ' was' : 's were'} not embedded — open them from the link on the row, or narrow the filters and download again.`);
-    }
-    wrap(notes.join(' '), X0, y, BLOCK_W, 3, { size: 7.4, color: billsSkipped ? OUT_INK : FAINT });
 
     drawFooter();
+
+    // ===================== THE JUMPS =====================
+    // Every link inside the document, now that every page one can point at
+    // exists. Explicit page destinations rather than named ones: the plainest
+    // kind of internal link there is, and the one the most viewers follow. A
+    // bill opens fitted to the screen; the way back lands a little above its row.
+    for (const j of jumps) {
+      let dest = null;
+      if (j.bill && billPageOf.has(j.bill)) dest = [billPageOf.get(j.bill), 'Fit'];
+      else if (j.back) dest = [j.back.page, 'XYZ', null, PAGE_H - Math.max(0, j.back.y - BACK_MARGIN), null];
+      if (!dest) continue;
+      doc.switchToPage(j.pageIndex);
+      doc.annotate(j.x, j.y, j.w, j.h, { Subtype: 'Link', Dest: dest });
+    }
 
     // ===================== PAGE NUMBERS =====================
     // Stamped last, once the page count is known — which is the whole reason the
@@ -1073,11 +1332,15 @@ function renderCashbookReport(input, kind) {
  * @param {Array}  input.entries           - flat rows, OLDEST FIRST: { _id, date, code,
  *   purpose, category, paymentMode, direction, amount, status, movement, khataName,
  *   byName, confirmedByCompany, hasAttachment, walletBalanceAfter }
- * @param {Map<string, Buffer|Buffer[]>} [input.bills] - entryId -> image bytes, ALREADY READ
+ * @param {Map<string, Buffer|Buffer[]>} [input.bills] - entryId -> the bill's bytes as
+ *   stored, ALREADY READ by the caller (the drawing cannot await storage). Any
+ *   format: JPEG and PNG draw as they are, a HEIC photo is converted and a PDF
+ *   bill's own pages are drawn in (services/billAttachments.js). Every bill given
+ *   is attached in full at the end, one to a page, and its row links to it.
  * @param {Map<string, string>} [input.billLinks] - entryId -> web address of the
- *   full-size bill. Hung on the thumbnail, or on the words that stand in for one
- *   where no image was drawn. Omit it and the document prints exactly as before.
- *   by the caller: the Promise executor below is synchronous and cannot await storage.
+ *   full-size bill. Used where a bill is NOT in the document (not asked for, past
+ *   the caps, a format that cannot be printed) — on the words that stand in for
+ *   it. Omit it and those rows just say "bill on file".
  * @param {number} [input.billsSkipped]    - bills the caller dropped against its own caps
  * @param {Array<{label: string, value: string}>} [input.filterSummary] - printed under the duration box
  * @param {Object} [input.footer]          - { helpline, note }
@@ -1087,7 +1350,13 @@ function renderCashbookReport(input, kind) {
  * @returns {Promise<Buffer>}
  */
 async function renderReport(input, kind = 'entries') {
-  return renderCashbookReport(input || {}, LAYOUTS[kind] ? kind : 'entries');
+  const src = input || {};
+  // Before drawing: HEIC photos become JPEGs and PDF bills are counted — the
+  // drawing itself is synchronous and can do neither.
+  const bills = await prepareBills(src.bills);
+  const { buffer, pdfFrames } = await renderCashbookReport({ ...src, bills }, LAYOUTS[kind] ? kind : 'entries');
+  // After: the PDF bills' own pages drawn into the frames kept for them.
+  return pdfFrames.length ? drawPdfBills(buffer, pdfFrames, PAGE_H) : buffer;
 }
 
 /** Every filtered row, oldest first. See renderReport. */

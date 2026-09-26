@@ -72,6 +72,8 @@ const { isNonStaffRole, hideSuperAdminFilter } = require('../utils/visibility');
 // HMAC rather than a stored token, and receiptLinkFor below for what it builds.
 const { signId, verifyId } = require('../utils/signedLink');
 const { appBaseUrl } = require('../config/appUrl');
+// The public bill page serves an iPhone photo as a JPEG — see publicReceipt.
+const { heicToJpeg } = require('../services/billAttachments');
 
 const USER_FIELDS = 'firstName lastName email role photo';
 
@@ -4565,16 +4567,35 @@ async function entryFromSignedLink(req, res, opts = {}) {
 }
 
 /**
+ * Is this bill an iPhone photo (HEIC/HEIF)? No browser shows one — Chrome,
+ * Edge and Firefox all fail it — so the public bill page has to be handed a
+ * JPEG instead. Decided on the stored type and name rather than the bytes, so
+ * answering the page's meta request never has to read the file.
+ * @param {object} attachment
+ * @returns {boolean}
+ */
+const isHeicBill = (attachment) => /^image\/hei[cf]/i.test(String(attachment?.mime || ''))
+  || /\.hei[cf]$/i.test(String(attachment?.name || ''));
+
+/** `IMG_4410.HEIC` → `IMG_4410.jpg`, for the JPEG a HEIC bill is served as. */
+const asJpegName = (name) => `${String(name).replace(/\.hei[cf]$/i, '')}.jpg`;
+
+/**
  * Public: what the bill on a signed link belongs to (no login).
  *
  * Only the facts already printed beside the thumbnail in the document the
  * reader is holding — the amount, the date, the reference, the book. Nothing
  * about the wallet, the balance or anybody else's rows.
+ *
+ * The file name and type are those of what publicReceipt SERVES, which for an
+ * iPhone photo is a JPEG: the page names its Download after them, and a
+ * JPEG saved as "IMG_4410.HEIC" is a file that then will not open.
  * @route GET /api/khata/public/receipt/:id/:sig/meta  (PUBLIC, signature-gated)
  * @returns {object} 404 when the signature does not match.
  */
 const publicReceiptMeta = asyncHandler(async (req, res) => {
   const e = await entryFromSignedLink(req, res, { full: true });
+  const heic = isHeicBill(e.attachment);
   res.json({
     code: e.code,
     date: e.date,
@@ -4587,8 +4608,9 @@ const publicReceiptMeta = asyncHandler(async (req, res) => {
     employeeName: e.employee?.firstName
       ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim()
       : null,
-    fileName: e.attachment.name || null,
-    mime: e.attachment.mime || null,
+    fileName: e.attachment.name ? (heic ? asJpegName(e.attachment.name) : e.attachment.name) : null,
+    mime: heic ? 'image/jpeg' : (e.attachment.mime || null),
+    // The size of the file as stored; a converted photo comes out smaller.
     sizeBytes: e.attachment.sizeBytes || null,
   });
 });
@@ -4604,8 +4626,21 @@ const publicReceiptMeta = asyncHandler(async (req, res) => {
  */
 const publicReceipt = asyncHandler(async (req, res) => {
   const entry = await entryFromSignedLink(req, res);
-  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
   const name = String(entry.attachment.name || `bill-${entry.code || entry._id}`).replace(/["\\]/g, '');
+  // An iPhone photo goes out as a JPEG, or the page this link opens shows a
+  // broken image in every browser but Safari. Only here: the logged-in route
+  // (getReceipt) still hands over the original file, and a photo this server
+  // cannot convert is sent as it is rather than not at all.
+  if (isHeicBill(entry.attachment)) {
+    const original = await storage.readBuffer(entry.attachment.storagePath).catch(() => null);
+    if (!original) bad(res, 'Receipt file missing', 404);
+    const jpeg = await heicToJpeg(original);
+    res.setHeader('Content-Type', jpeg ? 'image/jpeg' : (entry.attachment.mime || 'image/heic'));
+    res.setHeader('Content-Disposition', `inline; filename="${jpeg ? asJpegName(name) : name}"`);
+    res.send(jpeg || original);
+    return;
+  }
+  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
   res.setHeader('Content-Disposition', `inline; filename="${name}"`);
   if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
 });

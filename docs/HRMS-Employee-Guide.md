@@ -273,7 +273,7 @@ There are four to choose from, and **every one ends with the full list of entrie
 - **Day-wise with category summary** — each day, with what that day went on category by category, then a category-wise summary of the whole period.
 - **Category-wise summary** — what each category has cost.
 
-Tick **Include bills** on any of them to have the bill photographs printed beside their entries.
+Leave **Attach the bills** ticked (the app ticks it for you) and every bill is put at the end of the report in full, one to a page — photos, iPhone photos and PDF invoices alike. Tap a bill's thumbnail or **See bill** on its entry to jump to it, and **Back to the entry** to come back. Nothing has to be opened online, so the bills are there for whoever you send the report to.
 
 Each can be downloaded as a **PDF** to read, send or print, or as an **Excel** file to work with. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
 

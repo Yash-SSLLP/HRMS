@@ -392,8 +392,100 @@ check('classic float error is rounded away', L.round2(0.1 + 0.2), 0.3);
 check('third decimal rounds up', L.round2(1234.567), 1234.57);
 check('non-numeric input becomes zero rather than NaN', L.round2(undefined), 0);
 
-console.log(`\n${failures.length ? 'FAILED' : 'PASSED'} — ${passed} checks passed, ${failures.length} failed.`);
-if (failures.length) {
-  failures.forEach((f) => console.error(`\n  * ${f}`));
-  process.exit(1);
+/**
+ * The bills IN the report (2026-09-26): every bill attached in full at the end,
+ * one page per picture and per page of a PDF bill, each row jumping to its bill
+ * and each bill jumping back — links inside the file, because a web link is a
+ * dead end in a phone's PDF viewer. Async (pdf-lib reads PDFs asynchronously),
+ * so it runs before the summary below. The HEIC conversion is not pinned here:
+ * it needs a real iPhone photo as a fixture; it was checked by hand on the nine
+ * on file.
+ */
+async function billAttachmentChecks() {
+  console.log('\n--- bills attached to a report (services/billAttachments.js) ---');
+  const B = require('../services/billAttachments');
+  const { PDFDocument, PDFName, PDFArray, PDFDict } = require('pdf-lib');
+
+  const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  // `blank` pages carry no content stream at all — which pdf-lib cannot embed,
+  // and which once crashed the whole report at save().
+  const pdfOf = async (pages, { blank = false } = {}) => {
+    const d = await PDFDocument.create();
+    for (let i = 0; i < pages; i += 1) {
+      const pg = d.addPage(i % 2 ? [300, 200] : [200, 300]);
+      if (!blank) pg.drawRectangle({ x: 20, y: 20, width: 100, height: 60 });
+    }
+    return Buffer.from(await d.save());
+  };
+  const twoPages = await pdfOf(2);
+  const heicHead = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic', 'latin1'), Buffer.alloc(12)]);
+  const webp = Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.alloc(4), Buffer.from('WEBPVP8 ', 'latin1')]);
+  // Passes the sniff, fails to decode — a phone upload that says it is a JPEG.
+  const brokenJpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40)]);
+
+  check('each kind of bill is told from its bytes, not its label',
+    [PNG_1PX, twoPages, heicHead, webp, brokenJpeg, Buffer.from('hello world, not a bill')].map(B.sniff),
+    ['png', 'pdf', 'heic', 'webp', 'jpeg', null]);
+
+  const shrunk = B.downscale({ width: 40, height: 30, data: Buffer.alloc(40 * 30 * 4, 200) }, 20);
+  check('a photo is shrunk to the long edge, keeping its shape and its colour',
+    [shrunk.width, shrunk.height, shrunk.data[0], shrunk.data[3]], [20, 15, 200, 255]);
+
+  const prepared = await Promise.all([PNG_1PX, twoPages, await pdfOf(12), webp].map(B.prepareBill));
+  check('a picture passes through; a PDF is counted; a long one is capped; a WebP cannot go in',
+    prepared.map((p) => [p.kind, p.pages || null, p.totalPages || null]),
+    [['image', null, null], ['pdf', 2, 2], ['pdf', B.MAX_PDF_PAGES, 12], ['none', null, null]]);
+
+  const P = require('../services/cashbookEntriesPdf');
+  const row = (id, hour) => ({
+    _id: id, date: new Date(`2026-09-20T0${hour}:00:00Z`), direction: 'from_employee', amount: 100 * hour,
+    status: 'Approved', movement: 'expense', purpose: `bill ${id}`, code: `KHT-${id}`, hasAttachment: true,
+  });
+  const input = {
+    company: { name: 'Co' }, employee: { name: 'T' }, book: { name: 'B' }, range: {}, opening: 0, footer: {},
+    entries: [row('a', 1), row('b', 2), row('c', 3), row('d', 4)],
+    billLinks: new Map([['c', 'https://example.test/bill/c/sig']]),
+  };
+  // How every page's links point: [jumps inside the file as page numbers, web links].
+  const linksOf = async (pdf) => {
+    const doc = await PDFDocument.load(pdf);
+    const refs = doc.getPages().map((pg) => pg.ref.toString());
+    return doc.getPages().map((pg) => {
+      const jumps = [];
+      let web = 0;
+      const annots = pg.node.Annots();
+      for (let i = 0; annots && i < annots.size(); i += 1) {
+        const a = annots.lookup(i, PDFDict);
+        const dest = a.lookup(PDFName.of('Dest'));
+        if (dest instanceof PDFArray) jumps.push(refs.indexOf(dest.get(0).toString()) + 1);
+        else if (a.lookup(PDFName.of('A'))) web += 1;
+      }
+      return [jumps.sort(), web];
+    });
+  };
+
+  const withBills = await P.renderReport({
+    ...input,
+    bills: new Map([['a', PNG_1PX], ['b', twoPages], ['c', brokenJpeg], ['d', await pdfOf(1, { blank: true })]]),
+  });
+  check('each bill gets its own pages after the report: the photo, both PDF pages, the blank PDF — not the broken one',
+    (await PDFDocument.load(withBills)).getPageCount(), 1 + 1 + 2 + 1);
+  check('rows jump to their bill (thumbnail and "See bill"), bills jump back, the broken one keeps its web link',
+    await linksOf(withBills), [[[2, 2, 3, 3, 5, 5], 1], [[1], 0], [[1], 0], [[1], 0], [[1], 0]]);
+
+  const withoutBills = await P.renderReport(input);
+  check('bills not asked for: one page, no jumps, the web link where there is one',
+    await linksOf(withoutBills), [[[], 1]]);
 }
+
+(async () => {
+  await billAttachmentChecks();
+  console.log(`\n${failures.length ? 'FAILED' : 'PASSED'} — ${passed} checks passed, ${failures.length} failed.`);
+  if (failures.length) {
+    failures.forEach((f) => console.error(`\n  * ${f}`));
+    process.exit(1);
+  }
+})().catch((err) => {
+  console.error('\n  * the bill checks crashed:', err);
+  process.exit(1);
+});
