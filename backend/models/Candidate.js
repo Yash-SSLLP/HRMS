@@ -170,22 +170,17 @@ const candidateSchema = new mongoose.Schema(
       stageAt: { type: String, trim: true },
     },
 
-    // How the candidate entered the pipeline. 'Consultancy' = sent by an outside
-    // HR consultancy (see `consultancy` below) — whether the agency added them
-    // from its own portal, or HR entered them and recorded which agency it was.
+    // How the candidate entered the pipeline. 'Consultancy' = sourced by an
+    // outside HR consultancy account (see `consultancy` below).
     source: { type: String, enum: ['Portal', 'Application', 'Consultancy'], default: 'Portal' },
 
     // ===== SOURCED BY AN HR CONSULTANCY =====
-    // With `user`: an HRConsultancy account (models/User.js) added this
-    // candidate. The consultancy owns ROUND 1 — it is booked as that round's
-    // interviewer at creation and records the verdict itself — and it is the only
-    // outside account that can see this row at all, and only its own rows. `name`
-    // is frozen at creation, so the board still says who sent the candidate
-    // after the agency's account is renamed or switched off.
-    // `name` ALONE: HR entered the candidate and recorded which consultancy sent
-    // them (Add / Edit Candidate; services/recruitmentRules recordedConsultancy).
-    // Shown in the Source column and nothing more — every agency rule keys off
-    // `user`, which only the consultancy's own endpoint sets.
+    // Set when an HRConsultancy account (models/User.js) added this candidate.
+    // The consultancy owns ROUND 1 — it is booked as that round's interviewer at
+    // creation and records the verdict itself — and it is the only outside
+    // account that can see this row at all, and only its own rows. `name` is
+    // frozen at creation, so the board still says who sent the candidate after
+    // the agency's account is renamed or switched off.
     consultancy: {
       user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       name: { type: String, trim: true },

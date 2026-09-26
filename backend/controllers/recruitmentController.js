@@ -26,7 +26,6 @@ const { hasPermission } = require('../middleware/authMiddleware');
 const {
   normalizeJobLocations, matchJobLocation, keepLocationForJob,
   identityClauses, sameIdentity, rejectedAtOf, reapplyVerdict, summarizePriorRejections,
-  recordedConsultancy, agencyServes, consultancyChoices,
 } = require('../services/recruitmentRules');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -605,48 +604,10 @@ const listCandidates = asyncHandler(async (req, res) => {
 });
 
 /**
- * The consultancy names already known — agency logins and names recorded on
- * candidates — so recordedConsultancy can file a typed name under its existing
- * spelling ("krisave hr" → "Krisave HR"). Only fetched when a name was actually
- * typed; used for matching, never returned.
- * @param {*} rawName - the form's `consultancyName`
- * @returns {Promise<string[]>}
- */
-const knownConsultancyNames = async (rawName) => {
-  if (!String(rawName ?? '').trim()) return [];
-  const [agencies, recorded] = await Promise.all([
-    User.find({ role: 'HRConsultancy' }).select('firstName lastName').lean(),
-    Candidate.distinct('consultancy.name'),
-  ]);
-  return consultancyChoices(agencies.map((a) => `${a.firstName || ''} ${a.lastName || ''}`.trim()), recorded);
-};
-
-/**
- * Every HR consultancy for the Add / Edit Candidate dropdown: the active agency
- * accounts that serve one of the viewer's companies (including one that has not
- * sent anybody yet), plus the names HR has recorded on candidates inside the
- * viewer's company wall. Names only — nothing about the accounts themselves.
- * @route GET /api/recruitment/consultancies  (any recruitment capability)
- * @returns {{consultancies: string[]}}
- */
-const listConsultancies = asyncHandler(async (req, res) => {
-  const scope = viewerCompanyScope(req);
-  const agencies = await User.find({ role: 'HRConsultancy', isActive: { $ne: false } })
-    .select('firstName lastName companies').lean();
-  const jobIds = await allowedJobIds(req);
-  const recorded = await Candidate.distinct('consultancy.name', jobIds ? { $or: [{ job: { $in: jobIds } }, { job: null }] } : {});
-  const accountNames = agencies
-    .filter((a) => agencyServes(a.companies, scope))
-    .map((a) => `${a.firstName || ''} ${a.lastName || ''}`.trim());
-  res.json({ consultancies: consultancyChoices(accountNames, recorded) });
-});
-
-/**
  * Manually add a candidate (seeds the default interview rounds).
  * @route POST /api/recruitment/candidates  (HR)
  * @param {string} req.body.name - required
  * @param {string} [req.body.stage] - must be one of CANDIDATE_STAGES
- * @param {string} [req.body.consultancyName] - the HR consultancy that sent them, if one did
  * @returns {{candidate: Object}} (201)
  */
 const createCandidate = asyncHandler(async (req, res) => {
@@ -683,17 +644,11 @@ const createCandidate = asyncHandler(async (req, res) => {
     ? stampRejection({}, req.body.rejectionReason, req.user)
     : undefined;
   delete req.body.rejectionReason;
-  // Only the consultancy's own endpoint files a candidate as theirs. What HR
-  // may give is the NAME of a consultancy that sent them (the form's
-  // "Consultancy" box), and `source` follows from that rather than being sent.
+  // Only the consultancy's own endpoint files a candidate as theirs.
   delete req.body.consultancy;
-  delete req.body.source;
-  const recorded = recordedConsultancy(null, req.body.consultancyName, await knownConsultancyNames(req.body.consultancyName));
-  delete req.body.consultancyName;
   const candidate = await Candidate.create({
     ...req.body,
     ...(rejection ? { rejection } : {}),
-    ...(recorded?.name ? { source: recorded.source, consultancy: { name: recorded.name } } : {}),
     rounds: defaultRounds(),
     createdBy: req.user._id,
   });
@@ -704,7 +659,7 @@ const createCandidate = asyncHandler(async (req, res) => {
  * Update a candidate's general fields (resume and rounds have dedicated routes).
  * @route PUT /api/recruitment/candidates/:id  (HR)
  * @param {string} req.params.id - candidate id
- * @param {Object} req.body - fields to update; `consultancyName` records (or, blank, clears) the HR consultancy that sent them
+ * @param {Object} req.body - fields to update
  * @returns {{candidate: Object}}
  */
 const updateCandidate = asyncHandler(async (req, res) => {
@@ -714,19 +669,9 @@ const updateCandidate = asyncHandler(async (req, res) => {
     throw new Error('Candidate not found');
   }
   delete req.body.createdBy;
-  // Which consultancy sent the candidate is a fact of how they arrived, and its
-  // portal link decides who may see them on the consultancy board — not an
-  // editable field. HR may record or clear a consultancy NAME on a candidate no
-  // agency added (recordedConsultancy leaves an agency's own row alone); a
-  // client that never sends `consultancyName` (the app) changes nothing.
+  // Which consultancy sent the candidate is a fact of how they arrived, and it
+  // decides who may see them on the consultancy board — not an editable field.
   delete req.body.consultancy;
-  delete req.body.source;
-  const recorded = recordedConsultancy(candidate, req.body.consultancyName, await knownConsultancyNames(req.body.consultancyName));
-  delete req.body.consultancyName;
-  if (recorded) {
-    candidate.source = recorded.source;
-    candidate.set('consultancy.name', recorded.name);
-  }
   // Don't let a general update clobber the resume or rounds — those have
   // dedicated routes.
   delete req.body.resumePath;
@@ -2878,7 +2823,7 @@ const reviewCandidateDocument = asyncHandler(async (req, res) => {
 module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
-  listCandidates, createCandidate, updateCandidate, deleteCandidate, listConsultancies,
+  listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
   myInterviews, setMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,

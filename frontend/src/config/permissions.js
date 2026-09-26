@@ -99,49 +99,6 @@ export function hasExplicitPermission(user, cap) {
 export const canExportKhata = (user) => !!user
   && (user.role === 'SuperAdmin' || user.khataExportAccess === true);
 
-/**
- * "Admin, CEO, MD and cashbook manager" — the people who keep the cashbook's
- * company-wide settings. Mirrors isCashbookAuthority in the backend's
- * middleware/authMiddleware.js: the Backend, the CEO and MD (even read-only),
- * the Accounts Manager role, and whoever manages either cash module — its
- * standalone switch, or the capability explicitly ticked on an HR Manager or
- * Manager. NOT hasPermission, which would sweep in every unconfigured HR Manager.
- * @param {object|null} user
- * @returns {boolean}
- */
-export const isCashbookAuthority = (user) => !!user && (
-  ['SuperAdmin', 'CEO', 'MD', 'AccountsManager'].includes(user.role)
-  || user.cashbookAccess === true
-  || user.khataAccess === true
-  || hasExplicitPermission(user, 'cashbook.manage')
-  || hasExplicitPermission(user, 'khata.manage')
-);
-
-/** May this account write the Cash Out category list (Permissions → Cash Out categories)? */
-export const canManageCashOutCategories = isCashbookAuthority;
-
-/**
- * May this account re-open a closed expense book? An employee may close their
- * own book, but opening one again is only for the cashbook authority (user
- * decision 2026-09-26) — PATCH /khata/khatas/:id/reopen enforces it.
- */
-export const canReopenBook = isCashbookAuthority;
-
-/**
- * May this account open the Permissions page at all? It holds four things, each
- * behind its own grant: the module-access matrix (Super Admins), the two
- * approval ladders, and the Cash Out category list. The page shows only the
- * tabs the account holds, so the nav offers it to anybody holding any one.
- * @param {object|null} user
- * @returns {boolean}
- */
-export const canOpenPermissions = (user) => !!user && (
-  user.role === 'SuperAdmin'
-  || ['leaveHierarchy.manage', 'regularizationHierarchy.manage', 'hierarchy.manage']
-    .some((c) => hasExplicitPermission(user, c))
-  || canManageCashOutCategories(user)
-);
-
 
 /**
  * The incentive tabs a role can be assigned in, and the roles themselves.

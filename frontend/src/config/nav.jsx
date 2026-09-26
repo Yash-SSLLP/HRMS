@@ -23,7 +23,6 @@ import {
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
 // visually (same stroke weight) and is already used elsewhere (AdminOverview).
 import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
-import { canOpenPermissions, canManageCashOutCategories, canUseAdminPortal } from './permissions';
 
 // A group's `icon` is used when permissions leave it with a single visible item:
 // NavList then renders it as one plain section link, and without an icon that
@@ -50,9 +49,6 @@ import { canOpenPermissions, canManageCashOutCategories, canUseAdminPortal } fro
 // `keywords` = extra lower-case terms the global search should match that do not
 // appear in the label — the other names people actually type ("khatabook" for
 // Employee Cashbook). They never render; GlobalSearch is the only consumer.
-// `access` = a predicate from config/permissions.js, for a rule the keys above
-// cannot spell — Permissions is "any ladder grant OR a Cash Out category
-// editor", and the keys only ever AND together. Checked alongside the others.
 export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
@@ -95,19 +91,18 @@ export const adminNav = [
     { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
     // EVERY ACCESS DECISION IN ONE PLACE. The module-access matrix (Super Admins
     // only), plus the two approval ladders that used to hide as setup tabs on
-    // Leave and Regularization, plus the Cash Out category list (what an
-    // employee may file an expense under, and in what order). Reachable by a
-    // Super Admin OR by whoever holds any one of the others — each tab keeps
-    // its own grant, and the page shows only the tabs the account holds.
+    // Leave and Regularization. Reachable by a Super Admin OR by whoever was
+    // granted one of the ladders — each tab keeps its own grant, and the page
+    // shows only the tabs the account holds.
     { to: '/admin/permissions', label: 'Permissions', icon: FiShield,
-      access: canOpenPermissions,
+      // hasExplicitPermission already passes a Super Admin (and an exec in edit
+      // mode) for any key, so they are not named here.
+      anyExplicitPerm: ['leaveHierarchy.manage', 'regularizationHierarchy.manage', 'hierarchy.manage'],
       keywords: ['access', 'grants', 'capabilities', 'manager grant', 'hierarchy',
-        'approval hierarchy', 'approval setup', 'who approves', 'ladder', 'chain',
-        'category', 'categories', 'cash out', 'expense category', 'cashbook category'],
+        'approval hierarchy', 'approval setup', 'who approves', 'ladder', 'chain'],
       tabs: [{ id: 'access', label: 'Module access', roles: ['SuperAdmin'] },
         { id: 'leave', label: 'Leave approvals', anyExplicitPerm: ['leaveHierarchy.manage'] },
-        { id: 'regularization', label: 'Regularization approvals', anyExplicitPerm: ['regularizationHierarchy.manage', 'hierarchy.manage'] },
-        { id: 'cashout', label: 'Cash Out categories', access: canManageCashOutCategories }] },
+        { id: 'regularization', label: 'Regularization approvals', anyExplicitPerm: ['regularizationHierarchy.manage', 'hierarchy.manage'] }] },
   ] },
   { group: 'Payroll & Salary', icon: TbCurrencyRupee, items: [
     { to: '/admin/payroll', label: 'Payroll', icon: TbCurrencyRupee, perm: 'payroll.manage',
@@ -370,13 +365,6 @@ export const accountsNav = [
   { to: '/admin/khata', label: 'Employee Cashbook', end: true, icon: TbReceipt,
     badge: ['khata', 'khataConfirm', 'khataSanction'],
     keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
-  // The Cash Out category list is theirs to keep (user decision 2026-09-26), and
-  // it lives on Permissions like every other "who may do what" setting — they
-  // see that one tab and nothing else there.
-  { to: '/admin/permissions', label: 'Permissions', end: true, icon: FiShield,
-    access: canManageCashOutCategories,
-    keywords: ['category', 'categories', 'cash out', 'expense category', 'cashbook category'],
-    tabs: [{ id: 'cashout', label: 'Cash Out categories' }] },
 ];
 
 // An HR Consultancy is an OUTSIDE agency: it enters the admin shell and sees one
@@ -435,14 +423,6 @@ export const employeeNav = [
     // The Employee Cashbook admin surface, for standalone-grant holders with no admin portal.
     { to: '/employee/khata-manage', label: 'Employee Cashbook', icon: TbCashBanknote, perm: 'khata.manage',
       keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
-    // Whoever manages the cashbook keeps the Cash Out category list, and it
-    // lives on Permissions. A grant holder with no admin portal (a Manager or
-    // employee given a cash-module switch) would otherwise have no way to it —
-    // anyone WITH the admin portal reaches it there, so it is never offered twice.
-    { to: '/employee/permissions', label: 'Permissions', icon: FiShield,
-      access: (u) => canManageCashOutCategories(u) && !canUseAdminPortal(u),
-      keywords: ['category', 'categories', 'cash out', 'expense category', 'cashbook category'],
-      tabs: [{ id: 'cashout', label: 'Cash Out categories' }] },
     // For whoever decides loans and advances (User.loansAccess): the
     // queue of everyone's requests, named apart from the "Loans & Advances" row
     // above, which is only what this person has borrowed themselves.

@@ -594,34 +594,6 @@ function canApproveAdvances(user) {
 }
 
 /**
- * Is this account one of "Admin, CEO, MD and cashbook manager" — the people
- * who keep the cashbook's company-wide settings?
- *
- * The user's own grouping (2026-09-26), used for two things so far: writing the
- * Cash Out category list (services/cashOutCategories.js) and RE-OPENING a closed
- * expense book (an employee may close their own; only these may open it again).
- *
- * SuperAdmin, CEO and MD are named outright — the executives even while
- * read-only, as for the advance form's purposes: these are their calls. The
- * cashbook manager is the Accounts Manager role, anyone given either cash
- * module's standalone switch (`cashbookAccess` for Company Accounts,
- * `khataAccess` for Employee Cashbook), or an HR Manager / Manager with one of
- * those two capabilities EXPLICITLY ticked.
- *
- * Deliberately NOT hasPermission: an HR Manager with no `permissions` array
- * holds every capability by default, which would make every HR one of these —
- * and HR is not on the list.
- * @param {object|null} user - needs role, permissions, cashbookAccess, khataAccess
- * @returns {boolean}
- */
-function isCashbookAuthority(user) {
-  if (!user) return false;
-  if (['SuperAdmin', 'CEO', 'MD', 'AccountsManager'].includes(user.role)) return true;
-  if (user.cashbookAccess === true || user.khataAccess === true) return true;
-  return hasExplicitPermission(user, 'cashbook.manage') || hasExplicitPermission(user, 'khata.manage');
-}
-
-/**
  * Route guard for the advance-approval queue.
  *
  * The ONE write a read-only CEO/MD account is allowed. Everywhere else an
@@ -892,7 +864,6 @@ module.exports = {
   requireKhataExport,
   canApproveAdvances,
   requireAdvanceApprover,
-  isCashbookAuthority,
   canApproveSelfPayslip,
   requireSelfPayslipApprover,
   canApproveSalaryChanges,

@@ -341,9 +341,6 @@ function NavList({ items, user, onNavigate, rail = false }) {
     // ticked per account must not be swept in by that default. Mirrors the gate
     // the page itself uses (Permissions is the one that needs this).
     if (i.anyExplicitPerm && !i.anyExplicitPerm.some((c) => hasExplicitPermission(user, c))) return false;
-    // A rule the keys above cannot spell — "this grant OR that role OR that
-    // switch" — as a predicate from config/permissions.js (see config/nav.jsx).
-    if (i.access && !i.access(user)) return false;
     // Feature-switched items (chat) go when the module is off.
     if (i.feature === 'chat' && !chatEnabled) return false;
     return true;
@@ -817,7 +814,6 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
       if (i.perm && !hasPermission(user, i.perm)) return false;
       if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
       if (i.anyExplicitPerm && !i.anyExplicitPerm.some((c) => hasExplicitPermission(user, c))) return false;
-      if (i.access && !i.access(user)) return false;
       // …and out of search too, or the page it hides is still one keystroke away.
       if (i.feature === 'chat' && !chatEnabled) return false;
       return true;

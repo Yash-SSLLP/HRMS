@@ -1,40 +1,32 @@
 /**
- * Cashbook report — the one renderer behind every PDF report type.
+ * Cashbook report — the ENTRY-BY-ENTRY and the DAY-BY-DAY renderers.
  *
- *   entries            every filtered row, oldest first, with its bill.
- *   daywise            one line per calendar day, with that day's closing
- *                      balance — the shape a supervisor reads at the end of
- *                      a trip.
- *   daywise_category   each day's line with what that day went on, category by
- *                      category, and then a category-wise summary of the lot.
- *   category           what the money went on, totalled by category.
+ * WHY A SECOND FILE. `cashbookSummaryPdf.js` answers "where did the money go, by
+ * heading?" — one row per category and nothing else. That is the right document
+ * for a manager and the wrong one for the person who actually spent the money,
+ * who wants to see the rows: the date, the remark, the bill, and the balance the
+ * wallet stood at afterwards. So the category summary stays exactly as it is
+ * (`scripts/testKhataLedger.js` asserts against it) and the two new reports live
+ * here:
  *
- * EVERY REPORT ENDS WITH ITS ENTRIES (2026-09-26, user request). A summary is
- * read first and then checked against the rows behind it. One that stopped at
- * its totals sent the reader back to the app to do the checking — and left the
- * person it was handed to (an accountant, whoever funded the trip) no way to do
- * it at all. So a summary is its tables and then the same entries list the
- * all-entries report prints, bill links and all. See LAYOUTS.
+ *   renderEntriesReport   every filtered row, oldest first, with its bill.
+ *   renderDaywiseReport   one line per calendar day, with that day's closing
+ *                         balance — the shape a supervisor reads at the end of
+ *                         a trip.
  *
- * The category-wise report used to be a separate one-page document drawn by
- * `cashbookSummaryPdf.js`. It moved here when it gained the entries list, so
- * all four are one family: the page size, the pale blue-lavender masthead, the
- * palette, the Indian-grouped whole-rupee figures and the footer line are the
- * same on each, and a person downloading them in a row must not feel they came
- * from different systems. Only the tables between the totals boxes and the
- * footer differ. (The category ARITHMETIC still lives in that file —
- * summariseByCategory — which is what `scripts/testKhataLedger.js` pins.)
+ * ONE FAMILY, THREE DOCUMENTS. The page size, the pale blue-lavender masthead,
+ * the palette, the Indian-grouped whole-rupee figures and the footer line are
+ * lifted from `cashbookSummaryPdf.js` deliberately: a person downloading all
+ * three in a row must not feel they came from three different systems. Only the
+ * table between the totals boxes and the footer differs.
  *
- * WHAT COUNTS AS MONEY. POSTED rows — `Approved` and `Reversed` (the one
- * definition, models/CashbookEntry.js POSTED_STATUSES). A Rejected request was
- * never paid, an AwaitingApproval one is still with the CEO/MD and a Pending one
- * is sanctioned but unpaid: those are still PRINTED — a rejected one greyed and
- * struck through, a waiting one badged — because financial history is never
- * hidden, and they contribute to no total. A Reversed row DID post, and counts
- * beside the reversal row that cancels it, so the pair nets to nothing; it wears
- * a "Reversed" chip rather than a strike-through. (Counting the reversal alone
- * was a double credit, fixed 2026-09-26.) This is the same rule the app's
- * summary card and the .xlsx export use, so the three can never disagree.
+ * WHAT COUNTS AS MONEY. Only `status === 'Approved'`. A Rejected request was
+ * never paid, an AwaitingApproval one is still with the CEO/MD, a Pending one is
+ * sanctioned but unpaid, and a Reversed one was cancelled by its mirror row —
+ * counting either half of that pair would double it. Those rows are still
+ * PRINTED, greyed and struck through, because financial history is never hidden;
+ * they simply contribute to no total. This is the same rule the app's summary
+ * card and the .xlsx export use, so the three can never disagree.
  *
  * THE BALANCE COLUMN is `walletBalanceAfter` — the PERSON's balance as it stood
  * when that row posted, which is the number the app showed them at the time. It
@@ -51,8 +43,6 @@
  */
 const PDFDocument = require('pdfkit');
 const { setupFonts } = require('./pdfFonts');
-const { POSTED_STATUSES } = require('../models/CashbookEntry');
-const { summariseByCategory } = require('./cashbookSummaryPdf');
 
 // The movements filed under a book, and so the only ones the company ever signs
 // off. Held as a local copy rather than imported from services/khataLedger:
@@ -102,11 +92,6 @@ const ROW_H = PAD_TOP + LINE_1 + LINE_2 + PAD_BOTTOM;
 const THUMB = 34;                 // bill thumbnail edge, per the spec
 const THUMB_TOP = PAD_TOP + LINE_1 + LINE_2;
 const DAY_ROW_H = 24.5;           // the day-wise table has no second line
-const SUB_ROW_H = 19;             // a category line under its day
-// A day's own line in the day-by-category table, tinted a shade lighter than
-// the header so the categories under it read as belonging to it.
-const DAY_BG = '#F8F9FD';
-const SECTION_HEAD_H = 32;        // a section's title and the line under it
 
 // Where a continuation page's table starts, clear of the repeated masthead.
 const CONTINUE_TOP = 120;
@@ -159,82 +144,12 @@ function columns(parts) {
 const ENTRY_X = columns([0.12, 0.34, 0.14, 0.10, 0.10, 0.10, 0.10]);
 // Date | Entries | Cash in | Cash out | Closing balance
 const DAY_X = columns([0.22, 0.14, 0.21, 0.21, 0.22]);
-// Date, then its categories | Entries | Cash in | Cash out | Closing balance
-const DAYCAT_X = columns([0.30, 0.12, 0.19, 0.19, 0.20]);
-// Category | Entries | Cash in | Cash out | Balance
-const CAT_X = columns([0.34, 0.12, 0.18, 0.18, 0.18]);
-
-/**
- * Each table's columns: edges and heads. The heads are drawn again at the top of
- * every continuation page, so they are data rather than drawing code.
- */
-const TABLES = {
-  entries: {
-    xs: ENTRY_X,
-    heads: [
-      { label: 'Date' }, { label: 'Details' }, { label: 'Category' }, { label: 'Mode' },
-      { label: 'Cash in', align: 'right' }, { label: 'Cash out', align: 'right' }, { label: 'Balance', align: 'right' },
-    ],
-  },
-  days: {
-    xs: DAY_X,
-    heads: [
-      { label: 'Date' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
-    ],
-  },
-  dayCategories: {
-    xs: DAYCAT_X,
-    heads: [
-      { label: 'Date / Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
-    ],
-  },
-  categories: {
-    xs: CAT_X,
-    heads: [
-      { label: 'Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Balance', align: 'right' },
-    ],
-  },
-};
-
-/**
- * What each report is made of, top to bottom — and every one of them ends with
- * `entries` (see the header). The keys are the `?report=` values the statement
- * routes accept; keep khataController.REPORT_KINDS and the three clients' lists
- * in step with them.
- */
-const LAYOUTS = {
-  entries: ['entries'],
-  daywise: ['days', 'entries'],
-  daywise_category: ['dayCategories', 'categories', 'entries'],
-  category: ['categories', 'entries'],
-};
-const REPORT_KINDS = Object.keys(LAYOUTS);
-
-/** The line under the book's name on page 1. */
-const SUBTITLES = {
-  entries: 'All entries',
-  daywise: 'Day-wise summary',
-  daywise_category: 'Day-wise summary with categories',
-  category: 'Category-wise summary',
-};
-
-/** The heading over each table, printed only when a document has more than one. */
-const SECTION_TITLES = {
-  days: ['Day by day', 'One line per calendar day, with the balance the day closed at.'],
-  dayCategories: ['Day by day, by category', 'Each day\'s total, then what that day went on, category by category.'],
-  categories: ['By category', 'Everything in this report, totalled under each category. Only money that moved is counted.'],
-  entries: ['All entries', 'Every entry behind the figures above, oldest first.'],
-};
 
 // A row whose money never moved. Grey, struck through, counted nowhere. Kept on
 // the page because a cashbook that quietly drops a rejected advance looks like a
-// cashbook the advance was never asked for on. NOT a Reversed row: that one did
-// move, and counts beside the reversal that undoes it (see the header).
-const isDead = (e) => e && e.status === 'Rejected';
-const isMoney = (e) => e && POSTED_STATUSES.includes(e.status);
+// cashbook the advance was never asked for on.
+const isDead = (e) => e && (e.status === 'Rejected' || e.status === 'Reversed');
+const isMoney = (e) => e && e.status === 'Approved';
 
 // pdfkit decodes JPEG and PNG only. Sniff the bytes rather than trust the stored
 // mime — a phone upload labelled image/jpeg is not always one, and a throw here
@@ -287,9 +202,9 @@ function billLinkFor(links, row) {
  * Fold the filtered rows into their totals.
  *
  * `counted` is how many rows were money; `entries.length` is how many were
- * printed. The two differ whenever a rejected or still-waiting row is in the set,
- * and the report says so out loud rather than leaving the reader to wonder why
- * the arithmetic does not match the row count.
+ * printed. The two differ whenever a rejected or reversed row is in the set, and
+ * the report says so out loud rather than leaving the reader to wonder why the
+ * arithmetic does not match the row count.
  * @param {Array} entries
  * @returns {{in: number, out: number, net: number, counted: number,
  *            unconfirmed: number, unconfirmedCount: number}}
@@ -333,18 +248,12 @@ function totalsFor(entries = []) {
  *
  * Pure — no pdfkit, no database — so `scripts/testKhataLedger.js` can assert the
  * arithmetic straight off a fixture. The running balance starts at `opening` and
- * only posted rows (Approved or Reversed) move it, exactly as the totals boxes do.
- *
- * Each day also carries `categories`: what that day went on, one line per
- * category in first-seen order. A category line counts EVERY row filed under it,
- * like the day's own Entries figure, so the lines under a day add up to the day;
- * only posted rows add to its money.
+ * only Approved rows move it, exactly as the totals boxes do.
  *
  * @param {Array} entries - already sorted oldest-first
  * @param {number} [opening] - balance as it stood before the first row
  * @returns {Array<{key: string, date: Date, rows: Array, count: number,
- *                  counted: number, in: number, out: number, net: number, closing: number,
- *                  categories: Array<{category: string, count: number, in: number, out: number}>}>}
+ *                  counted: number, in: number, out: number, net: number, closing: number}>}
  */
 function groupByDay(entries = [], opening = 0) {
   const days = [];
@@ -353,32 +262,15 @@ function groupByDay(entries = [], opening = 0) {
     const key = fmtKey.format(new Date(e.date));
     let day = days[days.length - 1];
     if (!day || day.key !== key) {
-      day = {
-        key, date: new Date(e.date), rows: [], count: 0, counted: 0, in: 0, out: 0, net: 0, closing: running,
-        categories: [],
-      };
+      day = { key, date: new Date(e.date), rows: [], count: 0, counted: 0, in: 0, out: 0, net: 0, closing: running };
       days.push(day);
     }
     day.rows.push(e);
     day.count += 1;
-    // The same heading rule as the category summary (summariseByCategory), so a
-    // category is spelled one way everywhere in the document.
-    const name = String(e.category || '').trim() || 'No Category';
-    let line = day.categories.find((c) => c.category === name);
-    if (!line) {
-      line = { category: name, count: 0, in: 0, out: 0 };
-      day.categories.push(line);
-    }
-    line.count += 1;
     if (isMoney(e)) {
       day.counted += 1;
-      if (e.direction === 'to_employee') {
-        day.in = round2(day.in + amountOf(e));
-        line.in = round2(line.in + amountOf(e));
-      } else {
-        day.out = round2(day.out + amountOf(e));
-        line.out = round2(line.out + amountOf(e));
-      }
+      if (e.direction === 'to_employee') day.in = round2(day.in + amountOf(e));
+      else day.out = round2(day.out + amountOf(e));
       day.net = round2(day.in - day.out);
       running = round2(running + (e.direction === 'to_employee' ? amountOf(e) : -amountOf(e)));
     }
@@ -392,15 +284,15 @@ function groupByDay(entries = [], opening = 0) {
 /**
  * Render one cashbook report.
  *
- * Every report type goes through here; `kind` picks the tables between the
- * totals boxes and the footer (LAYOUTS) and nothing else, which is what keeps
- * the documents recognisably the same document.
+ * Shared by both exported renderers; `variant` picks the table between the
+ * totals boxes and the footer and nothing else, which is what keeps the two
+ * documents recognisably the same document.
  *
- * @param {Object} input - see renderReport's JSDoc
- * @param {'entries'|'daywise'|'daywise_category'|'category'} kind
+ * @param {Object} input - see renderEntriesReport's JSDoc
+ * @param {'entries'|'daywise'} variant
  * @returns {Promise<Buffer>}
  */
-function renderCashbookReport(input, kind) {
+function renderCashbookReport(input, variant) {
   const {
     company = {}, logo = null, employee = {}, book = null, range = {},
     entries = [], bills = null, billLinks = null, footer = {},
@@ -413,17 +305,9 @@ function renderCashbookReport(input, kind) {
   const totals = totalsFor(entries);
   const closing = round2(opening + totals.net);
   const days = groupByDay(entries, opening);
-  // Money that moved, one line per category — the same fold the category
-  // summary has always printed, so its figures do not change with its layout.
-  const byCategory = summariseByCategory(entries);
-
-  // An empty report is one empty table, not three of them.
-  const layout = LAYOUTS[kind] || LAYOUTS.entries;
-  const sections = entries.length ? layout : layout.slice(0, 1);
-  const titled = sections.length > 1;
 
   const scopeName = book ? book.name : `${employee.name || 'Employee'} — all books`;
-  const subtitle = SUBTITLES[kind] || SUBTITLES.entries;
+  const subtitle = variant === 'daywise' ? 'Day-wise summary' : 'All entries';
 
   // "Added by" is the single most useful thing on a shared book and pure noise
   // on a book only one person has ever posted to, so it is decided once for the
@@ -574,40 +458,52 @@ function renderCashbookReport(input, kind) {
     };
 
     // ---- table head, repeated on every page ------------------------------
-    // `table` is whichever of TABLES is being drawn; each section sets it, so a
-    // page break in the middle of any table repeats THAT table's heads.
-    let table = TABLES[sections[0]];
+    const HEADS = variant === 'daywise'
+      ? [
+        { label: 'Date', xs: DAY_X },
+        { label: 'Entries', xs: DAY_X, align: 'right' },
+        { label: 'Cash in', xs: DAY_X, align: 'right' },
+        { label: 'Cash out', xs: DAY_X, align: 'right' },
+        { label: 'Closing balance', xs: DAY_X, align: 'right' },
+      ]
+      : [
+        { label: 'Date', xs: ENTRY_X },
+        { label: 'Details', xs: ENTRY_X },
+        { label: 'Category', xs: ENTRY_X },
+        { label: 'Mode', xs: ENTRY_X },
+        { label: 'Cash in', xs: ENTRY_X, align: 'right' },
+        { label: 'Cash out', xs: ENTRY_X, align: 'right' },
+        { label: 'Balance', xs: ENTRY_X, align: 'right' },
+      ];
+    const XS = variant === 'daywise' ? DAY_X : ENTRY_X;
 
-    const drawTableHead = (top) => {
-      const { xs, heads } = table;
-      for (let i = 0; i < heads.length; i += 1) {
-        doc.rect(xs[i], top, xs[i + 1] - xs[i], HEAD_H).fill(BAND_BG);
+    const drawTableHead = (y) => {
+      for (let i = 0; i < HEADS.length; i += 1) {
+        doc.rect(XS[i], y, XS[i + 1] - XS[i], HEAD_H).fill(BAND_BG);
       }
       doc.fillColor(INK).strokeColor(BORDER).lineWidth(0.6)
-        .rect(TABLE_L, top, TABLE_W, HEAD_H).stroke();
+        .rect(TABLE_L, y, TABLE_W, HEAD_H).stroke();
       doc.font(F.bold).fontSize(9.3).fillColor(INK);
-      heads.forEach((h, i) => {
-        doc.text(h.label, xs[i] + 6, top + 8,
-          { width: xs[i + 1] - xs[i] - 12, align: h.align || 'left', lineBreak: false });
+      HEADS.forEach((h, i) => {
+        doc.text(h.label, XS[i] + 6, y + 8,
+          { width: XS[i + 1] - XS[i] - 12, align: h.align || 'left', lineBreak: false });
       });
-      return top + HEAD_H;
+      return y + HEAD_H;
     };
 
     // The cell frame for one body row: the outer rule plus the interior
     // verticals, drawn per row so a page break never leaves a rule hanging.
-    // `fill` shades the row (the header tint for a total, DAY_BG for a day).
-    const drawRowFrame = (top, h, fill = null) => {
-      const { xs, heads } = table;
-      if (fill) {
-        for (let i = 0; i < heads.length; i += 1) {
-          doc.rect(xs[i], top, xs[i + 1] - xs[i], h).fill(fill);
+    const drawRowFrame = (y, h, shaded) => {
+      if (shaded) {
+        for (let i = 0; i < HEADS.length; i += 1) {
+          doc.rect(XS[i], y, XS[i + 1] - XS[i], h).fill(BAND_BG);
         }
         doc.fillColor(INK);
       }
       doc.strokeColor(GRID).lineWidth(0.6);
-      doc.rect(TABLE_L, top, TABLE_W, h).stroke();
-      for (let i = 1; i < heads.length; i += 1) {
-        doc.moveTo(xs[i], top).lineTo(xs[i], top + h).stroke();
+      doc.rect(TABLE_L, y, TABLE_W, h).stroke();
+      for (let i = 1; i < HEADS.length; i += 1) {
+        doc.moveTo(XS[i], y).lineTo(XS[i], y + h).stroke();
       }
       doc.strokeColor(BORDER);
     };
@@ -695,62 +591,38 @@ function renderCashbookReport(input, kind) {
     y += BOX_H + 10;
 
     // ---- the count --------------------------------------------------------
-    // Two numbers, because they differ the moment a rejected or still-waiting
-    // row is in the set, and a reader adding the column up by hand deserves to
-    // know which rows the totals skipped. (A reversed row IS counted — beside
-    // the reversal that cancels it.)
+    // Two numbers, because they differ the moment a rejected or reversed row is
+    // in the set, and a reader adding the column up by hand deserves to know
+    // which rows the totals skipped.
     const notCounted = entries.length - totals.counted;
     write(`Total No. of entries: ${entries.length}${notCounted
-      ? `  (${notCounted} not counted — rejected or not yet paid)` : ''}`,
+      ? `  (${notCounted} not counted — rejected or reversed)` : ''}`,
     X0, y, { size: 10.7, color: INK, width: BLOCK_W });
     y += 20;
 
-    // ===================== THE TABLES =====================
+    // ===================== TABLE =====================
+    y = drawTableHead(y);
 
-    const newPage = () => {
+    /** Break to a fresh page when `need` points does not fit, repeating the
+     *  masthead and the column heads so the table stays readable. */
+    const ensureRoom = (need) => {
+      if (y + need <= BOTTOM_LIMIT) return;
       drawFooter();
       doc.addPage({ size: [PAGE_W, PAGE_H], margin: 0 });
       drawBand();
-    };
-
-    /** Break to a fresh page when `need` points does not fit, repeating the
-     *  masthead and the current table's column heads so it stays readable.
-     *  `afterBreak` runs on the new page, under the heads — the day-by-category
-     *  table uses it to carry a day's date across. */
-    const ensureRoom = (need, afterBreak) => {
-      if (y + need <= BOTTOM_LIMIT) return;
-      newPage();
       y = drawTableHead(CONTINUE_TOP);
-      if (afterBreak) afterBreak();
     };
 
-    /**
-     * Open one table: its title (when the document has more than one table) and
-     * its column heads. The title, the heads and room for a first row travel
-     * together — a title alone at the foot of a page is a title for nothing.
-     */
-    const startSection = (key, first) => {
-      table = TABLES[key];
-      if (!first) y += 18;
-      const titleH = titled ? SECTION_HEAD_H : 0;
-      if (y + titleH + HEAD_H + ROW_H > BOTTOM_LIMIT) {
-        newPage();
-        y = CONTINUE_TOP;
-      }
-      if (titled) {
-        const [title, note] = SECTION_TITLES[key];
-        write(title, X0, y, { bold: true, size: 11.5, width: BLOCK_W });
-        write(note, X0, y + 15, { size: 8, color: MUTED, width: BLOCK_W });
-        y += SECTION_HEAD_H;
-      }
-      y = drawTableHead(y);
-    };
-
-    // ---- one line per calendar day ----------------------------------------
-    const drawDays = () => {
+    if (!entries.length) {
+      box(TABLE_L, y, TABLE_W, 46, '#FCFCFD', GRID);
+      write('No entries match these filters.', TABLE_L, y + 17,
+        { size: 9.5, color: FAINT, width: TABLE_W, align: 'center' });
+      y += 46;
+    } else if (variant === 'daywise') {
+      // ---- one line per calendar day ------------------------------------
       for (const day of days) {
         ensureRoom(DAY_ROW_H);
-        drawRowFrame(y, DAY_ROW_H);
+        drawRowFrame(y, DAY_ROW_H, false);
         const ty = y + 8;
         write(fmtDate.format(day.date), DAY_X[0] + 6, ty, { size: 8.7, width: DAY_X[1] - DAY_X[0] - 12 });
         figure(String(day.count), 1, DAY_X, ty, {});
@@ -759,85 +631,11 @@ function renderCashbookReport(input, kind) {
         figure(money(day.closing), 4, DAY_X, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
       }
-    };
-
-    // ---- each day, then what it went on -----------------------------------
-    // The day's line is the day-wise line (bold, tinted); the category lines
-    // under it are indented and quieter, and leave the balance blank — a
-    // balance belongs to the end of a day, not to a heading within it.
-    const drawDayCategories = () => {
-      const xs = DAYCAT_X;
-      // What one page can hold under its heads. A day that fits is kept whole;
-      // one longer than a page starts wherever its first line fits.
-      const pageRoom = BOTTOM_LIMIT - CONTINUE_TOP - HEAD_H;
-      for (const day of days) {
-        const label = fmtDate.format(day.date);
-        const block = DAY_ROW_H + day.categories.length * SUB_ROW_H;
-        ensureRoom(block <= pageRoom ? block : DAY_ROW_H + SUB_ROW_H);
-        drawRowFrame(y, DAY_ROW_H, DAY_BG);
-        const ty = y + 8;
-        write(label, xs[0] + 6, ty, { bold: true, size: 8.9, width: xs[1] - xs[0] - 12 });
-        figure(String(day.count), 1, xs, ty, { bold: true });
-        figure(money(day.in), 2, xs, ty, { bold: true, color: day.in ? IN_INK : FAINT });
-        figure(money(day.out), 3, xs, ty, { bold: true, color: day.out ? OUT_INK : FAINT });
-        figure(money(day.closing), 4, xs, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
-        y += DAY_ROW_H;
-        for (const c of day.categories) {
-          // A day that runs over a page carries its date across, so the lines
-          // at the top of the next page still say which day they belong to.
-          ensureRoom(SUB_ROW_H, () => {
-            drawRowFrame(y, SUB_ROW_H, DAY_BG);
-            write(`${label} (continued)`, xs[0] + 6, y + 5.5,
-              { size: 7.8, color: MUTED, width: xs[1] - xs[0] - 12 });
-            y += SUB_ROW_H;
-          });
-          drawRowFrame(y, SUB_ROW_H);
-          const sy = y + 5.5;
-          write(c.category, xs[0] + 16, sy, { size: 8.2, color: MUTED, width: xs[1] - xs[0] - 22 });
-          figure(String(c.count), 1, xs, sy, { size: 8.2, color: MUTED });
-          figure(money(c.in), 2, xs, sy, { size: 8.2, color: c.in ? IN_INK : FAINT });
-          figure(money(c.out), 3, xs, sy, { size: 8.2, color: c.out ? OUT_INK : FAINT });
-          y += SUB_ROW_H;
-        }
-      }
-    };
-
-    // ---- one line per category, for the whole report ----------------------
-    // Money that moved only (summariseByCategory): a category with nothing but
-    // a rejected request is not a place the money went. Its Balance is Cash in
-    // less Cash out, so a heading only ever spent against reads negative — the
-    // wallet's own convention.
-    const drawCategories = () => {
-      const xs = CAT_X;
-      // Money carried in from before the period opens the table, so its
-      // Balance column adds up to the Final Balance at the top of the page
-      // rather than disagreeing with it by exactly that much.
-      if (opening) {
-        ensureRoom(DAY_ROW_H);
-        drawRowFrame(y, DAY_ROW_H);
-        const ty = y + 8;
-        write('Opening balance', xs[0] + 6, ty, { size: 8.7, color: MUTED, width: xs[1] - xs[0] - 12 });
-        figure(money(opening), 4, xs, ty, { bold: true, color: opening < 0 ? OUT_INK : INK });
-        y += DAY_ROW_H;
-      }
-      for (const c of byCategory.rows) {
-        ensureRoom(DAY_ROW_H);
-        drawRowFrame(y, DAY_ROW_H);
-        const ty = y + 8;
-        write(c.category, xs[0] + 6, ty, { bold: true, size: 8.7, width: xs[1] - xs[0] - 12 });
-        figure(String(c.count), 1, xs, ty, {});
-        figure(money(c.in), 2, xs, ty, { color: c.in ? IN_INK : FAINT });
-        figure(money(c.out), 3, xs, ty, { color: c.out ? OUT_INK : FAINT });
-        figure(money(c.balance), 4, xs, ty, { bold: true });
-        y += DAY_ROW_H;
-      }
-    };
-
-    // ---- one block per entry, oldest first --------------------------------
-    // Oldest first is the reverse of the on-screen feed on purpose: a feed is
-    // read for "what just happened", a ledger is read top-down so the balance
-    // column accumulates in the direction the eye travels.
-    const drawEntries = () => {
+    } else {
+      // ---- one block per entry, oldest first -----------------------------
+      // Oldest first is the reverse of the on-screen feed on purpose: a feed is
+      // read for "what just happened", a ledger is read top-down so the balance
+      // column accumulates in the direction the eye travels.
       for (const e of entries) {
         const bill = billsFor(bills, e);
         const rowH = bill.images.length ? THUMB_TOP + THUMB + 6 : ROW_H;
@@ -845,7 +643,7 @@ function renderCashbookReport(input, kind) {
         const dead = isDead(e);
         const bodyInk = dead ? FAINT : INK;
 
-        drawRowFrame(y, rowH);
+        drawRowFrame(y, rowH, false);
 
         // Date cell — the day on top, the 12-hour clock under it.
         const d = new Date(e.date);
@@ -864,15 +662,11 @@ function renderCashbookReport(input, kind) {
         // right of the second line, so it is measured and drawn BEFORE the meta
         // text — the meta then gets only the space the chip left, instead of
         // being written straight underneath it.
-        // A Reversed row is money but still says so: it is the reason the
-        // reversal row beside it exists.
-        const statusLabel = e.status === 'Approved' ? ''
+        const statusLabel = isMoney(e) ? ''
           : (e.status === 'AwaitingApproval' ? 'With CEO/MD' : String(e.status || ''));
         const statusW = statusLabel ? chipWidth(statusLabel) : 0;
         if (statusLabel) {
-          const tint = dead ? { bg: '#FDECEA', fg: OUT_INK }
-            : e.status === 'Reversed' ? { bg: '#EEF0F4', fg: MUTED }
-              : { bg: '#FFF6E5', fg: '#8A6100' };
+          const tint = dead ? { bg: '#FDECEA', fg: OUT_INK } : { bg: '#FFF6E5', fg: '#8A6100' };
           chip(statusLabel, ENTRY_X[2] - 6 - statusW, y + PAD_TOP + LINE_1 - 1, tint);
         }
         // Where the full-size bill lives, when the caller gave us somewhere to
@@ -965,72 +759,48 @@ function renderCashbookReport(input, kind) {
 
         y += rowH;
       }
-    };
+    }
 
-    // ---- a table's Total row -----------------------------------------------
-    // Shaded like the header and carrying the same figures as the boxes at the
-    // top, so a reader who scrolled past them can close each table out on the
-    // same numbers. The LAST table asks for room for the small print as well,
-    // in one go: the note about bills that were left out is the one line a
-    // reader must not lose, and breaking after the total would strand it on a
-    // page of its own.
+    // ---- Final Balance row -------------------------------------------------
+    // Shaded like the header and carrying the same three figures as the boxes at
+    // the top, so a reader who scrolled past them can close the document out on
+    // the same numbers.
+    // Room for the row AND the small print under it, asked for in one go: the
+    // note about bills that were left out is the one line a reader must not
+    // lose, and breaking after the total would strand it on a page of its own.
     const TOT_H = 26;
     const NOTE_H = 34;
-    const drawTotal = (key, last) => {
-      ensureRoom(TOT_H + (last ? 10 + NOTE_H : 0));
-      drawRowFrame(y, TOT_H, BAND_BG);
-      const ty = y + 8;
-      const sum = { bold: true, size: 9 };
-      if (key === 'entries') {
-        // Right-aligned across the four text columns, so the word sits hard
-        // against the first figure it is totalling.
-        doc.font(F.bold).fontSize(9.3).fillColor(INK)
-          .text('Total', ENTRY_X[0] + 6, ty,
-            { width: ENTRY_X[4] - ENTRY_X[0] - 12, align: 'right', lineBreak: false });
-        figure(money(totals.in), 4, ENTRY_X, ty, { ...sum, color: IN_INK });
-        figure(money(totals.out), 5, ENTRY_X, ty, { ...sum, color: OUT_INK });
-        figure(money(closing), 6, ENTRY_X, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
-      } else {
-        const { xs } = table;
-        write('Total', xs[0] + 6, ty, { bold: true, size: 9.3, width: xs[1] - xs[0] - 12 });
-        // The day tables count every row as it was logged (entries.length), so
-        // their Entries column visibly adds up; the category table counts only
-        // the rows that moved money, and so does its total. Every one of them
-        // closes on the Final Balance — the category table by way of its
-        // opening line.
-        const count = key === 'categories' ? byCategory.counted : entries.length;
-        figure(String(count), 1, xs, ty, sum);
-        figure(money(totals.in), 2, xs, ty, { ...sum, color: IN_INK });
-        figure(money(totals.out), 3, xs, ty, { ...sum, color: OUT_INK });
-        figure(money(closing), 4, xs, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
-      }
-      y += TOT_H;
-    };
-
-    sections.forEach((key, i) => {
-      startSection(key, i === 0);
-      if (!entries.length) {
-        box(TABLE_L, y, TABLE_W, 46, '#FCFCFD', GRID);
-        write('No entries match these filters.', TABLE_L, y + 17,
-          { size: 9.5, color: FAINT, width: TABLE_W, align: 'center' });
-        y += 46;
-      } else if (key === 'days') drawDays();
-      else if (key === 'dayCategories') drawDayCategories();
-      else if (key === 'categories') drawCategories();
-      else drawEntries();
-      drawTotal(key, i === sections.length - 1);
-    });
-    y += 10;
+    ensureRoom(TOT_H + 10 + NOTE_H);
+    drawRowFrame(y, TOT_H, true);
+    if (variant === 'daywise') {
+      write('Total', DAY_X[0] + 6, y + 8, { bold: true, size: 9.3, width: DAY_X[1] - DAY_X[0] - 12 });
+      // entries.length, not totals.counted: the Entries column counts rows as
+      // they were logged, so its total has to be the same count or the column
+      // visibly fails to add up. The money columns are the ones that skip the
+      // rows that never moved money, and the note under the table says so.
+      figure(String(entries.length), 1, DAY_X, y + 8, { bold: true, size: 9 });
+      figure(money(totals.in), 2, DAY_X, y + 8, { bold: true, size: 9, color: IN_INK });
+      figure(money(totals.out), 3, DAY_X, y + 8, { bold: true, size: 9, color: OUT_INK });
+      figure(money(closing), 4, DAY_X, y + 8, { bold: true, size: 9, color: closing < 0 ? OUT_INK : INK });
+    } else {
+      // Right-aligned across the four text columns, so the word sits hard
+      // against the first figure it is totalling.
+      doc.font(F.bold).fontSize(9.3).fillColor(INK)
+        .text('Total', ENTRY_X[0] + 6, y + 8,
+          { width: ENTRY_X[4] - ENTRY_X[0] - 12, align: 'right', lineBreak: false });
+      figure(money(totals.in), 4, ENTRY_X, y + 8, { bold: true, size: 9, color: IN_INK });
+      figure(money(totals.out), 5, ENTRY_X, y + 8, { bold: true, size: 9, color: OUT_INK });
+      figure(money(closing), 6, ENTRY_X, y + 8, { bold: true, size: 9, color: closing < 0 ? OUT_INK : INK });
+    }
+    y += TOT_H + 10;
 
     // ---- the small print ---------------------------------------------------
     const notes = [];
     if (opening) notes.push(`Opening balance ${rs(opening)} carried in from before this period.`);
-    notes.push('Only money that moved is added up. A reversed entry counts beside the reversal that cancels it, so the'
-      + ' pair comes to nothing; a rejected entry is struck through and an entry still waiting for a decision is'
-      + ' marked, and neither is counted.');
+    notes.push('Only approved entries are counted. Rejected and reversed rows are shown struck through and add up to nothing.');
     // Only where there is something to click: on a document with no links the
     // sentence is an instruction the reader cannot follow.
-    if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
+    if (variant !== 'daywise' && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
       notes.push('Bill thumbnails are links: tap one to open the full-size bill.');
     }
     if (billsSkipped) {
@@ -1056,12 +826,7 @@ function renderCashbookReport(input, kind) {
 }
 
 /**
- * One book (or a whole wallet) as a printable report of the kind asked for.
- *
- * The same input for every kind — the caller does not have to know which
- * report it asked for beyond naming it — and the same totals, so any two of
- * them close on identical figures. An unknown kind prints the all-entries
- * report rather than failing.
+ * Every filtered row of one book (or of a whole wallet) as a printable ledger.
  *
  * @param {Object} input
  * @param {Object} input.company           - require('../config/company')
@@ -1083,19 +848,24 @@ function renderCashbookReport(input, kind) {
  * @param {Object} [input.footer]          - { helpline, note }
  * @param {Date}   [input.generatedAt]
  * @param {string} [input.generatedBy]     - "Rahul Sharma (EMP0142, Site Supervisor)"
- * @param {'entries'|'daywise'|'daywise_category'|'category'} [kind] - see LAYOUTS
  * @returns {Promise<Buffer>}
  */
-async function renderReport(input, kind = 'entries') {
-  return renderCashbookReport(input || {}, LAYOUTS[kind] ? kind : 'entries');
+async function renderEntriesReport(input) {
+  return renderCashbookReport(input || {}, 'entries');
 }
 
-/** Every filtered row, oldest first. See renderReport. */
-const renderEntriesReport = (input) => renderReport(input, 'entries');
+/**
+ * The same filtered rows, folded to one line per calendar day.
+ *
+ * Same input as renderEntriesReport — the caller does not have to know which
+ * report it asked for beyond picking the function — and the same totals, so the
+ * two documents close on identical figures. `bills` is accepted and ignored: a
+ * day is not a bill.
+ * @param {Object} input - see renderEntriesReport
+ * @returns {Promise<Buffer>}
+ */
+async function renderDaywiseReport(input) {
+  return renderCashbookReport(input || {}, 'daywise');
+}
 
-/** The day-wise summary, then every row. See renderReport. */
-const renderDaywiseReport = (input) => renderReport(input, 'daywise');
-
-module.exports = {
-  renderReport, renderEntriesReport, renderDaywiseReport, groupByDay, REPORT_KINDS,
-};
+module.exports = { renderEntriesReport, renderDaywiseReport, groupByDay };

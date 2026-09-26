@@ -31,8 +31,7 @@
  *
  *  4. POSTED MONEY IS NEVER DELETED. Corrections are reversals — the original
  *     is marked Reversed and a mirror row is written against it, on both the
- *     wallet and the cashbook. BOTH halves go on counting (POSTED_STATUSES), so
- *     the pair adds up to nothing.
+ *     wallet and the cashbook.
  *
  * SIGN RULE (repeated here because everything below depends on it):
  *   direction 'to_employee'   → wallet += amount   (they hold more of our cash)
@@ -55,35 +54,6 @@ const User = require('../models/User');
 
 /** Money is stored to 2 decimals; every computed figure goes through this. */
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-
-/**
- * The statuses whose money has MOVED, and so count in every balance and total:
- * the wallet replay, a book's `spent`, a cash account's balance, the summary
- * rows, the feed's figures and every report. Rejected, AwaitingApproval and
- * Pending rows are listed but never counted — they never happened, or have not
- * happened yet.
- *
- * 'REVERSED' IS HERE ON PURPOSE, and leaving it out was a bug (fixed
- * 2026-09-26). A reversal never un-posts the original: it writes a mirror row
- * (movement 'reversal', the opposite direction) and marks the original
- * 'Reversed' so people can see it was undone. The pair adds up to nothing ONLY
- * IF BOTH HALVES ARE COUNTED. The old rule counted 'Approved' alone, which
- * dropped the original and kept the mirror — so every reversal credited the
- * wallet a second time (a ₹1 expense reversed left the person holding ₹1 they
- * were never given), took the amount off the book's cost a second time, and
- * would have put a reversed advance back into the cash tin twice.
- *
- * Counting both halves is also what makes a CHAIN come out right — a reversal
- * reversed, and that reversed again. Every row in it is posted money, and the
- * parity of the chain decides the net without anything having to walk it.
- *
- * Defined on the model, beside the status vocabulary, so the cashbook
- * controller counts a cash account by the same rule without importing this file.
- */
-const { POSTED_STATUSES } = require('../models/CashbookEntry');
-
-/** Has this row's money moved? See POSTED_STATUSES. */
-const isPosted = (entry) => !!entry && POSTED_STATUSES.includes(entry.status);
 
 /**
  * Movements filed under an expense book. Everything else moves the wallet itself.
@@ -515,10 +485,9 @@ function replayBalance(openingBalance, entries) {
  * thing that carries a balance, and every row of theirs moves it whichever book
  * it was filed under.
  *
- * Only POSTED rows count (POSTED_STATUSES). AwaitingApproval and Pending ones
- * have not happened yet; Rejected ones never did. A Reversed row DID happen and
- * counts, alongside the mirror row that cancels it — counting only the mirror is
- * the double credit this used to give.
+ * Only 'Approved' rows count. AwaitingApproval and Pending ones have not
+ * happened yet; Rejected ones never did; Reversed ones did but have been
+ * cancelled by their mirror row.
  * @param {string|import('mongoose').Types.ObjectId} employeeId
  * @returns {Promise<number|null>} The recomputed wallet balance, or null if none.
  * @sideeffect Writes `balance`/`lastEntryAt` on the wallet and `balanceAfter` on the entries.
@@ -527,7 +496,7 @@ async function recomputeWalletBalance(employeeId) {
   const wallet = await getOrCreateWallet(employeeId);
   if (!wallet) return null;
 
-  const entries = await KhataEntry.find({ employee: wallet.employee, status: { $in: POSTED_STATUSES } })
+  const entries = await KhataEntry.find({ employee: wallet.employee, status: 'Approved' })
     .sort({ date: 1, createdAt: 1 })
     .select('direction amount walletBalanceAfter date');
 
@@ -580,9 +549,7 @@ async function recomputeKhataSpent(khataId) {
 
   const entries = await KhataEntry.find({
     expenseBook: khata._id,
-    // Posted money, Reversed rows included: the expense a reversal cancels has
-    // to stay on the book for the reversal to take it back off (POSTED_STATUSES).
-    status: { $in: POSTED_STATUSES },
+    status: 'Approved',
     // Everything filed under a book — spending and the refunds of it — plus the
     // reversals that cancel either. A reversal is filed under whatever it
     // reverses, so one against an expense has to come back off the book it was
@@ -1350,6 +1317,4 @@ module.exports = {
   confirmExpense,
   CASH_CATEGORY,
   BOOK_MOVEMENTS,
-  POSTED_STATUSES,
-  isPosted,
 };

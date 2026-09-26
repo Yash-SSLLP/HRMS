@@ -2250,10 +2250,6 @@ html.dark :has(> table)::-webkit-scrollbar-thumb { background-color: rgba(255, 2
   background-color: var(--border);
   pointer-events: none;
 }
-/* The -1px bridges the divider into the NEXT row; the last row has none, and
-   its pixel poked out of the pane — 1px of vertical overflow that put a stray
-   scrollbar beside any list short enough to fit (2026-09-26). */
-.table-pane > table > tbody > tr:last-child > :is(th, td):first-child::after { bottom: 0; }
 
 /* Both scrollbars slim, matching the in-card one above. */
 .table-pane::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -2326,44 +2322,6 @@ html.dark .table-pane::-webkit-scrollbar-thumb { background-color: rgba(255, 255
   overscroll-behavior-x: contain;
 }
 .topbar-scroll::-webkit-scrollbar { display: none; }
-
-/* ---------------------------------------------------------------------------
-   TAB STRIPS NEVER SCROLL UP AND DOWN (user report, 2026-09-26 — "this little
-   scroll … not looking premium").
-
-   The house underline tab is a `border-b` row of buttons each carrying
-   `border-b-2 -mb-px`, inside `overflow-x-auto`. A box that scrolls on one axis
-   scrolls on both (`overflow-y` computes to `auto`), and the negative margin
-   makes the row's content exactly 1px taller than the row — so Windows drew a
-   whole vertical scrollbar, trough and ▲▼ arrows, at the end of every such
-   strip (Employees, User Accounts, Cashbook, Holidays, Courses, the incentive
-   pages…) for that one pixel. The pixel was never visible — a scroller clips
-   at its padding edge — so hiding the vertical axis changes nothing else.
-   AdminKhata used to fix this for its own strip alone with `topbar-scroll`;
-   this covers every strip, including the next one written.
-
-   Only strips that ALREADY scroll sideways (`.overflow-x-auto`): on a strip
-   whose overflow is visible, `overflow-y: hidden` would turn it into a scroller
-   and clip the underline where it overlaps the row's border.
-
-   Sideways scrolling stays for a strip too long for its row, behind a slim
-   scrollbar that only appears when there is something to scroll. On a phone
-   the strips wrap instead — see NO SIDEWAYS BUTTON STRIPS below, whose
-   `overflow: visible !important` still wins there. */
-.overflow-x-auto:has(> :is(button, a)[class~="border-b-2"][class~="-mb-px"]) {
-  overflow-y: hidden;
-}
-/* The slim look. Not on a strip that hides its scrollbar outright
-   (`topbar-scroll`): the standard `scrollbar-width` below would override its
-   `display: none`, because Chrome ignores ::-webkit-scrollbar on any element
-   that sets the standard properties. */
-.overflow-x-auto:not(.topbar-scroll):has(> :is(button, a)[class~="border-b-2"][class~="-mb-px"]) {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, .45) transparent;
-}
-html.dark .overflow-x-auto:not(.topbar-scroll):has(> :is(button, a)[class~="border-b-2"][class~="-mb-px"]) {
-  scrollbar-color: rgba(255, 255, 255, .18) transparent;
-}
 
 /* Touch targets: 38px minimum for the icon-only buttons on a coarse pointer. */
 @media (pointer: coarse) {

@@ -241,13 +241,9 @@ If you earn incentive points, this is where they are explained. It has two tabs.
 
 If the company gives you cash to spend on its behalf, this is where it is accounted for. You hold **one advance** — your wallet — and you file what you spend under **books**, which are simply named headings: "Site A — materials", "Vehicle and fuel", whatever the work needs. The books say what the money went *on*; the wallet says how much of it is *left*.
 
-- **Ask for an advance** — money from the company into your wallet. It is asked for against the wallet, never against a particular book: the wallet is the pot, and a book is only what the spending is filed under. It goes to the **CEO and the MD** first — either of them can approve it — and then to the **cashbook manager**, who pays it. The amount reaches your wallet only when the cashbook manager has paid it, and you are told at each step.
-- **Ask for reimbursement** — when you have spent more than you were advanced, your wallet goes into minus and the company owes you the difference. This button, on the wallet card, asks for exactly that remaining amount; the accounts team chooses which account pays it. It stays greyed out while the company owes you nothing, and while an earlier claim for the same money is still waiting.
-- **Cash Out** — record an expense, or return unspent cash. On the website it sits beside **Your Books**; in the app, open the book the spending belongs to and tap **Cash Out** (to hand cash back, tap the wallet card and use Cash Out there). An expense needs a **bill** every time, and it counts the moment you file it.
-- **Category** — every expense is filed under one of the company's categories, picked from a dropdown. The list and its order are set by the company, so if the one you need is missing, ask the accounts team. Until the company has set a list up, no category is asked for.
+- **Cash Out** — record an expense against a book, or return unspent cash. An expense needs a **bill** every time, and it counts the moment you file it.
+- **Ask for an advance** — money from the company into your wallet. It is asked for against the wallet, never against a particular book: the wallet is the pot, and a book is only what the spending is filed under. Nothing is paid until it is approved.
 - An entry you filed stays **yours to correct until the accounts team confirms it**. After that, ask them to reverse it and file it again — nothing posted is ever quietly rewritten.
-- **A reversed entry stays on your statement**, faded, with the reversal beside it that cancels it. The two add up to nothing, so your balance is exactly what it would be had the entry never been filed.
-- **Closing a book** — when the work a book was for is done, close it from its **⋯** menu (your default book always stays open). Nothing more can be filed under it, and the expenses in it can no longer be corrected — by you or by anyone you shared it with — but its record stays. **Only the CEO, MD, an Admin or a cashbook manager can re-open it**, so ask one of them if you closed the wrong book.
 
 [!NOTE] Filing an expense or a refund records where you were at that moment, and the form says so before you submit. Only the Backend can see it — not HR, not the accounts team, not your manager.
 
@@ -264,20 +260,15 @@ An invitation waits for the other person to **accept** it, and it appears at the
 
 **Reports.** Open a book, set the filters you want — dates, a search, status, entry type, category, payment mode — and use **View Reports**. Whatever is on the screen is what comes out in the file, and the filters you used are printed on the document itself, so two downloads can never look alike and disagree.
 
-For a quick PDF, use the **PDF** button at the top of the book instead — top right of the screen in the app, on the book's card on the website. Pick a report type and it builds straight away, for whatever the book is showing.
+There are three to choose from:
 
-There are four to choose from, and **every one ends with the full list of entries**, so a summary can always be checked against the entries behind it:
-
-- **All entries** — every entry line by line, oldest first, with a running balance.
+- **All entries** — every entry line by line, oldest first, with a running balance. Tick **Include bills** to have the photographs printed alongside them.
 - **Day-wise summary** — one line per day: how many entries, cash in, cash out, and the closing balance.
-- **Day-wise with category summary** — each day, with what that day went on category by category, then a category-wise summary of the whole period.
 - **Category-wise summary** — what each category has cost.
-
-Tick **Include bills** on any of them to have the bill photographs printed beside their entries.
 
 Each can be downloaded as a **PDF** to read, send or print, or as an **Excel** file to work with. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
 
-[!NOTE] Only money that has moved counts towards the totals. A rejected request is still listed, struck through, so a report never hides part of the history; a reversed entry is counted together with the reversal that cancels it, so the pair adds up to nothing.
+[!NOTE] Only approved entries count towards the totals. Anything rejected or reversed is still listed, struck through, so a report never hides part of the history.
 
 ---
 

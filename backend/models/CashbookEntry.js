@@ -10,12 +10,6 @@ const ENTRY_TYPES = ['in', 'out']; // in = receipt/money in; out = payment/money
 // effect); Approved -> posted to balance; Rejected -> declined; Reversed -> undone
 // by a mirror row (never deleted).
 const ENTRY_STATUS = ['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'];
-// The statuses whose money has MOVED and so count in every balance and total —
-// on a cash account and on a person's wallet alike. A Reversed row still counts:
-// it did post, and the mirror row that undoes it counts too, so the pair nets to
-// nothing. Counting 'Approved' alone kept the mirror and dropped the original,
-// which credited every reversal twice (see services/khataLedger.js).
-const POSTED_STATUSES = ['Approved', 'Reversed'];
 const PAYMENT_MODES = ['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Other'];
 
 // Which ledger a row belongs to. 'company' = the classic cashbook line (money in
@@ -232,7 +226,6 @@ module.exports = CashbookEntry;
 module.exports.EmployeeLedgerEntry = EmployeeLedgerEntry;
 module.exports.ENTRY_TYPES = ENTRY_TYPES;
 module.exports.ENTRY_STATUS = ENTRY_STATUS;
-module.exports.POSTED_STATUSES = POSTED_STATUSES;
 module.exports.PAYMENT_MODES = PAYMENT_MODES;
 module.exports.LEDGERS = LEDGERS;
 module.exports.DIRECTIONS = DIRECTIONS;

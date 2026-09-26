@@ -13,15 +13,12 @@
  *
  * Reads GET /khata/me and offers the things an employee can start:
  *   - ask for an advance      → POST /khata/me/request   (may need CEO/MD sign-off)
- *   - record what they spent  → POST /khata/me/expense   (names a book, receipt REQUIRED,
- *                               and a category from the company's Cash Out list once
- *                               one exists — Permissions → Cash Out categories)
+ *   - record what they spent  → POST /khata/me/expense   (names a book, receipt REQUIRED)
  *   - record money that came
  *     BACK into a book        → POST /khata/me/refund    (names a book, receipt REQUIRED)
  *   - return unspent cash     → POST /khata/me/settle    (optional receipt)
- *   - claim what they are owed → POST /khata/me/reimbursement ("Ask for
- *     reimbursement" on the wallet card, for the remaining negative balance and
- *     shut while there is none — they spent past the advance, so the money is
+ *   - claim what they are owed → POST /khata/me/reimbursement (only when the
+ *     wallet has gone negative — they spent past the advance, so the money is
  *     running the other way and every other action here points the wrong way)
  *
  * Everything that asks the company FOR money parks — an employee never releases
@@ -70,18 +67,10 @@ import { toYMD } from '../utils/time';
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
 
-// A row whose money never moved — a declined request. It is still shown (with
-// its reason) because "what happened to my request?" is a question the cashbook
-// has to answer, but it must not read as a payment.
-//
-// NOT a Reversed row (2026-09-26). That one did move, and counts beside the
-// reversal that undoes it, so the pair adds up to nothing; striking out one half
-// while the other stood in green is what made a cancelled expense read as money
-// coming back. It is faded and tagged instead.
-const deadRow = (e) => e.status === 'Rejected';
-// The server's POSTED_STATUSES (models/CashbookEntry.js): the rows whose money
-// has moved, which every figure on this page adds up.
-const isPosted = (e) => e.status === 'Approved' || e.status === 'Reversed';
+// A row whose money never moved — declined, or cancelled by a reversal. It is
+// still shown (with its reason) because "what happened to my request?" is a
+// question the cashbook has to answer, but it must not read as a payment.
+const deadRow = (e) => e.status === 'Rejected' || e.status === 'Reversed';
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 // LOCAL parts, never toISOString(): between midnight and 05:30 IST the UTC day
 // is still yesterday, so a form opened at 1 a.m. used to default to the wrong
@@ -174,22 +163,16 @@ const ROLE_PILLS = {
   viewer: 'bg-gray-100 text-gray-700',
 };
 
-// The documents the same filtered set can be printed as — the server's
-// REPORT_KINDS. Every one of them ends with the full list of entries
-// (2026-09-26), so a summary can be checked against the rows behind it.
+// The three documents the same filtered set can be printed as.
 const REPORT_KINDS = [
   { value: 'entries', label: 'All entries', hint: 'Every row, oldest first, with a running balance. The one to send when somebody asks what the advance went on.' },
-  { value: 'daywise', label: 'Day-wise summary', hint: 'One line per day — what came in, what went out, where the day closed. Then every entry.' },
-  { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category, then a category-wise summary. Then every entry.' },
-  { value: 'category', label: 'Category-wise summary', hint: 'What was spent under each heading, totalled. Then every entry.' },
+  { value: 'daywise', label: 'Day-wise summary', hint: 'One line per day — what came in, what went out, where the day closed.' },
+  { value: 'category', label: 'Category-wise summary', hint: 'What was spent under each heading, totalled.' },
 ];
 
 const blankRequest = { amount: '', purpose: '', date: today() };
-// `category` starts EMPTY rather than on the list's first entry: the list is in
-// priority order, but pre-picking the top one would file every expense nobody
-// looked at under it. A choice is required once the company has a list.
-const blankExpense = { khata: '', amount: '', purpose: '', category: '', paymentMode: 'Cash', referenceNo: '', date: today() };
-const blankRefund = { khata: '', amount: '', purpose: '', category: '', paymentMode: 'Cash', referenceNo: '', date: today() };
+const blankExpense = { khata: '', amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
+const blankRefund = { khata: '', amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
 const blankSettle = { amount: '', purpose: '', paymentMode: 'Cash', referenceNo: '', date: today() };
 const blankClaim = { amount: '', purpose: '', date: today() };
 const BLANKS = {
@@ -220,7 +203,7 @@ const TITLES = {
   expense: 'Record an expense',
   refund: 'Money back into a book',
   settle: 'Return unspent cash',
-  claim: 'Ask for reimbursement',
+  claim: 'Ask to be paid back',
 };
 
 /**
@@ -296,10 +279,9 @@ export default function EmployeeKhata() {
   const [camera, setCamera] = useState(false);
   const fileRef = useRef(null);
 
-  // The Cash Out chooser — only 'out' now, which covers two things (spending
-  // the advance, handing cash back), so asking "which kind?" once is kinder
-  // than two more buttons. Opened from the Your Books header since 2026-09-26;
-  // the wallet card's second button is Ask for reimbursement instead.
+  // Which side of the wallet somebody pressed — only 'out' now, which covers
+  // two things (spending the advance, handing cash back), so asking "which
+  // kind?" once is kinder than two more buttons on the card.
   //
   // 'in' is gone (user decision 2026-09-11). Cash In was a chooser over three
   // inbound events — an advance, a supplier refund into a book, a claim — and
@@ -356,14 +338,6 @@ export default function EmployeeKhata() {
   const postableKhatas = openKhatas.filter((k) => k.myRole !== 'viewer');
   const entries = data?.entries || [];
   const totals = data?.totals || {};
-  // The Cash Out categories, in the order the company set on Permissions — the
-  // first is the top of the dropdown. Empty means no list has been set up, and
-  // the expense form then asks for no category (the server files it as Expense).
-  const categories = data?.categories || [];
-  // What "Ask for reimbursement" is for: everything the wallet has gone
-  // negative by, less anything already claimed and not yet paid. Worked out by
-  // the server; the button is shut whenever it is nothing.
-  const claimable = Number(totals.claimable) || 0;
   const wallet = data?.wallet || { balance: 0, display: { amount: 0, direction: 'settled', label: 'Nothing in hand' } };
   const display = wallet.display || { amount: 0, direction: 'settled', label: 'Nothing in hand' };
   const style = WALLET_STYLES[display.direction] || WALLET_STYLES.settled;
@@ -418,17 +392,17 @@ export default function EmployeeKhata() {
   }, [entries, query, filters, sort]);
 
   /**
-   * The figures for what is on screen, on the server's own rule: only POSTED
-   * rows are money (isPosted). A rejected one never happened and a pending one
-   * has not happened yet — both still listed, never added up. A reversed row
-   * and the reversal that cancels it are BOTH counted, so the pair adds up to
-   * nothing — exactly what the PDF does.
+   * The figures for what is on screen, on the server's own rule: ONLY an
+   * Approved row is money. A rejected one never happened, a pending one has not
+   * happened yet, and counting both halves of a reversed pair counts the same
+   * rupee twice. They are all still listed — struck through — and simply never
+   * added up, which is exactly what the PDF does.
    */
   const filteredTotals = useMemo(() => {
     let cashIn = 0;
     let cashOut = 0;
     visibleEntries.forEach((e) => {
-      if (!isPosted(e)) return;
+      if (e.status !== 'Approved') return;
       if (e.direction === 'to_employee') cashIn += Number(e.amount) || 0;
       else cashOut += Number(e.amount) || 0;
     });
@@ -457,10 +431,9 @@ export default function EmployeeKhata() {
     setForm({
       ...BLANKS[which],
       date: today(),
-      // A claim is for the WHOLE of what is still owed — the remaining negative
-      // balance, less anything already claimed — and the form shows it as a
-      // fixed figure rather than a box to type into (user decision 2026-09-26).
-      ...(which === 'claim' ? { amount: String(claimable) } : null),
+      // A claim is almost always for the whole outstanding amount, so it is
+      // filled in rather than left for them to copy off the card above.
+      ...(which === 'claim' ? { amount: String(totals.claimable ?? '') } : null),
       // Pre-select the book they are already looking at, else their default.
       // Only if it is one they may actually file into: the Book filter can be
       // pointing at a closed book or at one shared with them to read, and
@@ -492,10 +465,6 @@ export default function EmployeeKhata() {
       khata: String(entry.khata || ''),
       amount: String(entry.amount ?? ''),
       purpose: entry.purpose || '',
-      // Sent back as it is unless they change it. The server only holds a
-      // CHANGED category to the list, so a row filed under one since retired
-      // stays correctable without being forced off it.
-      category: entry.category || '',
       paymentMode: entry.paymentMode || 'Cash',
       referenceNo: entry.referenceNo || '',
       date: (entry.date || '').slice(0, 10) || today(),
@@ -552,12 +521,6 @@ export default function EmployeeKhata() {
       toast.error(modal === 'request' ? 'Say what the advance is for'
         : modal === 'refund' ? 'Say what came back, and why'
           : 'Say what you spent it on');
-      return;
-    }
-    // Once the company has a category list, a new expense has to name one of
-    // them. Checked here as well as on the server so the answer is immediate.
-    if (modal === 'expense' && !editing && categories.length && !form.category) {
-      toast.error('Choose a category for this expense');
       return;
     }
     // The bill is the only control on an expense — or a refund — now that they
@@ -775,33 +738,6 @@ export default function EmployeeKhata() {
     }
   };
 
-  /**
-   * Close a book of mine (2026-09-26 — it used to be the company's act alone).
-   *
-   * The confirmation says the one thing that makes it different from renaming:
-   * it is not undone here. Re-opening is for the CEO, MD, an Admin or a
-   * cashbook manager, and the expenses in it stop being correctable too.
-   */
-  const closeBook = async (book) => {
-    setMenuFor('');
-    const ok = await confirmDialog({
-      title: `Close "${book.name}"?`,
-      message: 'Nothing new can be filed under it, and the expenses already in it can no longer be corrected — '
-        + 'by you or by anyone you shared it with. Its record stays on your statement. '
-        + 'Only the CEO, MD, an Admin or a cashbook manager can re-open it.',
-      tone: 'warning',
-      confirmText: 'Close book',
-    });
-    if (!ok) return;
-    try {
-      const res = await api.post(`/khata/me/khatas/${book._id}/close`, {});
-      toast.success(res.data.message || `"${book.name}" is closed.`);
-      await load();
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not close the book');
-    }
-  };
-
   // ----- Reports -----
 
   /**
@@ -842,9 +778,9 @@ export default function EmployeeKhata() {
       const params = {
         ...filterParams(report.khata),
         report: report.kind,
-        // Every report ends with its rows now, so any of them can carry the
-        // bills beside those rows — the PDF only; the spreadsheet links them.
-        ...(fmt === 'pdf' && report.bills ? { bills: 1 } : {}),
+        // Bills are only bound into the all-entries document — a day-wise or
+        // category summary has no row to hang a thumbnail off.
+        ...(fmt === 'pdf' && report.kind === 'entries' && report.bills ? { bills: 1 } : {}),
       };
       const res = await api.get(fmt === 'xlsx' ? '/khata/me/report.xlsx' : '/khata/me/statement.pdf', {
         params, responseType: 'blob',
@@ -942,40 +878,38 @@ export default function EmployeeKhata() {
           )}
 
           {/* Owed money, but nothing left to ask for: they have already claimed
-              it. Without this the button below sits greyed out for no visible
-              reason and it reads like a bug. */}
-          {display.direction === 'owed' && !claimable && totals.pendingReimbursement > 0 && (
+              it. Without this the button simply vanishes and it reads like a
+              bug. */}
+          {display.direction === 'owed' && !totals.claimable && totals.pendingReimbursement > 0 && (
             <p className="text-xs text-red-700 mt-1">
               You have claimed {money(totals.pendingReimbursement)} of this. The company will pay it out.
             </p>
           )}
 
-          {/* The wallet's two buttons ask the company for money, one each way
-              the money can be owed (user decision 2026-09-26 — this second one
-              used to be Cash Out). An ADVANCE is money to spend on the company's
-              behalf; a REIMBURSEMENT is the company paying back what they spent
-              past it, so it is for the remaining negative balance and nothing
-              else, and it is shut whenever there is none. Recording spending and
-              handing cash back moved down to Your Books, where the headings are. */}
           <div className="flex flex-wrap gap-2 mt-5">
+            {/* When the company owes THEM, asking to be paid back is the only
+                thing they actually want to do — so it leads, ahead of the two
+                everyday buttons. */}
+            {totals.claimable > 0 && (
+              <button onClick={() => open('claim')}
+                className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium">
+                Ask to be paid {money(totals.claimable)}
+              </button>
+            )}
+            {/* Two buttons: the sign-colour rule says which way the money goes
+                before a word is read. IN is one thing now and says so, so it
+                opens the form directly — a chooser with a single answer in it is
+                a click that asks nothing. OUT still asks, because spending the
+                advance and handing cash back really are two different events. */}
             <button onClick={() => open('request')}
               className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
               Ask for an advance
             </button>
-            <button onClick={() => open('claim')} disabled={claimable <= 0}
-              className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600">
-              Ask for reimbursement{claimable > 0 ? ` · ${money(claimable)}` : ''}
+            <button onClick={() => setSheet('out')}
+              className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium">
+              − Cash Out
             </button>
           </div>
-          {/* A shut button needs its reason beside it — a tooltip does not show on
-              a disabled button in most browsers. Not said while they are owed
-              money but have already claimed it: the line above covers that. */}
-          {display.direction !== 'owed' && (
-            <p className="text-xs text-gray-500 mt-2">
-              Ask for reimbursement opens when you have spent more than you were advanced — it asks the
-              company to pay the difference back.
-            </p>
-          )}
         </div>
       )}
 
@@ -1038,20 +972,11 @@ export default function EmployeeKhata() {
         <div className="mb-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
             <h2 className="text-sm font-semibold text-gray-700">Your Books</h2>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-3">
               <span className="text-xs text-gray-500">{money(totalSpent)} spent in your books</span>
               <button onClick={() => setNewKhata({ name: '', note: '' })}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                 + Add new book
-              </button>
-              {/* Cash Out lives with the books now (it used to sit on the wallet
-                  card, which asks the company for money instead): spending is
-                  filed UNDER a book, so this is where it is recorded — the same
-                  place the app puts it, inside a book. Still a chooser, because
-                  spending the advance and handing cash back are two events. */}
-              <button onClick={() => setSheet('out')}
-                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">
-                − Cash Out
               </button>
             </div>
           </div>
@@ -1067,7 +992,7 @@ export default function EmployeeKhata() {
                       markup and the inner one stops working in some browsers. */}
                   <button type="button"
                     onClick={() => setFilter('khata', active ? '' : k._id)}
-                    className="w-full text-left p-4 pr-24">
+                    className="w-full text-left p-4 pr-10">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium text-gray-900 truncate">{k.name}</p>
                       {!k.isActive && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 shrink-0">Closed</span>}
@@ -1094,13 +1019,11 @@ export default function EmployeeKhata() {
                     <p className="text-xs text-gray-500">
                       spent · {k.entryCount === 1 ? '1 entry' : `${k.entryCount || 0} entries`}
                     </p>
-                    {/* Closed — by its owner or by the company. Its record stays
-                        here; nothing more goes into it, and only the CEO, MD, an
-                        Admin or a cashbook manager can open it again. */}
+                    {/* Closing is the company's act — finance saying the job is
+                        done. Its record stays here; nothing more goes into it. */}
                     {!k.isActive && (
                       <p className="text-xs text-gray-500 mt-1">
-                        {k.closedByOwner && isOwner ? 'Closed by you.' : 'Closed.'} No new expenses, and the ones
-                        in it can no longer be edited. Only the CEO, MD, an Admin or a cashbook manager can re-open it.
+                        Closed by the company. No new expenses, and the ones in it can no longer be edited.
                       </p>
                     )}
                     {/* The same figure on every card — and red when it is money
@@ -1110,15 +1033,6 @@ export default function EmployeeKhata() {
                     </p>
                   </button>
 
-                  {/* A PDF of this book at the top of its card (2026-09-26): the
-                      report is what gets handed on, so it is one click rather
-                      than a trip through the menu. Its own corner, not inside
-                      the menu's box — the menu hangs off that box. */}
-                  <button type="button" onClick={() => openReport(k._id)}
-                    aria-label={`Generate a PDF of ${k.name}`}
-                    className="absolute top-2 right-11 px-2 py-1 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50">
-                    PDF
-                  </button>
                   <div className="absolute top-2 right-2">
                     <button type="button"
                       onClick={() => setMenuFor(menuFor === k._id ? '' : k._id)}
@@ -1151,16 +1065,6 @@ export default function EmployeeKhata() {
                             className="block w-full text-left px-3 py-2 hover:bg-gray-50">
                             Download report
                           </button>
-                          {/* The owner may close an open book of theirs — not the
-                              default one, which is where an expense lands when no
-                              book is chosen. Re-opening is not offered here: it
-                              is for the CEO, MD, an Admin or a cashbook manager. */}
-                          {isOwner && k.isActive && !k.isDefault && (
-                            <button type="button" onClick={() => closeBook(k)}
-                              className="block w-full text-left px-3 py-2 text-red-600 hover:bg-red-50">
-                              Close book
-                            </button>
-                          )}
                           {/* Only somebody who was invited can leave. The owner
                               cannot: `employee` IS the book's namespace. */}
                           {k.myRole && !isOwner && (
@@ -1297,8 +1201,8 @@ export default function EmployeeKhata() {
             </span>
           </div>
           <p className="text-xs text-gray-500 ml-auto max-w-md">
-            Only money that has moved is counted: rejected requests are listed below struck through, and
-            a reversed entry counts together with the reversal that cancels it, so the two add up to nothing.
+            Only entries the company has approved are counted. Rejected and reversed ones are listed
+            below, struck through, and add up to nothing.
             {/* The server hands over the most recent 400 rows. Once that is
                 full, everything above is describing a slice of the statement,
                 and the report — which is built on the server — is the only
@@ -1355,13 +1259,10 @@ export default function EmployeeKhata() {
                   </button>
                 </td></tr>
               ) : visibleEntries.map((e) => (
-                /* A reversed row is faded, not struck out: it did post, and the
-                   reversal row that undoes it is right beside it — the pair is
-                   what adds up to nothing (see deadRow). */
                 <tr key={e._id} className={e.status === 'Reversed' ? 'opacity-60' : ''}>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtDate(e.date)}</td>
                   <td className="px-4 py-3">
-                    <p className="text-gray-800">
+                    <p className={`text-gray-800 ${e.status === 'Reversed' ? 'line-through' : ''}`}>
                       {e.purpose || e.category}
                     </p>
                     <p className="text-xs text-gray-400">
@@ -1399,10 +1300,10 @@ export default function EmployeeKhata() {
                   </td>
                   {/* Sign-colour rule: green raises your in-hand figure, red
                       lowers it — but only for money that actually moved. A
-                      declined row is struck through in grey: it stays on the
-                      list so you can see what happened and why, and a green
-                      "+₹5,000" on a request that was refused would read as money
-                      you had been given. */}
+                      declined or reversed row is struck through in grey: it
+                      stays on the list so you can see what happened and why,
+                      and a green "+₹5,000" on a request that was refused would
+                      read as money you had been given. */}
                   <td className={`px-4 py-3 text-right ${deadRow(e) ? 'text-gray-400 line-through' : 'text-emerald-700'}`}>
                     {e.direction === 'to_employee' ? money(e.amount) : ''}
                   </td>
@@ -1411,7 +1312,7 @@ export default function EmployeeKhata() {
                   </td>
                   {/* Only posted rows carry a running balance; a waiting one has not happened. */}
                   <td className="px-4 py-3 text-right text-gray-700">
-                    {isPosted(e) ? money(e.balanceAfter) : '—'}
+                    {e.status === 'Approved' ? money(e.balanceAfter) : '—'}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
@@ -1666,12 +1567,14 @@ export default function EmployeeKhata() {
 
             <label className="flex items-start gap-2 text-sm text-gray-700 mb-4">
               <input type="checkbox" className="mt-1" checked={report.bills}
+                disabled={report.kind !== 'entries'}
                 onChange={(e) => setReport({ ...report, bills: e.target.checked })} />
               <span>
                 Include the bills
                 <span className="block text-xs text-gray-500">
-                  Photographs of the slips are bound into the PDF beside their rows in the entries list. It takes
-                  longer to build.
+                  {report.kind === 'entries'
+                    ? 'Photographs of the slips are bound into the PDF beside their rows. It takes longer to build.'
+                    : 'Only the all-entries report has rows to hang a bill off.'}
                 </span>
               </span>
             </label>
@@ -1693,7 +1596,7 @@ export default function EmployeeKhata() {
       )}
 
       {/* Which kind of Cash Out. A short list behind one button beats two more
-          buttons in the Your Books header. */}
+          buttons on a card that already carries three. */}
       {sheet && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
@@ -1744,19 +1647,16 @@ export default function EmployeeKhata() {
             </p>
 
             {/* Which fields cannot be left blank, said once rather than only
-                implied by the markers. Not on a claim: its amount is fixed and
-                everything else on it is optional, so there is no marker to explain. */}
-            {modal !== 'claim' && (
-              <p className="text-xs text-gray-500 mb-3">
-                Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
-              </p>
-            )}
+                implied by the markers. */}
+            <p className="text-xs text-gray-500 mb-3">
+              Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
+            </p>
 
             {modal === 'claim' && (
               <div className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-2 mb-3">
                 The company owes you {money(display.amount)}
-                {totals.pendingReimbursement > 0 && <>, of which {money(totals.pendingReimbursement)} is already claimed</>}.
-                {' '}This asks for {totals.pendingReimbursement > 0 ? 'the rest' : 'all of it'}.
+                {totals.pendingReimbursement > 0 && <> , of which {money(totals.pendingReimbursement)} is already claimed</>}
+                . You can ask for up to {money(totals.claimable)}.
               </div>
             )}
 
@@ -1788,25 +1688,12 @@ export default function EmployeeKhata() {
               </>
             )}
 
-            {modal === 'claim' ? (
-              // Not a box to type into: a reimbursement is for the remaining
-              // negative balance, whole (user decision 2026-09-26). The server
-              // still checks it against what is owed at the moment it lands.
-              <>
-                <p className="block text-sm text-gray-700 mb-1">Amount</p>
-                <p className="text-2xl font-semibold text-red-700">{money(form.amount)}</p>
-                <p className="text-xs text-gray-500 mb-3">Everything the company still owes you.</p>
-              </>
-            ) : (
-              <>
-                <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
-                <input type="number" min="0.01" step="0.01" required autoFocus={!BOOK_FORMS.includes(modal)}
-                  value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3 text-lg"
-                  placeholder="0.00" />
-              </>
-            )}
+            <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
+            <input type="number" min="0.01" step="0.01" required autoFocus={!BOOK_FORMS.includes(modal)}
+              value={form.amount}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3 text-lg"
+              placeholder="0.00" />
 
             <label className="block text-sm text-gray-700 mb-1">
               {modal === 'request' ? 'What is it for?'
@@ -1824,33 +1711,6 @@ export default function EmployeeKhata() {
                   : modal === 'refund' ? 'e.g. 4 damaged bags returned to the supplier'
                     : modal === 'claim' ? 'e.g. please transfer to my salary account'
                       : 'e.g. returned unspent cash'} />
-
-            {/* The company's Cash Out categories, in the priority order set on
-                Permissions. Only once there IS a list — until then nothing is
-                asked and the server files the expense as "Expense". Required on
-                a new expense; a correction may leave a row on a category since
-                taken off the list, which is offered as its current value. */}
-            {BOOK_FORMS.includes(modal) && categories.length > 0 && (
-              <>
-                <label className="block text-sm text-gray-700 mb-1">
-                  Category{modal === 'expense' && !editing && <Req />}
-                </label>
-                <div className="mb-1">
-                  <SearchableSelect
-                    value={form.category}
-                    required={modal === 'expense' && !editing}
-                    placeholder="Choose a category…"
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full">
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                    {form.category && !categories.some((c) => c.toLowerCase() === form.category.toLowerCase()) && (
-                      <option value={form.category}>{`${form.category} (no longer on the list)`}</option>
-                    )}
-                  </SearchableSelect>
-                </div>
-                <p className="text-xs text-gray-500 mb-3">What it was for, from the company&apos;s list.</p>
-              </>
-            )}
 
             <label className="block text-sm text-gray-700 mb-1">Date</label>
             <input type="date" value={form.date}

@@ -130,24 +130,6 @@ const EXEC_WRITE_PATHS = [
   // either mode — routes/loanRoutes.js names them in requireLoanFormEditor — so
   // the save must not be refused here first.
   /\/loans\/form(\?|$)/,
-  // THEIR OWN CASHBOOK. /khata/me/* runs on `protect` alone and is addressed by
-  // identity, and a CEO/MD keeps a cashbook of their own (My Cashbook in the
-  // admin portal): asking for an advance, filing an expense, asking for
-  // reimbursement. None of it is company administration.
-  /\/khata\/me(\/|$|\?)/,
-  // THE CASH OUT CATEGORIES. The CEO and MD are named editors in either mode
-  // (services/cashOutCategories.js), like the advance form above.
-  /\/khata\/categories(\?|$)/,
-  // RE-OPENING A CLOSED BOOK — the CEO and MD may, in either mode
-  // (isCashbookAuthority; the route sits above the khata.manage gate).
-  /\/khata\/khatas\/[^/]+\/reopen(\?|$)/,
-  // SANCTIONING AN ADVANCE — the decision the CEO/MD step exists for, allowed
-  // in either mode (requireAdvanceApprover, mounted above the khata.manage
-  // gate): one request, or several ticked at once. Missing from this list, the
-  // Approve button on a read-only CEO/MD's queue was refused here, one step
-  // before the server would have let it through.
-  /\/khata\/entries\/[^/]+\/exec-decision(\?|$)/,
-  /\/khata\/advance-approvals\/decide(\?|$)/,
 ];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job

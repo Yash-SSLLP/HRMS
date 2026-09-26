@@ -10,7 +10,7 @@ const { createUpload } = require('../middleware/upload');
 const {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
-  listCandidates, createCandidate, updateCandidate, deleteCandidate, listConsultancies,
+  listCandidates, createCandidate, updateCandidate, deleteCandidate,
   setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
   myInterviews, setMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
@@ -149,8 +149,6 @@ router.route('/jobs/:id').put(canJobs, updateJob).delete(canJobs, deleteJob);
 
 // GET /candidates — list (canView); POST /candidates — create (recruitment.candidates); protected.
 router.route('/candidates').get(canView, listCandidates).post(canCand, createCandidate);
-// GET /consultancies — every HR consultancy's name, for the candidate form's dropdown (canView).
-router.get('/consultancies', canView, listConsultancies);
 // GET /candidates/:id/resume — download resume; protected, requires any recruitment perm.
 router.get('/candidates/:id/resume', canView, downloadResume);
 // POST /candidates/:id/resume — replace resume; protected, requires 'recruitment.candidates' + multer single 'resume'.

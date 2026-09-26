@@ -42,11 +42,8 @@ import ToggleSwitch from '../components/ToggleSwitch';
 import { useTabParam } from '../hooks/useTabParam';
 import LeaveApprovalHierarchy from '../components/permissions/LeaveApprovalHierarchy';
 import RegularizationApprovalSetup from '../components/permissions/RegularizationApprovalSetup';
-import CashOutCategories from '../components/permissions/CashOutCategories';
 import { roleLabel } from '../config/roles';
-import {
-  GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS, hasExplicitPermission, canManageCashOutCategories,
-} from '../config/permissions';
+import { GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS, hasExplicitPermission } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
 import { hasLeft } from '../utils/peopleOptions';
 
@@ -172,6 +169,7 @@ function AccessTab({ showGuide, setShowGuide }) {
   // Org-wide feature switches.
   const [org, setOrg] = useState({
     chatEnabled: false,
+    khataAdvanceApprovalRequired: true,
     documentFooter: { helpline: '', note: '' },
   });
   const [orgBusy, setOrgBusy] = useState(false);
@@ -185,6 +183,9 @@ function AccessTab({ showGuide, setShowGuide }) {
   // by the next toggle.
   const readOrg = (d = {}) => ({
     chatEnabled: !!d.chatEnabled,
+    // Absent means the server has not been upgraded yet; the gate is on by
+    // default there too, so assume on rather than showing it as disabled.
+    khataAdvanceApprovalRequired: d.khataAdvanceApprovalRequired !== false,
     documentFooter: {
       helpline: d.documentFooter?.helpline || '',
       note: d.documentFooter?.note || '',
@@ -541,18 +542,13 @@ function AccessTab({ showGuide, setShowGuide }) {
             onLabel="Enabled" offLabel="Disabled"
             onChange={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} />
 
-          {/* Not a switch any more (2026-09-26): every employee advance goes to
-              the CEO/MD and then to the cashbook manager. Said here, where the
-              switch used to be, so nobody goes looking for it. */}
-          <div className="py-4">
-            <div className="text-sm font-medium text-gray-900">CEO / MD approval for cash advances</div>
-            <p className="text-xs text-gray-500 mt-1 max-w-3xl leading-relaxed">
-              Always required. An employee&apos;s advance request goes to the CEO and the MD first — either of
-              them can approve it — and then to the cashbook manager, who pays it from a cash account. Only then
-              does the amount reach the employee&apos;s wallet. A CEO or MD asking for their own advance goes
-              straight to the cashbook manager.
-            </p>
-          </div>
+          <SettingRow
+            title="CEO / MD approval for cash advances"
+            description="When on, an employee's advance request waits for a CEO, MD or Super Admin to approve it before the accounts team can pay it. When off, requests go straight to the accounts team, who still decide which account the money comes out of. Requests already waiting on an executive stay there either way."
+            checked={org.khataAdvanceApprovalRequired}
+            busy={orgBusy}
+            onLabel="Required" offLabel="Not required"
+            onChange={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance-approval setting')} />
 
           {/* The contact strip on the khata statement PDF. Only a Super Admin
               can change it, because the document goes outside the company. */}
@@ -1071,20 +1067,13 @@ function AccessTab({ showGuide, setShowGuide }) {
  * is the same gate each tab enforced on its old page.
  *
  * WHICH IS WHY THE PAGE IS NO LONGER SUPER-ADMIN-ONLY, and the sidebar entry is
- * gated on the grants (`canOpenPermissions` in config/nav.jsx) rather than on
- * the role. An HR Manager given one of the ladders has to be able to reach the
- * screen that holds it. They see that tab and nothing else — no strip at all,
- * since there is nothing to switch between.
+ * gated on the same three keys (`anyExplicitPerm` in config/nav.jsx) rather than
+ * on the role. An HR Manager given one of the ladders has to be able to reach
+ * the screen that holds it. They see that tab and nothing else — no strip at
+ * all, since there is nothing to switch between.
  *
- * THE FOURTH TAB, Cash Out categories (2026-09-26), is the list an employee's
- * expense is filed under and the order it is offered in. It is kept by the
- * Backend, the CEO, the MD and whoever manages the cashbook
- * (canManageCashOutCategories) — which is why the page is also mounted in the
- * employee portal (/employee/permissions): a cashbook grant holder may have no
- * admin portal at all, and would see this one tab there.
- *
- * An account holding none of them gets the refusal card; the nav never offers
- * them the page, so they typed the URL.
+ * An account holding none of the three gets the refusal card; the nav never
+ * offers them the page, so they typed the URL.
  */
 export default function AdminPermissions() {
   const me = useAuthStore((s) => s.user);
@@ -1094,15 +1083,11 @@ export default function AdminPermissions() {
   // given a key of its own. Same pair the old tab tested.
   const canRegLadder = hasExplicitPermission(me, 'regularizationHierarchy.manage')
     || hasExplicitPermission(me, 'hierarchy.manage');
-  // The server's own gate (requireCashOutCategoryEditor), mirrored — so a
-  // read-only CEO/MD sees it too: they are named, like on the loan form.
-  const canCashOut = canManageCashOutCategories(me);
 
   const tabs = [
     ...(isSuperAdmin ? [{ id: 'access', label: 'Module access' }] : []),
     ...(canLeaveLadder ? [{ id: 'leave', label: 'Leave approvals' }] : []),
     ...(canRegLadder ? [{ id: 'regularization', label: 'Regularization approvals' }] : []),
-    ...(canCashOut ? [{ id: 'cashout', label: 'Cash Out categories' }] : []),
   ];
   // useTabParam keeps the tab in the URL, which is what lets global search and a
   // shared link land on one. Falls back to whichever tab this account HAS.
@@ -1164,7 +1149,6 @@ export default function AdminPermissions() {
 
       {tab === 'leave' && canLeaveLadder ? <LeaveApprovalHierarchy />
         : tab === 'regularization' && canRegLadder ? <RegularizationApprovalSetup />
-        : tab === 'cashout' && canCashOut ? <CashOutCategories />
         : isSuperAdmin ? <AccessTab showGuide={showGuide} setShowGuide={setShowGuide} />
         : null}
     </div>

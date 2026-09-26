@@ -21,7 +21,6 @@ import { hasLeft } from '../utils/peopleOptions';
 import stageToast from '../components/stageToast';
 import LetterEditor from '../components/LetterEditor';
 import SearchableSelect from '../components/SearchableSelect';
-import ConsultancySelect from '../components/ConsultancySelect';
 import { formatDateTime12 } from '../utils/time';
 import {
   AssessmentForm, AssessmentView, PreviousRounds, RecommendationChip,
@@ -161,51 +160,11 @@ const lastInterviewDate = (candidate) => {
   const pool = cleared.length ? cleared : dated;
   return toDateInput(pool.reduce((a, b) => (new Date(b.at) > new Date(a.at) ? b : a)).at);
 };
-
-const fmtDay = (d) => {
-  const x = d ? new Date(d) : null;
-  return x && !Number.isNaN(x.getTime()) ? x.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
-};
-
-/**
- * The Candidates table's Source column: how the candidate reached the pipeline
- * (Candidate.source). One sent by an outside HR consultancy is the one HR has
- * to spot, so it alone is tinted and carries the consultancy's name — whether
- * the agency added them from its own portal (it took Round 1 and is on the
- * later invites) or HR entered them and recorded the agency on the form. The
- * two in-house ways in (HR's "+ Add Candidate", the public form) stay plain.
- */
-function CandidateSource({ c }) {
-  if (c.consultancy?.name || c.consultancy?.user || c.source === 'Consultancy') {
-    const agency = c.consultancy?.name || 'HR consultancy';
-    const viaPortal = !!c.consultancy?.user;
-    const added = fmtDay(viaPortal ? (c.consultancy?.addedAt || c.createdAt) : c.createdAt);
-    // 9rem on a phone: index.css caps a table cell at 11rem there, padding
-    // included, and a wider chip ran into the Job column. The full name is in
-    // the tooltip either way.
-    return (
-      <div title={viaPortal
-        ? `Sent in by ${agency} from their consultancy portal${added ? ` on ${added}` : ''}. They take Round 1.`
-        : `Came through ${agency}, an HR consultancy. Added by HR${added ? ` on ${added}` : ''}.`}>
-        <span className="inline-block max-w-[9rem] md:max-w-[12rem] truncate align-top text-xs font-medium px-2 py-0.5 rounded-lg bg-orange-100 text-orange-800">
-          {agency}
-        </span>
-        <div className="text-xs text-gray-500 mt-0.5">HR consultancy</div>
-      </div>
-    );
-  }
-  return (
-    <span className="text-gray-500 whitespace-nowrap">
-      {c.source === 'Application' ? 'Applied online' : 'Added by HR'}
-    </span>
-  );
-}
-
 // `locations` is the list of places the opening is hiring for (Job.locations);
 // the legacy single `location` is not in the form at all any more — the server
 // keeps it in step as the first entry.
 const blankJob = { title: '', department: '', locations: [], employmentType: 'FullTime', openings: 1, description: '', status: 'Open', company: '' };
-const blankCand = { name: '', email: '', phone: '', job: '', location: '', stage: 'Applied', rating: 0, currentCtc: '', expectedCtc: '', consultancyName: '', notes: '' };
+const blankCand = { name: '', email: '', phone: '', job: '', location: '', stage: 'Applied', rating: 0, currentCtc: '', expectedCtc: '', notes: '' };
 
 export default function AdminRecruitment() {
   // A view-only account (the God audit login, a read-only CEO/MD) reads the
@@ -388,13 +347,9 @@ export default function AdminRecruitment() {
   };
   const openCandEdit = (c) => {
     setCandEditId(c._id);
-    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', location: c.location || '', stage: c.stage, rating: c.rating || 0, currentCtc: c.currentCtc || '', expectedCtc: c.expectedCtc || '', consultancyName: c.consultancy?.name || '', notes: c.notes || '' });
+    setCandForm({ name: c.name, email: c.email || '', phone: c.phone || '', job: c.job?._id || '', location: c.location || '', stage: c.stage, rating: c.rating || 0, currentCtc: c.currentCtc || '', expectedCtc: c.expectedCtc || '', notes: c.notes || '' });
     setCandModal(true);
   };
-  // The consultancy dropdown (components/ConsultancySelect). A candidate the
-  // agency added from its own portal shows its agency but cannot change it.
-  const editingCand = candEditId ? candidates.find((c) => c._id === candEditId) : null;
-  const editingAgency = editingCand?.consultancy?.user ? (editingCand.consultancy.name || 'HR consultancy') : '';
   const saveCand = async (e) => {
     e.preventDefault(); setSaving(true); setError('');
     try {
@@ -902,7 +857,6 @@ export default function AdminRecruitment() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50"><tr>
             <th className="px-4 py-3 text-left font-medium text-gray-700">Candidate</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Source</th>
             <th className="px-4 py-3 text-left font-medium text-gray-700">Job</th>
             <th className="px-4 py-3 text-left font-medium text-gray-700">Resume</th>
             <th className="px-4 py-3 text-left font-medium text-gray-700">Stage</th>
@@ -911,22 +865,28 @@ export default function AdminRecruitment() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {shortlistedCandidates.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No shortlisted candidates yet. Open a job's candidate list and shortlist applicants to start the interview process.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No shortlisted candidates yet. Open a job's candidate list and shortlist applicants to start the interview process.</td></tr>
             ) : shortlistedCandidates.map((c) => (
               <Fragment key={c._id}>
                 <tr>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900 flex flex-wrap items-center gap-2">
                       {c.name}
+                      {c.source === 'Application' && <span className="text-[10px] uppercase tracking-wide bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">Applied online</span>}
+                      {/* Sent in by an outside HR consultancy, which takes Round 1
+                          itself — see the Consultancy Candidates page. */}
+                      {c.source === 'Consultancy' && (
+                        <span className="text-[10px] uppercase tracking-wide bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded"
+                          title="Added by an HR consultancy, which records Round 1">
+                          Via {c.consultancy?.name || 'consultancy'}
+                        </span>
+                      )}
                       {/* Turned down before. Expand the row for the reason and
                           the write-ups from that attempt. */}
                       <PriorRejectionChip flag={c.priorRejection} />
                     </div>
                     <div className="text-xs text-gray-500">{c.email || ''}{c.phone ? ` · ${c.phone}` : ''}</div>
                   </td>
-                  {/* Where they came from — the "Applied online" / "Via <agency>"
-                      chips that used to sit beside the name. */}
-                  <td className="px-4 py-3"><CandidateSource c={c} /></td>
                   <td className="px-4 py-3 text-gray-600">
                     {c.job?.title || '-'}
                     {/* Which branch of a multi-location opening they are for. */}
@@ -1006,7 +966,7 @@ export default function AdminRecruitment() {
                 </tr>
                 {expanded === c._id && (
                   <tr>
-                    <td colSpan={7} className="px-4 pb-4 pt-0 bg-gray-50">
+                    <td colSpan={6} className="px-4 pb-4 pt-0 bg-gray-50">
                       {/* Rejected before: the reason, and every round of that
                           attempt. Opened by default while the hold still stands
                           — that is the case somebody has to look at. */}
@@ -1395,21 +1355,6 @@ export default function AdminRecruitment() {
                 </select>
                 <input placeholder="Current in-hand CTC" value={candForm.currentCtc} onChange={(e) => setCandForm({ ...candForm, currentCtc: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
                 <input placeholder="Expected CTC" value={candForm.expectedCtc} onChange={(e) => setCandForm({ ...candForm, expectedCtc: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              </div>
-              {/* Which HR consultancy sent them, if one did — it is what the
-                  Candidates table's Source column shows. Labelled, unlike its
-                  neighbours: a filled-in "Krisave HR" does not say what it is. */}
-              <div>
-                <label htmlFor="cand-consultancy" className="block text-xs font-medium text-gray-600 mb-1">Consultancy</label>
-                {editingAgency ? (
-                  <>
-                    <input id="cand-consultancy" value={editingAgency} disabled className="block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100 text-gray-600" />
-                    <p className="text-xs text-gray-500 mt-1">Added by this consultancy from its own portal, so it can’t be changed here.</p>
-                  </>
-                ) : (
-                  <ConsultancySelect id="cand-consultancy" value={candForm.consultancyName}
-                    onChange={(v) => setCandForm((f) => ({ ...f, consultancyName: v }))} />
-                )}
               </div>
               <textarea rows={3} placeholder="Notes" value={candForm.notes} onChange={(e) => setCandForm({ ...candForm, notes: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
               <div className="flex justify-end gap-2 pt-2">

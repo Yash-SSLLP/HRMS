@@ -1500,14 +1500,7 @@ This cannot be undone.`,
                 <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">
                   {lastUpdatedAt(p) ? formatDateTime12(lastUpdatedAt(p)) : <span className="text-gray-400">-</span>}
                 </td>
-                {/* One line, always: as inline buttons the cell wrapped Delete
-                    onto a line of its own. The cell's 20rem cap is lifted —
-                    four buttons need about that much on their own — so the
-                    table gives this column its width and the free-text columns
-                    wrap instead. */}
-                <td className="px-4 py-3 !max-w-none" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">{rowActions(p)}</div>
-                </td>
+                <td className="px-4 py-3 text-right space-x-2" onClick={(e) => e.stopPropagation()}>{rowActions(p)}</td>
               </tr>
             ))}
           </tbody>
