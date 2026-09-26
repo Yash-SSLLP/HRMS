@@ -2167,17 +2167,18 @@ export default function AdminKhata() {
               </div>
             </fieldset>
 
-            {/* Bills are drawn into the rows themselves, and every report ends
-                with its rows, so this is offered whichever one is picked. */}
+            {/* The bills hang off the entries list, and every report ends with
+                it, so this is offered whichever one is picked. */}
             <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
               <input type="checkbox" className="mt-1"
                 checked={statementModal.bills !== false}
                 onChange={(e) => setStatementModal({ ...statementModal, bills: e.target.checked })} />
               <span>
-                Include the bills
+                Attach the bills
                 <span className="block text-xs text-gray-500">
-                  Every photo bill in the period is embedded beside its row, so the document stands on its own
-                  once it leaves here. It takes longer to build and the file is much larger.
+                  Every bill in the period — photos, iPhone photos and PDF invoices — is attached in full at the
+                  end, one to a page, and each entry links to it, so the document stands on its own once it leaves
+                  here. It takes longer to build and the file is much larger.
                 </span>
               </span>
             </label>

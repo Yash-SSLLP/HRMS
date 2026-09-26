@@ -734,8 +734,9 @@ say which tables each is made of:
 
 **Every report ends with its entries** (2026-09-26, user request): a summary is
 read first and then checked against the rows behind it, so each one carries the
-all-entries table after its own — bill links always, bill photos with
-`?bills=1` on any type. With more than one table, each gets a title. The
+all-entries table after its own — bill links always, and with `?bills=1` on any
+type every bill attached in full after the report (see below). With more than
+one table, each gets a title. The
 category table counts money that moved only (`summariseByCategory`, which stays
 in `cashbookSummaryPdf.js` with `movement`; that file no longer draws a page)
 and opens on an *Opening balance* line when there is one, so every table closes
@@ -841,16 +842,43 @@ rather than at zero, so consecutive statements join up.
   financial history is never hidden — but they count for nothing. A **Reversed**
   row prints normally with a grey *Reversed* chip and counts, as does the
   reversal row that undoes it: the pair nets to nothing (POSTED_STATUSES).
-* **Bill thumbnails** inline in the row, on `?bills=1` and on the *All entries*
-  report only. Only JPEG and PNG can be drawn into a PDF, so the bytes are
-  sniffed rather than the stored mime trusted; a PDF bill prints as a
-  *"bill on file"* note instead. `RECEIPT_PAGE_CAP` (60) and a total byte budget
-  stop a year of a busy site book building a document nobody can email, and
-  whatever they skip is counted and printed under the table rather than silently
-  dropped.
+* **The bills are IN the document** on `?bills=1`, any report type (2026-09-26,
+  after "attached bills are not able to open and it not fully attached" from the
+  phone). Every bill is attached in full after the report, one page per picture
+  and one per page of a PDF bill (captioned *Bill N of M* with the row's date,
+  code, remark and amount), and the row carries a 34pt thumbnail — a *PDF* tile
+  for a PDF bill — plus *See bill N*, both jumping to that page; the bill page
+  has *Back to the entry*. They are links INSIDE the file (explicit page
+  destinations, registered after every page exists), because the old web links
+  were a dead end in a phone's PDF viewer and meant nothing to whoever the file
+  was forwarded to. The rows whose bill is not in the document — not asked for,
+  past the caps, or a format that cannot be printed — keep the *View bill* web
+  link.
+* **What each bill becomes** — `services/billAttachments.js`, run by
+  `renderReport` before drawing (the drawing is a synchronous Promise executor
+  and can await nothing). Formats are sniffed from the bytes, never the stored
+  mime. JPEG/PNG pass through; **HEIC** (iPhone photos — 9 of the 50 bills on
+  file that day) is decoded with `heic-decode`, shrunk to 2000px and re-encoded
+  with `jpeg-js` (libheif applies the file's rotate box; converted photos are
+  cached by content hash, 32 MB); a **PDF** bill is counted with `pdf-lib` (at
+  most 10 pages) and, after pdfkit finishes, `drawPdfBills` draws its original
+  pages into the frames pdfkit left for them — each page tried in a scratch
+  document first, because pdf-lib embeds lazily and one uncopyable page used to
+  throw inside `save()` and sink the whole report. A frame first carries a
+  fallback line ("could not be drawn — open it online"), painted over (and its
+  link removed) only once the page is really drawn. WebP, protected PDFs and
+  anything undecodable are counted as not attached and said so in red. All three
+  libraries are pure JS and loaded lazily: a server without them just prints
+  those bills as links, as before.
+* `RECEIPT_PAGE_CAP` (60) and a total byte budget stop a year of a busy site
+  book building a document nobody can email, and whatever they skip is counted
+  and printed under the table rather than silently dropped.
 * Every bill Buffer is read in the **controller**, before the renderer is called.
   The renderer body is a synchronous Promise executor and cannot await storage,
   so a bill fetched anywhere else simply does not appear.
+* The public bill page (`/bill/:id/:sig`) is handed a **JPEG for a HEIC bill** —
+  no browser but Safari shows HEIC — by `publicReceipt`, whose meta names the
+  file `.jpg` to match. The logged-in `getReceipt` still serves the original.
 
 ### The footer is SuperAdmin-editable
 
