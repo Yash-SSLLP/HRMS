@@ -10,6 +10,7 @@ import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import { hasLeft } from '../utils/peopleOptions';
 
 const blank = () => ({ name: '', company: '', lat: '', lng: '', radiusM: 200, active: true });
 const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
@@ -238,7 +239,10 @@ function AssignModal({ location, locations, onClose, onDone }) {
 
   useEffect(() => {
     api.get('/employees?excludeExecutives=true').then(({ data }) => {
-      const rows = (data.profiles || []).filter((p) => p.user).map((p) => ({
+      // Nobody who has left (utils/peopleOptions). Safe to drop outright: the
+      // save below only sends the difference between what is checked and who
+      // was already here, so a leaver still pointing at this site is left as is.
+      const rows = (data.profiles || []).filter((p) => p.user && !hasLeft(p)).map((p) => ({
         id: p._id, // profile id (workLocationRef lives on the profile)
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,
         sub: p.designation || p.employeeCode || p.user.email,

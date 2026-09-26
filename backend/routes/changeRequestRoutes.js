@@ -1,14 +1,14 @@
 /**
  * Change-request router — mounted at /api/change-requests.
- * Employee fill-missing + change requests, HR-raised employee changes, and
- * approver decisions. All routes require authentication.
+ * Employee fill-missing + change requests and approver decisions. HR edits an
+ * employee's record directly (PUT /api/employees/:id, PUT /api/admin/users/:id)
+ * rather than raising a request here. All routes require authentication.
  */
 const express = require('express');
 const {
   getFields,
   fillMissingField,
   createChangeRequest,
-  createAdminChangeRequest,
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,
@@ -26,8 +26,6 @@ router.post('/fill', fillMissingField);
 router.route('/')
   .get(myChangeRequests)
   .post(createChangeRequest);
-// POST /admin — HR raises a change on an employee (→ company CEO/MD).
-router.post('/admin', createAdminChangeRequest);
 // GET /assigned — my approver inbox (HR partner / CEO / MD / SuperAdmin).
 router.get('/assigned', assignedChangeRequests);
 // PATCH /:id — approve/decline a pending request.

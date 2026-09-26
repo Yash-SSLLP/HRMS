@@ -56,7 +56,7 @@ async function findAccountByEmail(email, extra = {}) {
 }
 const {
   FIELD_CATALOG, fmtVal: fmtFieldVal, getPath: fieldGetPath, auditFieldChange,
-  claimDailySelfEdit, releaseDailySelfEdit,
+  notifyExecsOfHrChanges, claimDailySelfEdit, releaseDailySelfEdit,
 } = require('../services/profileChanges');
 // Which fields a person may set on themselves without approval — the birthday
 // endpoint below has to honour the same rule, AND the same daily allowance, as
@@ -241,17 +241,6 @@ function payloadHasPath(obj, path) {
     cur = cur[p];
   }
   return true;
-}
-// Set a dot-path on a (possibly nested) payload object, creating objects as needed.
-function payloadSetPath(obj, path, value) {
-  const parts = path.split('.');
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const p = parts[i];
-    if (cur[p] == null || typeof cur[p] !== 'object') cur[p] = {};
-    cur = cur[p];
-  }
-  cur[parts[parts.length - 1]] = value;
 }
 
 // Who a given admin may SEE and MANAGE, shared with attendance and payroll so the
@@ -1022,11 +1011,13 @@ const createEmployee = asyncHandler(async (req, res) => {
 /**
  * Update an employee profile (hierarchy-validated). REASSIGNING an hrPartner or
  * reportingManager that is already set needs the `hierarchy.manage` grant;
- * filling an empty one does not. The linked user cannot be changed.
+ * filling an empty one does not. The linked user cannot be changed. Detail
+ * changes apply directly for everyone who may make this write; when HR made
+ * them, the employee's company CEO/MD are notified (no approval).
  * @route PUT /api/employees/:id  (HR/Admin)
  * @param {string} req.params.id - EmployeeProfile id
  * @param {Object} req.body - fields to update
- * @returns {{profile: Object}}
+ * @returns {{profile: Object, execsNotified: number}}
  */
 // PUT /api/employees/:id  (HR/Admin)
 const updateEmployee = asyncHandler(async (req, res) => {
@@ -1120,32 +1111,19 @@ const updateEmployee = asyncHandler(async (req, res) => {
   if (req.body.company !== undefined) assertAssignableCompany(req, req.body.company);
   await assertWorkLocationCompany(resultingRef, resultingCompany, profile);
 
-  // --- Route covered "detail" fields through the approval workflow ---
-  // The Backend (SuperAdmin) and a CEO/MD in edit mode write directly (each
-  // change audited). An HR Manager cannot change an employee's details directly:
-  // every changed catalogue field is queued as a request to the company CEO/MD,
-  // and the payload's value is reset to the current one so nothing is applied
-  // now. Non-catalogue fields (company, work-location site, …) apply as before.
-  const writesDirectly = req.user.role === 'SuperAdmin' || isEditingExec(req.user);
-  const auditTarget = {
-    name: `${profile.firstName || ''}`.trim() || undefined, // filled below from user if needed
-    profileId: profile._id,
-  };
-  const directAudits = [];
-  const queued = [];
+  // --- Covered "detail" fields: applied now, each change audited ---
+  // Whoever may make this write applies it directly — the Backend, a CEO/MD in
+  // edit mode, and HR. HR's changes used to be queued for the company CEO/MD to
+  // approve; since 2026-09-26 they apply at once and the CEO/MD are TOLD what
+  // changed instead (notifyExecsOfHrChanges, after the save). Only the stored
+  // value is read here: what changed is decided after the save, from what the
+  // schema actually kept (it trims, upper-cases a PAN, …), so a value that only
+  // differs in formatting is neither audited nor reported.
+  const coveredBefore = [];
   for (const [key, meta] of Object.entries(FIELD_CATALOG)) {
     if (meta.model !== 'Profile') continue; // name/email/phone live on User, edited elsewhere
     if (!payloadHasPath(req.body, meta.path)) continue;
-    const nextVal = fmtFieldVal(meta, fieldGetPath(req.body, meta.path));
-    const curVal = fmtFieldVal(meta, fieldGetPath(profile, meta.path));
-    if (String(nextVal) === String(curVal)) continue; // unchanged
-    if (writesDirectly) {
-      directAudits.push({ meta, from: curVal, to: nextVal });
-    } else {
-      queued.push({ key, requestedValue: nextVal });
-      // Keep the stored value so Object.assign leaves the field untouched.
-      payloadSetPath(req.body, meta.path, fieldGetPath(profile, meta.path));
-    }
+    coveredBefore.push({ key, meta, from: fmtFieldVal(meta, fieldGetPath(profile, meta.path)) });
   }
 
   // --- Salary: structure + annual CTC ---
@@ -1196,26 +1174,31 @@ const updateEmployee = asyncHandler(async (req, res) => {
       .catch((err) => console.error('Could not hand over change requests:', err.message));
   }
 
-  // Audit direct edits (Backend / exec edit-mode).
-  if (directAudits.length) {
-    auditTarget.name = `${linkedUser?.firstName || ''} ${linkedUser?.lastName || ''}`.trim();
-    directAudits.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
-  }
-
-  // Queue an HR Manager's detail changes for the company CEO/MD.
-  let queuedCount = 0;
-  if (queued.length) {
-    const { queueAdminChange } = require('./changeRequestController');
-    for (const q of queued) {
-      // eslint-disable-next-line no-await-in-loop
-      const cr = await queueAdminChange(req.user, profile.user, q.key, q.requestedValue);
-      if (cr) queuedCount += 1;
+  // Audit every detail that really changed, and tell the CEO/MD when the change
+  // came from below them — HR, or a Manager holding employees.manage. The
+  // Backend's and an edit-mode exec's own edits are audited but not announced.
+  // Awaited so the response can say whether anyone was told; it cannot fail the
+  // save — the notifier swallows its own errors.
+  const detailChanges = coveredBefore
+    .map((c) => ({ ...c, to: fmtFieldVal(c.meta, fieldGetPath(profile, c.meta.path)) }))
+    .filter((c) => String(c.from) !== String(c.to));
+  let execsNotified = 0;
+  if (detailChanges.length) {
+    const auditTarget = {
+      name: `${linkedUser?.firstName || ''} ${linkedUser?.lastName || ''}`.trim(),
+      profileId: profile._id,
+    };
+    detailChanges.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
+    if (req.user.role !== 'SuperAdmin' && !isEditingExec(req.user)) {
+      execsNotified = (await notifyExecsOfHrChanges(req.user, profile.user, detailChanges)).created;
     }
   }
 
   res.json({
     profile,
-    queuedForApproval: queuedCount,
+    // How many CEO/MD were told about this save's detail changes (0 when the
+    // Backend or an exec made them, or nothing covered changed).
+    execsNotified,
     // The salary change this save asked for, waiting on a CEO/MD — the profile
     // above still carries the salary they are paid today.
     ...(salaryRequest ? { salaryPendingApproval: true, salaryRequest } : {}),

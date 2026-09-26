@@ -709,7 +709,14 @@ const listAssetPeople = asyncHandler(async (req, res) => {
   filter.role = { $nin: excluded };
   // Company wall: the picker only offers people of the viewer's own company.
   await scopeUserFilter(req, filter);
-  const users = await User.find(filter).select(USER_FIELDS).sort({ firstName: 1, lastName: 1 }).lean();
+  const rows = await User.find(filter).select(USER_FIELDS).sort({ firstName: 1, lastName: 1 }).lean();
+  // Nobody who has left, on either half of the rule (utils/departed): `isActive`
+  // above misses a last working day already past on a login still switched on.
+  // Dropped here rather than flagged — the rows carry no exit date, and an app
+  // already on phones renders whatever this returns.
+  const { departedUserIdSet } = require('../utils/departed');
+  const gone = await departedUserIdSet(rows.map((u) => u._id));
+  const users = rows.filter((u) => !gone.has(String(u._id)));
   res.json({ count: users.length, users });
 });
 

@@ -264,12 +264,22 @@ export default function AdminExit() {
     }
   };
 
+  // Has this profile's HR partner left? Known from hrUsers, which keeps every
+  // HR login with the `departed` stamp /admin/users puts on it
+  // (utils/peopleOptions). A partner who has left counts as no partner at all:
+  // not prefilled, and not named in the employee picker.
+  const partnerGone = (profile) => {
+    const id = profile?.hrPartner?._id || profile?.hrPartner;
+    const row = id ? hrUsers.find((u) => String(u._id) === String(id)) : null;
+    return !!row && hasLeft(row);
+  };
+
   // When the admin picks an employee in the create form, auto-fill Handled By
-  // with that employee's permanent HR partner (if set). Falls back to the
-  // current user. Admin can still override manually.
+  // with that employee's permanent HR partner (if set and still here). Falls
+  // back to the current user. Admin can still override manually.
   const onPickEmployee = (employeeId) => {
     const profile = employees.find((p) => p._id === employeeId);
-    const partnerId = profile?.hrPartner?._id || profile?.hrPartner;
+    const partnerId = partnerGone(profile) ? null : (profile?.hrPartner?._id || profile?.hrPartner);
     setNewForm({
       ...newForm,
       employee: employeeId,
@@ -712,12 +722,15 @@ export default function AdminExit() {
                   <option value="">Select…</option>
                   {peopleOptions(
                     employees,
-                    (p) => `${p.employeeCode} · ${p.user?.firstName || ''} ${p.user?.lastName || ''}${p.hrPartner ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}`,
+                    (p) => `${p.employeeCode} · ${p.user?.firstName || ''} ${p.user?.lastName || ''}${p.hrPartner && !partnerGone(p) ? ` · HR: ${p.hrPartner.firstName} ${p.hrPartner.lastName}` : ''}`,
                     { keep: [newForm.employee] },
                   )}
                 </SearchableSelect>
                 {newForm.employee && (() => {
                   const sel = employees.find((p) => p._id === newForm.employee);
+                  if (sel?.hrPartner && partnerGone(sel)) {
+                    return <p className="text-xs text-gray-500 mt-1">This employee&apos;s HR partner has left · defaulting to you.</p>;
+                  }
                   return sel?.hrPartner
                     ? <p className="text-xs text-gray-500 mt-1">Handled By prefilled from this employee's HR partner.</p>
                     : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set · defaulting to you.</p>;

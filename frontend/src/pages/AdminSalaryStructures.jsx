@@ -25,7 +25,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
-import { peopleOptions } from '../utils/peopleOptions';
+import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
 import { canAdministerEmployee, canApproveSalaryChanges } from '../config/permissions';
 import SalaryChangeInbox from '../components/SalaryChangeInbox';
@@ -200,8 +200,13 @@ export default function AdminSalaryStructures() {
     // structure, or — where several share it — the only one who actually has a
     // CTC set. Anything more ambiguous is left for the picker, which now fills
     // the CTC in as soon as somebody is chosen.
-    const withCtc = onThis.filter((p) => Number(p.annualCtc) > 0);
-    const only = onThis.length === 1 ? onThis[0] : (withCtc.length === 1 ? withCtc[0] : null);
+    //
+    // Only from the people still here, though: the counts above keep a leaver
+    // (they decide whether the change needs approval), but the assign picker
+    // never offers one (utils/peopleOptions), so it must not be filled with one.
+    const here = onThis.filter((p) => !hasLeft(p));
+    const withCtc = here.filter((p) => Number(p.annualCtc) > 0);
+    const only = here.length === 1 ? here[0] : (withCtc.length === 1 ? withCtc[0] : null);
     setAssign(only
       ? { employee: only._id, annualCtc: only.annualCtc ? String(only.annualCtc) : '' }
       : { employee: '', annualCtc: '' });
@@ -388,9 +393,11 @@ export default function AdminSalaryStructures() {
     // to come first showed one person's salary while you were thinking about
     // another — the figures were right for somebody, just not the person you had
     // in mind, which is the worst kind of wrong.
+    // Nobody who has left: this is a "Preview for" dropdown, and a leaver is on
+    // the Employees page's Exited tab and nowhere else (utils/peopleOptions).
     const onThis = employees.filter(
       (p) => String(p.salaryStructure?._id || p.salaryStructure || '') === String(s._id)
-        && Number(p.annualCtc) > 0
+        && Number(p.annualCtc) > 0 && !hasLeft(p)
     );
     setPreviewPeople(onThis);
 

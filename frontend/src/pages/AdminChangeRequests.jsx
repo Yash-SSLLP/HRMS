@@ -46,6 +46,8 @@ function RequestRow({ r, onDecided }) {
 
   const requester = r.requestedBy ? `${r.requestedBy.firstName || ''} ${r.requestedBy.lastName || ''}`.trim() : 'Unknown';
   const target = r.targetUser ? `${r.targetUser.firstName || ''} ${r.targetUser.lastName || ''}`.trim() : '';
+  // An HR edit from before 2026-09-26, when those waited on a CEO/MD. HR's edits
+  // now save directly (the CEO/MD are notified), so no new ones arrive.
   const isExec = r.approverKind === 'exec';
 
   return (
@@ -55,7 +57,9 @@ function RequestRow({ r, onDecided }) {
           <div className="text-sm font-medium text-gray-900 flex items-center gap-2 flex-wrap">
             {r.fieldLabel}
             {isExec ? (
-              <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">HR change · needs exec approval</span>
+              <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                {r.status === 'pending' ? 'HR change · needs exec approval' : 'HR change'}
+              </span>
             ) : (
               <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">Employee request</span>
             )}

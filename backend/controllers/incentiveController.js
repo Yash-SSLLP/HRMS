@@ -273,8 +273,8 @@ async function pickablePeople(req) {
     .populate('user', 'firstName lastName isActive email')
     .lean();
   // ONE definition of "has left" (utils/departed): a deactivated login OR a last
-  // working day that has passed. Applied here rather than as a query fragment
-  // because the shared EXITED_FILTER freezes `new Date()` at module load.
+  // working day that has passed. Applied per row here because the user is
+  // populated anyway; stillHereProfileFilter is the same rule as a query.
   return profiles.filter((p) => p.user && !hasDeparted(p.user, p));
 }
 

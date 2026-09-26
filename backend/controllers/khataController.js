@@ -1075,11 +1075,14 @@ const getMyBook = asyncHandler(async (req, res) => {
   // Owner first, then the people who accepted, then the ones still deciding.
   // A declined invitation is left out entirely: the answer was no, and the row
   // only survives so that re-inviting them is a flip rather than a duplicate.
+  // So is a member who has left — they are on the Employees page's Exited tab
+  // and nowhere else; the rows they filed still carry their name.
+  const goneMembers = book ? await departedUserIdSet(book.members.map((m) => m.user?._id || m.user)) : new Set();
   const members = book
     ? [
       ownerMemberRow(book.employee),
       ...book.members
-        .filter((m) => m.user && m.status !== 'declined')
+        .filter((m) => m.user && m.status !== 'declined' && !goneMembers.has(String(m.user._id || m.user)))
         .sort((a, b) => (a.status === b.status ? 0 : (a.status === 'accepted' ? -1 : 1)))
         .map(publicMember),
     ]
@@ -1726,7 +1729,14 @@ const listKhatas = asyncHandler(async (req, res) => {
     booksByEmployee.get(id).push(publicKhata(k));
   }
 
-  let rows = live.map((w) => {
+  // Somebody who has left is on the Employees page's Exited tab and nowhere
+  // else — EXCEPT while they still have company money in play. A leaver holding
+  // an unsettled advance (or owed a reimbursement) stays on this list until the
+  // wallet reads zero, because hiding them would hide the money; once settled
+  // they drop off like everywhere else.
+  const gone = await departedUserIdSet(ids);
+
+  let rows = live.filter((w) => !gone.has(String(w.employee._id)) || ledger.round2(w.balance || 0) !== 0).map((w) => {
     const id = String(w.employee._id);
     const profile = profiles.get(id);
     const books = booksByEmployee.get(id) || [];
@@ -2258,10 +2268,16 @@ const employeeOptions = asyncHandler(async (req, res) => {
   // SuperAdmin (see utils/visibility.js), because an admin login CAN legitimately
   // hold a khata. It is flagged instead of dropped so the picker can hold it back
   // until searched for.
-  const users = await User.find(await scopeUserFilter(req, { isActive: true, role: { $nin: ['CEO', 'MD'] } }))
+  const active = await User.find(await scopeUserFilter(req, { isActive: true, role: { $nin: ['CEO', 'MD'] } }))
     .select('firstName lastName email photo role')
     .sort({ firstName: 1 })
     .lean();
+  // Nobody who has left: `isActive` misses a last working day already past on a
+  // login still switched on (utils/departed). Every dropdown on the cashbook
+  // page draws from this list, and none of them is showing a saved value — a
+  // leaver's past entries still carry their name from the entry itself.
+  const gone = await departedUserIdSet(active.map((u) => u._id));
+  const users = active.filter((u) => !gone.has(String(u._id)));
 
   const ids = users.map((u) => u._id);
   const [profiles, wallets] = await Promise.all([

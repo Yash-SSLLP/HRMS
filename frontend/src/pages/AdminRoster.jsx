@@ -11,7 +11,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
-import { peopleOptions } from '../utils/peopleOptions';
+import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { downloadTableXlsx } from '../api/download';
 
 const fmtDate = (d) =>
@@ -192,7 +192,10 @@ export default function AdminRoster() {
     if (!profiles.length) {
       try {
         const { data } = await api.get('/employees');
-        setProfiles(data.profiles || []);
+        // Nobody who has left (utils/peopleOptions). The dialog opens with
+        // nothing ticked and assigns only what is ticked, so a leaver still on a
+        // shift is simply left as they are.
+        setProfiles((data.profiles || []).filter((p) => !hasLeft(p)));
       } catch (err) {
         toast.error(err.response?.data?.message || 'Could not load employees');
       }

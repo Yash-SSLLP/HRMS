@@ -3756,3 +3756,331 @@ html.dark .Toastify__toast--info    .Toastify__toast-icon svg { fill: #38bdf8; }
   .Toastify__bounce-enter--top-center,
   .Toastify__bounce-enter--top-left { animation: none; }
 }
+
+/* ===========================================================================
+   PREMIUM LAYER (2026-09-26) — the collapsible sidebar rail, and the page-level
+   design that carries the sidebar's language onto every page: uppercase tracked
+   labels, soft accent gradients, hairlines and icon chips.
+   User ask: "make this side bar collapsible and design every page to match the
+   design to look premium". Everything here works through classes the shell and
+   PageHeader add, or through the shared utility vocabulary every page already
+   uses — no page was edited for it. At the END of the file on purpose: it
+   refines rules above and must win the source-order ties with them.
+   =========================================================================== */
+
+/* --- Shell: the sidebar's width and the content's offset move together ----- */
+/* Not a Tailwind transition utility: the app-wide `[class*="bg-"]` transition
+   rule near the top of this file (same specificity, later) would replace it. */
+.sidebar-shell {
+  transition: width .22s cubic-bezier(.22, .61, .36, 1), background-color .18s ease, border-color .18s ease;
+}
+.app-content { transition: padding-left .22s cubic-bezier(.22, .61, .36, 1); }
+
+/* The rail shows the mark alone — the wordmark has no room in 76px. */
+.sidebar-shell.is-rail .brand-text { display: none; }
+
+/* The collapse toggle: a small disc straddling the sidebar's edge, centred on
+   the hairline under the brand bar (4px strip + 64px bar - half its 28px). */
+.sidebar-toggle {
+  position: fixed;
+  top: calc(0.25rem + 4rem - 0.875rem);
+  left: calc(16rem - 0.875rem);
+  z-index: 45;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: #64748b;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .08), 0 4px 12px -4px rgba(15, 23, 42, .2);
+  transition: left .22s cubic-bezier(.22, .61, .36, 1), color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+@media (min-width: 1536px) { .sidebar-toggle { left: calc(20rem - 0.875rem); } }
+.sidebar-toggle.is-rail { left: calc(76px - 0.875rem); }
+/* A 28px disc is small under a finger; the target is 44px without the disc
+   growing. */
+.sidebar-toggle::before { content: ''; position: absolute; inset: -8px; border-radius: 9999px; }
+.sidebar-toggle:hover {
+  color: var(--nav-accent);
+  border-color: color-mix(in srgb, var(--nav-accent) 45%, var(--border));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .08), 0 6px 16px -6px color-mix(in srgb, var(--nav-accent) 60%, transparent);
+}
+html.dark .sidebar-toggle { color: var(--dk-ink-4); background-color: var(--surface-2); }
+html.dark .sidebar-toggle:hover { color: var(--nav-accent); }
+
+/* --- The rail ---------------------------------------------------------------- */
+.rail-list { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.rail-divider { width: 1.75rem; height: 1px; margin: 0.3rem 0; flex-shrink: 0; background-color: var(--border); }
+.rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  border-radius: 0.85rem;
+  color: #475569;
+  transition: background-color .15s ease, color .15s ease;
+}
+.rail-item .nav-icon {
+  width: 2.1rem;
+  height: 2.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.65rem;
+  background-color: color-mix(in srgb, var(--nav-accent) 10%, transparent);
+  transition: background-color .15s ease, box-shadow .15s ease, color .15s ease;
+}
+.rail-item:hover,
+.rail-item.is-open { color: var(--nav-accent); background-color: color-mix(in srgb, var(--nav-accent) 7%, transparent); }
+.rail-item:hover .nav-icon,
+.rail-item.is-open .nav-icon { background-color: color-mix(in srgb, var(--nav-accent) 18%, transparent); }
+/* Current page (or a category holding it): the same filled, glowing chip and
+   left rail pill the open sidebar gives its active row. */
+.rail-item.is-active .nav-icon {
+  background-color: var(--nav-accent);
+  color: #fff;
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--nav-accent) 85%, transparent);
+}
+.rail-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: -1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 1.25rem;
+  border-radius: 0 3px 3px 0;
+  background-color: var(--nav-accent);
+}
+.rail-item.is-danger { color: #dc2626; }
+.rail-item.is-danger .nav-icon { background-color: color-mix(in srgb, #dc2626 12%, transparent); }
+.rail-item.is-danger:hover { color: #dc2626; background-color: color-mix(in srgb, #dc2626 7%, transparent); }
+.rail-item.is-danger:hover .nav-icon { background-color: color-mix(in srgb, #dc2626 20%, transparent); }
+.rail-item.is-danger.is-active .nav-icon { background-color: #dc2626; color: #fff; box-shadow: 0 4px 14px -4px rgba(220, 38, 38, .8); }
+.rail-item.is-danger.is-active::before { background-color: #dc2626; }
+/* The pending count rides the chip's corner, ringed in the sidebar's surface. */
+.rail-count {
+  position: absolute;
+  top: 0.05rem;
+  right: 0.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.28rem;
+  border-radius: 9999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background-image: linear-gradient(180deg, #e8394a 0%, #c81e3a 100%);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+html.dark .rail-item { color: var(--dk-ink-4); }
+html.dark .rail-item:hover,
+html.dark .rail-item.is-open { color: #fff; background-color: color-mix(in srgb, var(--nav-accent) 12%, transparent); }
+/* Every dark accent is a light one — its chip takes the onyx ink. */
+html.dark .rail-item.is-active:not(.is-danger) .nav-icon { color: var(--onyx); }
+html.dark .rail-item.is-danger { color: #f87171; }
+html.dark .rail-count { background-image: linear-gradient(180deg, #f2586a 0%, #d92d46 100%); }
+
+/* --- The rail's flyouts (portalled to <body>) -------------------------------- */
+@keyframes railPop {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.rail-flyout {
+  position: fixed;
+  z-index: 55;
+  animation: railPop .14s cubic-bezier(.22, .61, .36, 1);
+}
+/* An invisible bridge across the 12px gap to the rail, so the pointer can
+   travel from the icon into the menu without the menu closing under it. */
+.rail-flyout::before { content: ''; position: absolute; top: 0; bottom: 0; left: -14px; width: 14px; }
+.rail-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.72rem;
+  border-radius: 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #fff;
+  background-color: var(--onyx);
+  box-shadow: 0 10px 24px -10px rgba(15, 23, 42, .55);
+}
+.rail-tip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background-image: linear-gradient(180deg, #e8394a 0%, #c81e3a 100%);
+}
+.rail-menu {
+  width: 16rem;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 0.45rem;
+  border-radius: 0.95rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 48px -20px rgba(15, 23, 42, .32), 0 8px 20px -12px rgba(15, 23, 42, .18);
+}
+.rail-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem 0.55rem;
+  margin-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--nav-accent);
+}
+.rail-menu-head .nav-count { letter-spacing: normal; text-transform: none; }
+html.dark .rail-tip { color: var(--dk-ink-1); background-color: var(--surface-3); border: 1px solid var(--border); }
+html.dark .rail-menu { box-shadow: 0 26px 52px -20px rgba(0, 0, 0, .7), 0 8px 20px -12px rgba(0, 0, 0, .55); }
+
+/* --- Canvas: a whisper of the portal accent and the brand gold at the top of
+   every page, behind the header — the same pairing as the sidebar's gold brand
+   bar over its accent rows. It scrolls away with the page. ------------------- */
+.app-canvas {
+  background-image:
+    radial-gradient(1100px 460px at 18% -160px, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%),
+    radial-gradient(900px 420px at 100% -180px, color-mix(in srgb, var(--gold-500) 14%, transparent), transparent 70%);
+  background-repeat: no-repeat;
+}
+html.dark .app-canvas {
+  background-image:
+    radial-gradient(1100px 460px at 18% -160px, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%),
+    radial-gradient(900px 420px at 100% -180px, color-mix(in srgb, var(--gold-500) 6%, transparent), transparent 70%);
+}
+
+/* --- Top bar: frosted glass instead of a white slab -------------------------- */
+.app-topbar {
+  background-color: color-mix(in srgb, var(--surface) 80%, transparent);
+  -webkit-backdrop-filter: saturate(1.5) blur(14px);
+  backdrop-filter: saturate(1.5) blur(14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  box-shadow: 0 12px 30px -28px rgba(15, 23, 42, .5);
+}
+html.dark .app-topbar {
+  background-color: color-mix(in srgb, var(--surface) 76%, transparent);
+  box-shadow: 0 12px 30px -24px rgba(0, 0, 0, .85);
+}
+
+/* --- Page header: the page's own sidebar icon, and its category as an eyebrow
+   in the sidebar's uppercase tracked label (components/PageHeader.jsx). ----- */
+.page-head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  border-radius: 0.85rem;
+  color: var(--accent);
+  background-image: linear-gradient(145deg,
+    color-mix(in srgb, var(--accent) 17%, var(--surface)),
+    color-mix(in srgb, var(--accent) 6%, var(--surface)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 8px 18px -12px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+/* The accent's deeper step in light mode: small text over the canvas glow
+   needs the margin (teal-700 measured 4.3:1 where the glow peaks; the -700
+   step clears it with room). Dark mode wants the bright accent instead. */
+.page-eyebrow {
+  margin-bottom: 0.1rem;
+  font-size: 0.68rem;
+  line-height: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--accent-700);
+}
+html.dark .page-eyebrow { color: var(--accent); }
+/* Wins over `font-semibold` on the same element by coming later. */
+.page-title { font-weight: 700; letter-spacing: -0.018em; line-height: 1.2; }
+@media (max-width: 640px) {
+  .page-head-icon { width: 2.4rem; height: 2.4rem; border-radius: 0.75rem; }
+}
+html.dark .page-head-icon {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 8px 18px -12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* --- Cards: the sidebar's rounder corner and a softer, deeper shadow --------- */
+/* Only the white elevated card (`bg-white shadow rounded-lg|xl`) — the ~380
+   cards every page is built from. Tinted panels and modals keep their own. */
+.bg-white.shadow:is(.rounded-lg, .rounded-xl) {
+  border-radius: 0.9rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 12px 28px -20px rgba(15, 23, 42, .28);
+}
+/* Dark: the shadow does little on near-black, so the card gets a faint lit top
+   edge instead. */
+html.dark .bg-white.shadow:is(.rounded-lg, .rounded-xl) {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 12px 30px -20px rgba(0, 0, 0, .75), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
+/* --- Tables: headings in the sidebar's uppercase tracked label --------------- */
+/* (0,1,3) beats the `font-medium text-gray-700` utilities these cells carry.
+   `normal-case` on a heading opts it out. */
+main thead th:not(.normal-case) {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+/* The dark remaps of text-gray-* are !important, so this has to be too. */
+html.dark main thead th:not(.normal-case) { color: var(--dk-ink-6) !important; }
+
+/* --- Primary (accent) buttons: a glow in the accent's own colour — the lit
+   edge the sidebar's active icon chip wears. ---------------------------------- */
+/* `:not(#_)` borrows an ID's weight: the generic filled-button rule above is a
+   chain of seven attribute selectors (0,7,1) — (0,9,1) on hover — and a class
+   rule cannot reach it. The focus rule carries the same weight and comes last,
+   so a keyboard focus ring still wins over the glow. The login button paints
+   its own gradient and glow and is left alone. */
+button.bg-gray-900:not(:disabled):not(.login-submit):not(#_),
+a.bg-gray-900:not(#_) {
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, .12),
+    0 8px 18px -10px color-mix(in srgb, var(--accent) 80%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+button.bg-gray-900:not(:disabled):not(.login-submit):not(#_):hover,
+a.bg-gray-900:not(#_):hover {
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, .12),
+    0 12px 26px -10px color-mix(in srgb, var(--accent) 90%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+button.bg-gray-900:not(:disabled):not(.login-submit):not(#_):focus-visible,
+a.bg-gray-900:not(#_):focus-visible {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 8px 18px -10px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-shell, .app-content, .sidebar-toggle { transition: none; }
+  .rail-flyout { animation: none; }
+}

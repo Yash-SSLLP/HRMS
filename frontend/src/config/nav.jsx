@@ -129,8 +129,10 @@ export const adminNav = [
   // Cashbook used to be a category of its own, which meant it rendered as a
   // bare section link with no icon (see the single-item branch in NavList).
   // Folded in with the other money-out modules so it gets a real nav row.
+  // The Expense Claims row ("Expenses") was removed on 2026-09-26 (user ask):
+  // staff record what they spend in their cashbook, which Employee Cashbook
+  // below already reviews. The category keeps its name — that IS expenses.
   { group: 'Expenses & Cashbook', icon: FiShoppingBag, items: [
-    { to: '/admin/expenses', label: 'Expenses', icon: FiShoppingBag, perm: 'expenses.manage', badge: 'expense' },
     { to: '/admin/cashbook', label: 'Company Accounts', icon: TbCashBanknote, perm: 'cashbook.manage',
       badge: 'voucher',
       keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account', 'tin'],
@@ -157,7 +159,7 @@ export const adminNav = [
     // take, expenses they file) lives here in the admin portal.
     { to: '/admin/my-khata', label: 'My Cashbook', icon: TbReceipt, roles: ['CEO', 'MD'],
       keywords: ['khata', 'advance', 'book', 'books', 'cashbook'] },
-    { to: '/admin/travel', label: 'Travel', icon: FiMap, perm: 'travel.manage', badge: 'travel' },
+    // (Travel sat here too; removed from web and mobile 2026-09-26.)
   ] },
   // TWO UNRELATED INCENTIVES live here, and there will be more: the daily rolling
   // one the Boys department records for itself, and the billing team's, which is
@@ -355,8 +357,7 @@ export const ldNav = [
 export const accountsNav = [
   { to: '/admin/cashbook', label: 'Company Accounts', end: true, icon: TbCashBanknote, badge: 'voucher',
     keywords: ['cashbook', 'company cashbook', 'petty cash', 'voucher', 'cash account'] },
-  // Account Managers settle reimbursements, so they get the expense queue too.
-  { to: '/admin/expenses', label: 'Expenses', end: true, icon: FiShoppingBag, badge: 'expense' },
+  // (Expense Claims used to sit here too; removed 2026-09-26.)
   // Handing cash to staff is the other half of the accounts job. Global search
   // reads whichever nav the signed-in role was given, so the aliases have to be
   // repeated here or an Accounts Manager typing "cashbook" finds only the
@@ -410,9 +411,10 @@ export const employeeNav = [
     // the same ground against their advance; the declaration because it is
     // collected by HR rather than self-served — it stays under Payroll &
     // Finance in the admin portal (`declarations.manage`), which is also where
-    // a CEO/MD reads it. Each route and page still exists — admin queues still
-    // read what was already filed, and a saved link still opens — only the
-    // menu entry is gone.
+    // a CEO/MD reads it. Vouchers and the declaration keep their route and page
+    // — admin queues still read what was already filed, and a saved link still
+    // opens. Expense Claims and Travel went further on 2026-09-26: removed from
+    // web and mobile entirely, filing page and review queue both.
     { to: '/employee/loans', label: 'Loans & Advances', icon: FiCreditCard },
     { to: '/employee/khata', label: 'My Cashbook', icon: TbReceipt,
       keywords: ['khata', 'khatabook', 'advance', 'udhar', 'expense', 'book', 'books', 'cashbook'] },
@@ -421,10 +423,7 @@ export const employeeNav = [
     // The Employee Cashbook admin surface, for standalone-grant holders with no admin portal.
     { to: '/employee/khata-manage', label: 'Employee Cashbook', icon: TbCashBanknote, perm: 'khata.manage',
       keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'book', 'books', 'cashbook'] },
-    // The review queue, for standalone-grant holders with no admin portal. Named
-    // apart from the self-service "Expenses" row above, which lists only my own.
-    { to: '/employee/expenses-manage', label: 'Expense Claims', icon: FiShoppingBag, perm: 'expenses.manage' },
-    // Same idea for whoever decides loans and advances (User.loansAccess): the
+    // For whoever decides loans and advances (User.loansAccess): the
     // queue of everyone's requests, named apart from the "Loans & Advances" row
     // above, which is only what this person has borrowed themselves.
     { to: '/employee/loans-manage', label: 'Loan Approvals', icon: FiCreditCard, perm: 'loans.manage',

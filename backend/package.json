@@ -18,6 +18,7 @@
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
     "test:salary-approval": "node scripts/testSalaryApproval.js",
+    "test:hr-edits": "node scripts/testHrProfileEdits.js",
     "test:asset-bundle": "node scripts/testAssetBundle.js",
     "test:emp-letter": "node scripts/testEmployeeAppointmentLetter.js",
     "test:import": "node scripts/testEmployeeImport.js",

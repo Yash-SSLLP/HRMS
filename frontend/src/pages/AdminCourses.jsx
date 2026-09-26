@@ -19,6 +19,7 @@ import CourseVideoPlayer from '../components/CourseVideoPlayer';
 import { confirmDialog } from '../components/dialogs';
 import { downloadTableXlsx } from '../api/download';
 import { fmtClock, parseClock } from '../utils/checkpoints';
+import { hasLeft } from '../utils/peopleOptions';
 
 const CATEGORIES = ['Technical', 'Soft Skills', 'Compliance', 'Leadership', 'Onboarding', 'Other'];
 // THERE IS NO SIZE LIMIT OF OUR OWN ON A COURSE VIDEO. A lesson can be as big as
@@ -864,7 +865,9 @@ function AssignModal({ course, onClose, onDone }) {
 
   useEffect(() => {
     api.get('/employees').then(({ data }) => {
-      setPeople((data.profiles || []).filter((p) => p.user).map((p) => ({
+      // Nobody who has left (utils/peopleOptions) — `hasLeft` reads the profile,
+      // which carries the exit date the bare user does not.
+      setPeople((data.profiles || []).filter((p) => p.user && !hasLeft(p)).map((p) => ({
         id: p.user._id,
         name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim() || p.user.email,
         sub: p.designation || p.employeeCode || p.user.email,

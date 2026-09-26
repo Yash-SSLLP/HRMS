@@ -87,8 +87,6 @@ const AdminPerformance = lazy(() => import('./pages/AdminPerformance.jsx'));
 const AdminTraining = lazy(() => import('./pages/AdminTraining.jsx'));
 const EmployeeAssets = lazy(() => import('./pages/EmployeeAssets.jsx'));
 const EmployeeGoals = lazy(() => import('./pages/EmployeeGoals.jsx'));
-const AdminExpenses = lazy(() => import('./pages/AdminExpenses.jsx'));
-const EmployeeExpenses = lazy(() => import('./pages/EmployeeExpenses.jsx'));
 const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
 const AdminHiringOnboarding = lazy(() => import('./pages/AdminHiringOnboarding.jsx'));
 const AdminNewJoinees = lazy(() => import('./pages/AdminNewJoinees.jsx'));
@@ -122,8 +120,6 @@ const EmployeeInvestmentDeclaration = lazy(() => import('./pages/EmployeeInvestm
 const AdminCompliance = lazy(() => import('./pages/AdminCompliance.jsx'));
 const AdminSurveys = lazy(() => import('./pages/AdminSurveys.jsx'));
 const EmployeeSurveys = lazy(() => import('./pages/EmployeeSurveys.jsx'));
-const AdminTravel = lazy(() => import('./pages/AdminTravel.jsx'));
-const EmployeeTravel = lazy(() => import('./pages/EmployeeTravel.jsx'));
 const AdminCourses = lazy(() => import('./pages/AdminCourses.jsx'));
 const EmployeeLearning = lazy(() => import('./pages/EmployeeLearning.jsx'));
 const CoursePlayerPage = lazy(() => import('./pages/CoursePlayerPage.jsx'));
@@ -297,8 +293,12 @@ export default function App() {
         <Route path="approvals" element={<AdminLeaveApprovals />} />
         {/* Back-compat: the page was renamed from "Leave Approvals" to the unified "Approvals". */}
         <Route path="leave-approvals" element={<AdminLeaveApprovals />} />
-        <Route path="expenses" element={<AdminExpenses />} />
-        <Route path="travel" element={<AdminTravel />} />
+        {/* Expense Claims (/admin/expenses, /employee/expenses and the
+            /employee/expenses-manage mirror) and Travel Requests (/admin/travel,
+            /employee/travel) were removed from web and mobile on 2026-09-26 at
+            the user's request — staff record spending in their cashbook (khata)
+            instead. An old link falls through to the catch-all below and lands
+            on the home page. */}
         <Route path="documents" element={<AdminDocuments />} />
         <Route path="projects" element={<AdminProjects />} />
         <Route path="tasks" element={<Tasks base="/admin/tasks" />} />
@@ -365,11 +365,6 @@ export default function App() {
         <Route path="loans" element={<EmployeeLoans />} />
         <Route path="declaration" element={<EmployeeInvestmentDeclaration />} />
         <Route path="leave" element={<EmployeeLeave />} />
-        <Route path="expenses" element={<EmployeeExpenses />} />
-        {/* Review queue for holders of the standalone Expenses grant who have no
-            admin portal — the same page /admin/expenses serves, mounted here.
-            The backend's expenses.manage gate is the real check. */}
-        <Route path="expenses-manage" element={<AdminExpenses />} />
         <Route path="cashbook" element={<EmployeeCashbook />} />
         <Route path="cashbook-manage" element={<AdminCashbook />} />
         <Route path="khata" element={<EmployeeKhata />} />
@@ -385,7 +380,6 @@ export default function App() {
         {/* My own points — ungated, unlike the four above it: earning points is
             not a capability. */}
         <Route path="my-incentive" element={<EmployeeIncentive />} />
-        <Route path="travel" element={<EmployeeTravel />} />
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<Tasks base="/employee/tasks" />} />
         <Route path="tasks/:id" element={<TaskDetail base="/employee/tasks" />} />

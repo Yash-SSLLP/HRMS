@@ -12,7 +12,9 @@ const {
   isUnpaidType, isMaternityType, isEmergencyType,
 } = require('../models/Leave');
 const EmployeeProfile = require('../models/EmployeeProfile');
-const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest } = require('../utils/employeeScope');
+const { scopeEmployeeFilter, cannotManageProfile, assertNotOwnRequest, companyScopeFilter } = require('../utils/employeeScope');
+const { stillHereProfileFilter } = require('../utils/departed');
+const { hiddenUserIds } = require('../utils/visibility');
 const User = require('../models/User');
 const Attendance = require('../models/Attendance');
 const Holiday = require('../models/Holiday');
@@ -1149,6 +1151,93 @@ const listMyRequests = asyncHandler(async (req, res) => {
     .populate('approver', 'firstName lastName role')
     .sort({ appliedAt: -1 });
   res.json({ count: requests.length, requests });
+});
+
+/**
+ * Everyone on leave on one day — the "On leave" card on the employee dashboard.
+ *
+ * The same rule the HR presence board applies: an APPROVED request whose range
+ * covers the day (an emergency leave is approved the moment it is filed), minus a
+ * day the person worked and had given back (`workedDays`). A Sunday or a holiday
+ * is nobody's working day, so it is reported as an off day with nobody listed —
+ * the same days leave never charges (workingDaysByMonth, leaveCoveringDay).
+ *
+ * Any signed-in employee may ask, which is why the answer says so little: who,
+ * their designation and department, whether it is a full or half day, and the
+ * span. NOT the leave type or the reason — a colleague has no business knowing
+ * that somebody is on maternity or emergency leave, or why. HR sees all of that
+ * on the presence board. Walled to the viewer's own company (companyScopeFilter)
+ * like every other people list; inactive and exited people are left out.
+ *
+ * @route GET /api/leave/on-leave?date=YYYY-MM-DD  (any signed-in user)
+ * @param {string} [req.query.date] - the IST day to show; defaults to today
+ * @returns {{date: string, isToday: boolean, offDay: ({kind: string, label: string}|null), people: Object[]}}
+ */
+const whoIsOnLeave = asyncHandler(async (req, res) => {
+  // An unreadable ?date= falls back to today rather than to Invalid Date, which
+  // would match nothing and report an empty office.
+  const raw = String(req.query.date || '');
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00+05:30`) : null;
+  const day = startOfDayIST(asked && !Number.isNaN(asked.getTime()) ? asked : new Date());
+  const key = ymdIST(day);
+  const tomorrow = new Date(day.getTime() + 24 * 60 * 60 * 1000);
+  const isToday = key === ymdIST();
+  const answer = (offDay, people) => res.json({ date: key, isToday, offDay, people });
+
+  const [Y, M, D] = key.split('-').map(Number);
+  if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) {
+    return answer({ kind: 'sunday', label: 'Sunday' }, []);
+  }
+  // A range rather than an exact match, so a holiday stored at either IST or UTC
+  // midnight is found — leave counting keys holidays by IST day the same way.
+  const holiday = await Holiday.findOne({ date: { $gte: day, $lt: tomorrow } }).select('name').lean();
+  if (holiday) return answer({ kind: 'holiday', label: holiday.name || 'Holiday' }, []);
+
+  // startDate/endDate sit at UTC midnight and `day` at IST midnight, hence
+  // [day, tomorrow) rather than `$lte: day` — see leaveCoveringDay.
+  const leaves = await LeaveRequest.find({
+    status: 'Approved',
+    startDate: { $lt: tomorrow },
+    endDate: { $gte: day },
+    workedDays: { $ne: key },
+  }).select('employee isHalfDay halfDaySession startDate endDate').lean();
+  if (!leaves.length) return answer(null, []);
+
+  const hidden = await hiddenUserIds(req.user);
+  const profiles = await EmployeeProfile.find({
+    _id: { $in: [...new Set(leaves.map((l) => String(l.employee)))] },
+    ...companyScopeFilter(req),
+  })
+    .select('user designation department dateOfExit')
+    .populate('user', 'firstName lastName isActive')
+    .lean();
+  const hiddenSet = new Set(hidden.map(String));
+  const byId = new Map(profiles
+    .filter((p) => p.user && p.user.isActive !== false && !hiddenSet.has(String(p.user._id))
+      && (!p.dateOfExit || new Date(p.dateOfExit) > day))
+    .map((p) => [String(p._id), p]));
+
+  // One row per person. Two approved requests can cover the same day (a half day
+  // beside a longer leave); a full day wins, since that is when they are away.
+  const rows = new Map();
+  for (const lv of leaves) {
+    const p = byId.get(String(lv.employee));
+    if (!p) continue;
+    const prev = rows.get(String(p._id));
+    if (prev && !prev.isHalfDay) continue;
+    rows.set(String(p._id), {
+      profileId: String(p._id),
+      userId: String(p.user._id),
+      name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),
+      designation: p.designation || '',
+      department: p.department || '',
+      isHalfDay: !!lv.isHalfDay,
+      halfDaySession: lv.isHalfDay ? (lv.halfDaySession || null) : null,
+      startDate: ymdIST(lv.startDate),
+      endDate: ymdIST(lv.endDate),
+    });
+  }
+  return answer(null, [...rows.values()].sort((a, b) => a.name.localeCompare(b.name)));
 });
 
 /**
@@ -2661,6 +2750,11 @@ const rejectRequest = asyncHandler(async (req, res) => {
 const listBalances = asyncHandler(async (req, res) => {
   const year = Number(req.query.year) || currentYear();
   const filter = await scopeEmployeeFilter(req, { year });
+  // The people still here, and only them: somebody who has left is on the
+  // Employees page's Exited tab and nowhere else. ANDed on so it narrows the
+  // company wall above instead of replacing it.
+  const here = await EmployeeProfile.find(await stillHereProfileFilter()).distinct('_id');
+  filter.$and = [...(filter.$and || []), { employee: { $in: here } }];
   const balances = await LeaveBalance.find(filter).populate({
     path: 'employee',
     select: 'employeeCode user',
@@ -2709,6 +2803,7 @@ const upsertBalance = asyncHandler(async (req, res) => {
 module.exports = {
   getMyBalance,
   listMyRequests,
+  whoIsOnLeave,
   applyForLeave,
   previewLeave,
   cancelMyRequest,

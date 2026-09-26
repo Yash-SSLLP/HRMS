@@ -26,7 +26,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
  * @returns {Promise<Set<string>>} the ids that have gone, as strings
  */
 async function departedUserIdSet(userIds) {
-  const ids = [...new Set((userIds || []).map(String))].filter(Boolean);
+  // null/undefined dropped BEFORE String(): a record whose person is gone
+  // populates to null, and "null" would reach the query as an id and throw.
+  const ids = [...new Set((userIds || []).filter((x) => x != null).map(String))].filter(Boolean);
   if (!ids.length) return new Set();
   const departed = new Set();
   const [inactive, profiles] = await Promise.all([
@@ -51,7 +53,28 @@ function hasDeparted(user, profile) {
   return !!exit && new Date(exit) <= new Date();
 }
 
-/** Mongo fragment for "their last day has passed", for composing into a query. */
-const EXITED_FILTER = { dateOfExit: { $ne: null, $lte: new Date() } };
+/**
+ * Only the people still here, as an EmployeeProfile query — for anything that
+ * lists CURRENT colleagues: a manager's team, a presence board, a roster. A
+ * leaver belongs on the Employees page's Exited tab and nowhere else.
+ *
+ * Both halves of the rule in one query: the exit date lives on the profile and
+ * the deactivated login on the User, so the second half costs one lookup of the
+ * inactive ids. The caller's filter is ANDed on rather than spread in, so
+ * neither side can overwrite the other's `$or` or `user` keys.
+ *
+ * Built per call on purpose. The module constant this replaces (EXITED_FILTER)
+ * froze `new Date()` at server start, so a process that stayed up for a month
+ * would have gone on calling everybody who left in that month a colleague —
+ * it only never bit because nothing used it.
+ * @param {Object} [filter] - the caller's own EmployeeProfile filter
+ * @returns {Promise<Object>} a filter for EmployeeProfile.find
+ */
+async function stillHereProfileFilter(filter = {}) {
+  const inactive = await User.find({ isActive: false }).distinct('_id');
+  const rule = { $or: [{ dateOfExit: null }, { dateOfExit: { $gt: new Date() } }] };
+  if (inactive.length) rule.user = { $nin: inactive };
+  return Object.keys(filter).length ? { $and: [filter, rule] } : rule;
+}
 
-module.exports = { departedUserIdSet, hasDeparted, EXITED_FILTER };
+module.exports = { departedUserIdSet, hasDeparted, stillHereProfileFilter };

@@ -3,7 +3,8 @@
  * Aggregates the user's profile, leave balance & pending leave, and received
  * wishes from /employees/me, /leave/me/* and /celebrations/wishes/received,
  * plus banner widgets (announcements, R&R, surveys, interviews, manager team
- * status). Uses a stale-while-revalidate cache.
+ * status) and the My Leaves | Birthdays | On leave row (OnLeaveCard: who is
+ * away on a chosen day). Uses a stale-while-revalidate cache.
  *
  * Salary figures are deliberately NOT shown here — the dashboard is the first
  * thing on screen and is easily seen over an employee's shoulder. Net pay lives
@@ -14,6 +15,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import BirthdayWisher from '../components/BirthdayWisher';
+import OnLeaveCard from '../components/OnLeaveCard';
 import WelcomeBanner from '../components/WelcomeBanner';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import { readCache, writeCache } from '../api/cache';
@@ -297,10 +299,15 @@ export default function EmployeeDashboard() {
           to="/employee/profile" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Leave summary (spans 2 cols) */}
-        <div className="lg:col-span-2 bg-white shadow rounded-lg p-5">
-          <div className="flex items-center justify-between mb-4">
+      {/* Three equal columns from xl up: My Leaves | Birthdays | On leave. Below
+          that two, and one on a phone. Not lg: the 320px sidebar arrives at lg,
+          so a 1024px laptop has less room than a tablet and three columns of
+          ~210px left every row of the two lists folded in half. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {/* Leave summary — one column now, so the three figures stack as rows
+            instead of three side-by-side tiles that no longer fit. */}
+        <div className="bg-white shadow rounded-lg p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
             <h2 className="card-title">My Leaves {balance?.year ? `· ${balance.year}` : ''}</h2>
             <Link to="/employee/leave" className="text-sm text-blue-600 hover:underline">Apply / view →</Link>
           </div>
@@ -308,34 +315,34 @@ export default function EmployeeDashboard() {
           {errors.leave ? (
             <p className="text-sm text-gray-400 italic">{errors.leave}</p>
           ) : !balance ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="rounded-lg border border-gray-100 p-4 space-y-2">
-                  <div className="skeleton h-8 w-12 rounded" />
-                  <div className="skeleton h-3 w-24 rounded" />
-                  <div className="skeleton h-3 w-16 rounded" />
-                </div>
-              ))}
+            <div className="space-y-2 mb-4">
+              {Array.from({ length: 3 }).map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-4">
-                  <div className="text-3xl font-semibold text-emerald-700">{monthly.remaining}</div>
-                  <div className="text-sm text-emerald-800">Paid leave left</div>
-                  <div className="text-xs text-emerald-700/70 mt-1">
-                    of {monthly.quota} this {monthLabel ? monthLabel : 'month'}
+              <div className="space-y-2 mb-4">
+                <div className="flex items-center gap-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2.5">
+                  <div className="text-2xl font-semibold text-emerald-700 min-w-[2.5rem] text-center tabular-nums">{monthly.remaining}</div>
+                  <div className="min-w-0">
+                    <div className="text-sm text-emerald-800">Paid leave left</div>
+                    <div className="text-xs text-emerald-700/70">
+                      of {monthly.quota} this {monthLabel ? monthLabel : 'month'}
+                    </div>
                   </div>
                 </div>
-                <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
-                  <div className="text-3xl font-semibold text-gray-800">{monthly.used}</div>
-                  <div className="text-sm text-gray-600">Paid leave used</div>
-                  <div className="text-xs text-gray-400 mt-1">this month · resets monthly</div>
+                <div className="flex items-center gap-3 rounded-lg bg-gray-50 border border-gray-200 px-4 py-2.5">
+                  <div className="text-2xl font-semibold text-gray-800 min-w-[2.5rem] text-center tabular-nums">{monthly.used}</div>
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-600">Paid leave used</div>
+                    <div className="text-xs text-gray-400">this month · resets monthly</div>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
-                  <div className="text-3xl font-semibold text-amber-700">{pendingLeaves}</div>
-                  <div className="text-sm text-amber-800">Pending requests</div>
-                  <div className="text-xs text-amber-700/70 mt-1">awaiting approval</div>
+                <div className="flex items-center gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5">
+                  <div className="text-2xl font-semibold text-amber-700 min-w-[2.5rem] text-center tabular-nums">{pendingLeaves}</div>
+                  <div className="min-w-0">
+                    <div className="text-sm text-amber-800">Pending requests</div>
+                    <div className="text-xs text-amber-700/70">awaiting approval</div>
+                  </div>
                 </div>
               </div>
 
@@ -361,11 +368,16 @@ export default function EmployeeDashboard() {
           )}
         </div>
 
-        {/* Birthday wisher */}
+        {/* Birthday wisher — the middle column */}
         <BirthdayWisher myEmployeeId={profile?._id} />
 
-        {/* My profile */}
-        <div className="bg-white shadow rounded-lg p-5">
+        {/* Who is on leave on a chosen day (today by default) */}
+        <OnLeaveCard />
+
+        {/* My profile. `self-start` so that where it shares a row with the On
+            leave list (two columns) it keeps its own height instead of
+            stretching into a tall, mostly empty card. */}
+        <div className="bg-white shadow rounded-lg p-5 self-start">
           <h2 className="card-title mb-3">My Profile</h2>
           {profile ? (
             <>
@@ -387,8 +399,10 @@ export default function EmployeeDashboard() {
           )}
         </div>
 
-        {/* Payslips — amounts intentionally live on the Payslips page only. */}
-        <div className="lg:col-span-2 bg-white shadow rounded-lg p-5">
+        {/* Payslips — amounts intentionally live on the Payslips page only.
+            Two columns wherever there are two or more, so it never sits alone
+            beside an empty cell. */}
+        <div className="md:col-span-2 bg-white shadow rounded-lg p-5">
           <h2 className="card-title mb-3">My Payslips</h2>
           {/* Stacked on a phone, where the link beside it squeezed the sentence
               into a 140px column. */}

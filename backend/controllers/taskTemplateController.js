@@ -28,6 +28,7 @@ const {
 const {
   cleanReminders, cleanRepeat, cleanLinks, personName,
 } = require('./taskController');
+const { departedUserIdSet } = require('../utils/departed');
 
 function bad(res, message, status = 400) {
   res.status(status);
@@ -226,6 +227,12 @@ const prefillFromTemplate = asyncHandler(async (req, res) => {
     { $inc: { useCount: 1 }, $set: { lastUsedAt: new Date() } }
   );
 
+  // A template saved months ago can still name somebody who has since left.
+  // This is a NEW task, so they are simply not on it — the picker would never
+  // have offered them, and a prefill must not slip one past it.
+  const gone = await departedUserIdSet([...(tpl.defaultAssignees || []), ...(tpl.defaultLoopUsers || [])]);
+  const here = (ids) => (ids || []).map(String).filter((id) => !gone.has(id));
+
   res.json({
     prefill: {
       title: tpl.title,
@@ -237,8 +244,8 @@ const prefillFromTemplate = asyncHandler(async (req, res) => {
       repeat: tpl.repeat || { frequency: FREQUENCY.ONCE },
       reminders: tpl.reminders || [],
       links: tpl.links || [],
-      assignees: (tpl.defaultAssignees || []).map(String),
-      loopUsers: (tpl.defaultLoopUsers || []).map(String),
+      assignees: here(tpl.defaultAssignees),
+      loopUsers: here(tpl.defaultLoopUsers),
       template: String(tpl._id),
     },
   });
@@ -263,14 +270,23 @@ const listRecurring = asyncHandler(async (req, res) => {
     .sort({ isActive: -1, createdAt: -1 })
     .lean();
 
+  // Somebody who has left is on no schedule any more — the worker already
+  // skips them when it raises each task — so the list does not name them
+  // either. A schedule left with nobody on it reads as exactly that.
+  const gone = await departedUserIdSet(schedules.flatMap((s) => (s.assignees || []).map((u) => u?._id)));
+
   res.json({
-    schedules: schedules.map((s) => ({
-      ...s,
-      // What the next one will be due, so a list can say it without the reader
-      // having to work out what "weekly on Fri" means from today.
-      nextDueDate: s.isActive ? recurrence.firstDueDate({ ...s, startDate: new Date() }) : null,
-      who: (s.assignees || []).map((u) => [u.firstName, u.lastName].filter(Boolean).join(' ')).join(', '),
-    })),
+    schedules: schedules.map((s) => {
+      const assignees = (s.assignees || []).filter((u) => u && !gone.has(String(u._id)));
+      return {
+        ...s,
+        assignees,
+        // What the next one will be due, so a list can say it without the reader
+        // having to work out what "weekly on Fri" means from today.
+        nextDueDate: s.isActive ? recurrence.firstDueDate({ ...s, startDate: new Date() }) : null,
+        who: assignees.map((u) => [u.firstName, u.lastName].filter(Boolean).join(' ')).join(', '),
+      };
+    }),
   });
 });
 

@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import { downloadTableXlsx } from '../api/download';
+import { hasLeft } from '../utils/peopleOptions';
 
 const blank = { name: '', isActive: true };
 
@@ -56,7 +57,9 @@ export default function AdminDepartments() {
       setMemLoading(true);
       try {
         const { data } = await api.get('/employees', { params: { department: d.name } });
-        setMembers((m) => ({ ...m, [d.name]: data.profiles || [] }));
+        // The people still here — the same set the headcount badge counts. A
+        // leaver is on the Employees page's Exited tab and nowhere else.
+        setMembers((m) => ({ ...m, [d.name]: (data.profiles || []).filter((p) => !hasLeft(p)) }));
       } catch {
         setMembers((m) => ({ ...m, [d.name]: [] }));
       } finally {
@@ -111,12 +114,15 @@ export default function AdminDepartments() {
   // The page loads members lazily (only for the row you expand), so this pulls
   // the full list in one go rather than exporting whatever happens to be open.
   // Employees with no department are included under "(No department)" — leaving
-  // them out would make the export silently disagree with the headcount.
+  // them out would make the export silently disagree with the headcount. People
+  // who have left are not, for the same reason: the headcount does not count
+  // them (the employee master export on the Employees page is the record).
   const exportEmployees = async () => {
     setExporting(true);
     try {
       const { data } = await api.get('/employees');
       const rows = (data.profiles || [])
+        .filter((p) => !hasLeft(p))
         .map((p) => {
           const name = `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim()
             || p.user?.email || p.employeeCode || 'Employee';

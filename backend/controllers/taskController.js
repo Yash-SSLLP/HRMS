@@ -1892,8 +1892,14 @@ const taskMeta = asyncHandler(async (req, res) => {
    * If the directory ever outgrows one payload, this becomes `GET
    * /api/tasks/people?q=` with the same three fields and nothing else changes.
    */
-  const { people: annotated, team, hasTeam } = await access.annotatePeople(req, people);
+  const { people: annotated, team: fullTeam } = await access.annotatePeople(req, people);
   const departed = await departedUserIdSet(people.map((p) => p._id));
+  // "My team", which every picker opens on, is the people still here. A leaver
+  // stays in `people` below (flagged) only so a task they are already on keeps
+  // their name — never as somebody on the team.
+  const stillHere = (ids) => ids.filter((id) => !departed.has(String(id)));
+  const team = { direct: stillHere(fullTeam.direct), indirect: stillHere(fullTeam.indirect) };
+  const hasTeam = team.direct.length > 0 || team.indirect.length > 0;
 
   res.json({
     people: annotated.map((p) => ({

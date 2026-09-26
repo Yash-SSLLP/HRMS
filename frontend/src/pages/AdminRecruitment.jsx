@@ -17,6 +17,7 @@ import LocationsField from '../components/LocationsField';
 import MailComposeModal from '../components/MailComposeModal';
 import EmployeePicker from '../components/EmployeePicker';
 import { confirmDialog, promptDialog } from '../components/dialogs';
+import { hasLeft } from '../utils/peopleOptions';
 import stageToast from '../components/stageToast';
 import LetterEditor from '../components/LetterEditor';
 import SearchableSelect from '../components/SearchableSelect';
@@ -275,7 +276,11 @@ export default function AdminRecruitment() {
       for (const p of pRes.data.profiles || []) {
         if (p.user?._id) byUser.set(String(p.user._id), p);
       }
-      setUsers((uRes.data.users || []).map((u) => {
+      // Nobody who has left: `?active=true` alone still lets through somebody
+      // whose last working day has passed on a login not yet switched off, and
+      // the `departed` flag /admin/users stamps is what catches them
+      // (utils/peopleOptions). The saved interviewer's name is on the round.
+      setUsers((uRes.data.users || []).filter((u) => !hasLeft(u)).map((u) => {
         const p = byUser.get(String(u._id));
         return {
           id: String(u._id),

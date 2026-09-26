@@ -141,7 +141,12 @@ const board = asyncHandler(async (req, res) => {
         currentPoints: paise(totalPoints - paidPoints),
         paidPoints,
       };
-    });
+    })
+    // Somebody who has left is on the Employees page's Exited tab and nowhere
+    // else — EXCEPT where money is still in play: a month they actually billed
+    // in (it is part of that month's reconciliation), or points not yet paid out.
+    // Once settled, their name stops riding along on every month after it.
+    .filter((p) => !p.left || p.points !== 0 || p.units !== 0 || p.currentPoints !== 0);
 
   // Most points this month first; somebody with nothing this month but a
   // lifetime total still belongs on the list, below them.

@@ -183,7 +183,10 @@ function LeaveApprovalHierarchy() {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return profiles
-      .filter((p) => p.user)
+      // Nobody who has left has a ladder to set — they are on the Employees
+      // page's Exited tab and nowhere else. (The full `profiles` list still
+      // feeds the reporting-line walk above, which may pass through a leaver.)
+      .filter((p) => p.user && !hasLeft(p))
       .filter((p) => (onlyUnset ? chainOf(p).length === 0 : true))
       .filter((p) => {
         if (!needle) return true;

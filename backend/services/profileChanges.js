@@ -1,10 +1,11 @@
 /**
  * Shared mechanics for the profile change-request workflow — used by both the
- * change-request controller (employee- and HR-raised requests) and the employee
- * controller (Backend direct edits). One place for: reading/formatting a
- * catalogue field, writing an approved value onto the User/EmployeeProfile,
- * deciding who approves (HR partner vs the employee's company CEO/MD), and
- * recording a field change in the audit log.
+ * change-request controller (employee-raised requests) and the employee/admin
+ * controllers (direct edits by HR, the Backend and an edit-mode CEO/MD). One
+ * place for: reading/formatting a catalogue field, writing an approved value
+ * onto the User/EmployeeProfile, deciding who approves an employee's request
+ * (their HR partner), recording a field change in the audit log, and telling
+ * the CEO/MD what HR changed.
  */
 const ChangeRequest = require('../models/ChangeRequest');
 const { FIELD_CATALOG } = require('../models/ChangeRequest');
@@ -12,6 +13,8 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { activeAccountWithEmail } = require('../utils/loginIdentity');
 const AuditLog = require('../models/AuditLog');
+const { usersInRoles, scopeRecipientsToCompany } = require('./audience');
+const { notifyMany } = require('./notify');
 
 // Read a dot-path value off a doc / plain object.
 function getPath(obj, path) {
@@ -125,33 +128,91 @@ async function resolveHrAssignee(targetUserId) {
   return sa?._id;
 }
 
-/**
- * Who decides an HR-raised request: a CEO/MD who covers the employee's company
- * (an exec with that company in their list, or an unrestricted exec), else any
- * active CEO/MD, else a SuperAdmin.
- */
-async function resolveExecAssignee(targetUserId) {
-  const profile = await EmployeeProfile.findOne({ user: targetUserId }).select('company');
-  const companyId = profile?.company ? String(profile.company) : '';
-  const execs = await User.find({ role: { $in: ['CEO', 'MD'] }, isActive: true })
-    .select('companies')
-    .sort({ createdAt: 1 });
-  if (companyId) {
-    // An exec covers this company if they have it listed, or have no restriction.
-    const covering = execs.find((e) => {
-      const list = Array.isArray(e.companies) ? e.companies.map(String) : [];
-      return list.length === 0 || list.includes(companyId);
-    });
-    if (covering) return covering._id;
-  }
-  if (execs.length) return execs[0]._id;
-  const sa = await findSuperAdmin();
-  return sa?._id;
+// Statutory IDs and the bank account number never travel in full inside a
+// notification: it is pushed to a phone and shows on the lock screen. The last
+// four characters are enough to recognise the change; the record has the rest.
+const MASKED_IN_NOTICES = new Set([
+  'aadhaar', 'pan', 'uan', 'pfNumber', 'esicNumber', 'bankDetails.accountNumber',
+]);
+// A notice names at most this many changes, then says how many more there were.
+const MAX_CHANGES_IN_NOTICE = 6;
+
+// One value as a notice may show it: masked when sensitive, shortened when long.
+function noticeValue(key, meta, value) {
+  if (meta.secret) return '••••••';
+  const s = value == null ? '' : String(value).trim();
+  if (!s) return '';
+  if (MASKED_IN_NOTICES.has(key)) return s.length > 4 ? `••${s.slice(-4)}` : '••••';
+  return s.length > 60 ? `${s.slice(0, 59)}…` : s;
+}
+
+// "Department: Sales & Marketing → Sales", or "set to" / "cleared" at the edges.
+function describeChange({ key, meta, from, to }) {
+  const before = noticeValue(key, meta, from);
+  const after = noticeValue(key, meta, to);
+  if (!before) return `${meta.label} set to ${after}`;
+  if (!after) return `${meta.label} cleared (was ${before})`;
+  return `${meta.label}: ${before} → ${after}`;
 }
 
 /**
- * Record a single field change in the audit log (best-effort). Used for Backend
- * direct edits and to leave a trail when an approved request is applied.
+ * Tell the CEO/MD that HR changed an employee's details.
+ *
+ * HR's edits to an employee's record used to wait in the CEO/MD's Change
+ * Requests inbox. Since 2026-09-26 they apply at once, and this is what replaced
+ * the approval: the executives are TOLD, with the before and after of every
+ * field, so nothing changes behind their back. It is informational only — there
+ * is nothing to approve, and the notice says so.
+ *
+ * Recipients are the CEO/MD whose company scope covers the employee (the same
+ * wall every other fan-out uses); with none, the Backend hears instead, as it
+ * would have been the approver of last resort. One notice per save, however
+ * many fields changed. Best-effort in the strongest sense: it swallows its own
+ * errors, because the edit it reports has already been saved.
+ *
+ * @param {object} actor - req.user, the person who made the change
+ * @param {string|import('mongoose').Types.ObjectId} targetUserId - the employee's User id
+ * @param {Array<{key: string, meta: object, from: string, to: string}>} changes
+ * @returns {Promise<{created: number}>} how many people were told
+ */
+async function notifyExecsOfHrChanges(actor, targetUserId, changes) {
+  try {
+    const list = (changes || []).filter((c) => c?.meta && String(c.from ?? '') !== String(c.to ?? ''));
+    if (!targetUserId || !list.length) return { created: 0 };
+
+    const [user, profile] = await Promise.all([
+      User.findById(targetUserId).select('firstName lastName').lean(),
+      EmployeeProfile.findOne({ user: targetUserId }).select('_id company').lean(),
+    ]);
+    let recipients = await scopeRecipientsToCompany(await usersInRoles('CEO', 'MD'), profile?.company);
+    if (!recipients.length) recipients = await usersInRoles('SuperAdmin');
+    recipients = recipients.filter((id) => String(id) !== String(actor?._id));
+    if (!recipients.length) return { created: 0 };
+
+    const who = `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim() || 'HR';
+    const whose = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'an employee';
+    const shown = list.slice(0, MAX_CHANGES_IN_NOTICE).map(describeChange);
+    const more = list.length - shown.length;
+    return await notifyMany(recipients, {
+      // Not 'change_request': the app routes that type to the tapper's OWN
+      // change-request screen, which is the wrong place for this.
+      type: 'profile_update',
+      audience: 'admin',
+      title: `${who}${actor?.role === 'HRManager' ? ' (HR)' : ''} updated ${whose}'s details`,
+      body: `${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}. `
+        + 'Already saved — this is for your information, nothing needs approving.',
+      link: profile?._id ? `/admin/employees/${profile._id}` : '/admin/employees',
+    });
+  } catch (err) {
+    console.error('HR-change notice to CEO/MD failed:', err.message);
+    return { created: 0 };
+  }
+}
+
+/**
+ * Record a single field change in the audit log (best-effort). Used for every
+ * direct edit from the admin side (HR, the Backend, an edit-mode CEO/MD) and to
+ * leave a trail when an approved request is applied.
  * @param {object} actor - req.user (the person making the change)
  * @param {object} meta - FIELD_CATALOG entry
  * @param {string} from - previous formatted value
@@ -185,7 +246,7 @@ module.exports = {
   readFieldValue,
   applyFieldValue,
   resolveHrAssignee,
-  resolveExecAssignee,
   auditFieldChange,
+  notifyExecsOfHrChanges,
   ChangeRequest,
 };

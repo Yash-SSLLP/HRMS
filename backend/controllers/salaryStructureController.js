@@ -11,6 +11,7 @@ const {
   cannotManageProfile, assertCanEditProfileOf, employeeProfileScope,
 } = require('../utils/employeeScope');
 const { squash, normalizeCode } = require('../utils/loginIdentity');
+const { hasDeparted } = require('../utils/departed');
 const {
   COMPONENTS, writeWorkbook, parseWorkbook, monthlyFromComponents,
 } = require('../services/salaryStructureExcel');
@@ -359,7 +360,7 @@ const scopedProfiles = (req) => EmployeeProfile.find(employeeProfileScope(req))
   // one role this feature exists for, an HR Manager. `user.role` is populated
   // for the same reason — assertCanEditProfileOf uses an already-loaded role and
   // otherwise falls back to a User lookup per row.
-  .select('employeeCode user salaryStructure annualCtc ctcHistory company hrPartner department designation')
+  .select('employeeCode user salaryStructure annualCtc ctcHistory company hrPartner department designation dateOfExit')
   .populate('user', 'firstName lastName email isActive role')
   .populate('salaryStructure', 'name components isActive')
   .sort({ employeeCode: 1 });
@@ -381,7 +382,11 @@ const exportStructuresXlsx = asyncHandler(async (req, res) => {
   // carries, and exporting the stale one would both misreport their salary and
   // invite an edit that cancels the hike on the way back in.
   const now = new Date();
-  const rows = profiles.map((p) => ({
+  // The people still here only: this sheet is for editing current salaries and
+  // uploading them back, and somebody who has left is on the Employees page's
+  // Exited tab and nowhere else. (The import still matches any code, so an
+  // older sheet that has them does not fail.)
+  const rows = profiles.filter((p) => !hasDeparted(p.user, p)).map((p) => ({
     employeeName: displayName(p),
     employeeCode: p.employeeCode,
     structureName: p.salaryStructure?.name || '',

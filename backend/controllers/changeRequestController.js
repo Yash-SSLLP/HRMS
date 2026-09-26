@@ -1,13 +1,16 @@
 /**
- * Change-request controller. Three ways a whitelisted profile/credential field
- * (FIELD_CATALOG) gets changed:
+ * Change-request controller. How a whitelisted profile/credential field
+ * (FIELD_CATALOG) gets changed by the person it belongs to:
  *   • Employee fills a MISSING field  → applied immediately (audited), then locked.
  *   • Employee changes a FILLED field → request routed to their HR partner,
  *     EXCEPT for an HR Manager / Manager changing a personal-and-contact field
  *     about themselves, which applies immediately (audited) — see
  *     selfEditsDirectly in models/ChangeRequest.js for why.
- *   • HR changes an employee's field  → request routed to the company CEO/MD.
- * The Backend (SuperAdmin) edits directly elsewhere; it never raises a request.
+ * HR, the Backend and an edit-mode CEO/MD edit an employee's record directly
+ * elsewhere (employeeController.updateEmployee, adminController.updateUser) and
+ * never raise a request. HR's edits used to be queued here for the company
+ * CEO/MD to approve (approverKind 'exec'); since 2026-09-26 they apply at once
+ * and the CEO/MD are notified instead. Old 'exec' rows can still be decided.
  * Secret fields (password) never snapshot or echo their value.
  */
 const asyncHandler = require('express-async-handler');
@@ -23,7 +26,6 @@ const {
   applyFieldValue,
   isEmptyValue,
   resolveHrAssignee,
-  resolveExecAssignee,
   auditFieldChange,
   claimDailySelfEdit,
   releaseDailySelfEdit,
@@ -247,84 +249,6 @@ const createChangeRequest = asyncHandler(async (req, res) => {
 });
 
 /**
- * HR raises a change on an EMPLOYEE's record → routed to the employee's company
- * CEO/MD. Reusable by the employee-update path so an HR edit becomes a queued
- * exec approval instead of a direct write. Returns the created request (or null
- * if nothing changed).
- * @param {object} actor - the HR user raising it
- * @param {string} targetUserId - the employee's User id
- * @param {string} field - FIELD_CATALOG key
- * @param {string} requestedValue
- * @param {string} [reason]
- */
-async function queueAdminChange(actor, targetUserId, field, requestedValue, reason) {
-  const meta = FIELD_CATALOG[field];
-  if (!meta) throw Object.assign(new Error('Unknown field'), { status: 400 });
-  const wanted = requestedValue == null ? '' : String(requestedValue).trim();
-  const currentValue = meta.secret ? '' : await readFieldValue(targetUserId, meta);
-  if (String(currentValue) === wanted) return null; // no change
-  // Collapse a duplicate pending request on the same field.
-  const dup = await ChangeRequest.findOne({ targetUser: targetUserId, field, status: 'pending' });
-  if (dup) return dup;
-
-  const assignedTo = await resolveExecAssignee(targetUserId);
-  const cr = await ChangeRequest.create({
-    requestedBy: actor._id,
-    targetUser: targetUserId,
-    approverKind: 'exec',
-    assignedTo,
-    field,
-    fieldLabel: meta.label,
-    currentValue,
-    requestedValue: wanted,
-    reason: reason ? String(reason).trim() : undefined,
-  });
-  if (assignedTo) {
-    await Notification.create({
-      recipient: assignedTo,
-      type: 'change_request',
-      audience: 'admin',
-      title: 'HR change needs your approval',
-      body: `${actor.firstName} ${actor.lastName} wants to change "${meta.label}" for an employee.`,
-      link: 'change-requests',
-    });
-  }
-  return cr;
-}
-
-/**
- * HR raises a single-field change on an employee (→ company CEO/MD).
- * @route POST /api/change-requests/admin  { targetUser, field, requestedValue, reason }
- */
-const createAdminChangeRequest = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'HRManager') {
-    res.status(403);
-    throw new Error('Only HR Managers raise change requests for employees. The Backend edits directly.');
-  }
-  const { targetUser, field, requestedValue, reason } = req.body;
-  if (!targetUser) {
-    res.status(400);
-    throw new Error('targetUser is required');
-  }
-  // HR may only act on their own assigned employees.
-  const profile = await EmployeeProfile.findOne({ user: targetUser }).select('hrPartner');
-  if (!profile || String(profile.hrPartner || '') !== String(req.user._id)) {
-    res.status(403);
-    throw new Error('You can only change details for employees assigned to you.');
-  }
-  if (!requestedValue || !String(requestedValue).trim()) {
-    res.status(400);
-    throw new Error('A requested value is required');
-  }
-  const cr = await queueAdminChange(req.user, targetUser, field, requestedValue, reason);
-  if (!cr) {
-    res.status(400);
-    throw new Error('That value matches what is already on record.');
-  }
-  res.status(201).json({ changeRequest: cr });
-});
-
-/**
  * The caller's own change requests, newest first.
  * @route GET /api/change-requests/mine
  */
@@ -343,7 +267,9 @@ const CHANGE_INBOX_ROLES = ['HRManager', 'SuperAdmin', 'CEO', 'MD'];
 
 /**
  * The admin's change-request inbox — HR partners see employee requests routed to
- * them; CEO/MD see HR requests routed to them; a SuperAdmin can see all (?all).
+ * them; CEO/MD see the HR requests that were routed to them before HR's edits
+ * started applying directly (history now, nothing new arrives); a SuperAdmin
+ * can see all (?all).
  * @route GET /api/change-requests/assigned
  */
 const assignedChangeRequests = asyncHandler(async (req, res) => {
@@ -523,8 +449,6 @@ module.exports = {
   getFields,
   fillMissingField,
   createChangeRequest,
-  createAdminChangeRequest,
-  queueAdminChange,
   myChangeRequests,
   assignedChangeRequests,
   decideChangeRequest,

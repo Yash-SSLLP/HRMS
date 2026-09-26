@@ -17,7 +17,7 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { purgePerson } = require('../services/purgePerson');
-const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission } = require('../config/permissions');
+const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG } = require('../config/permissions');
 const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES, HIDDEN_ROLES, EXTERNAL_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
 const { isEditingExec, canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
@@ -267,8 +267,9 @@ const createUser = asyncHandler(async (req, res) => {
  * @param {string} req.params.id - user id
  * @param {Object} req.body - firstName/lastName/role/phone/isActive/password/email
  * @throws 409 when the email is already used by another account
- * @returns {{user: Object}}
- * @sideeffect auto-creates an EmployeeProfile when promoted to HR/L&D/Accounts staff
+ * @returns {{user: Object, execsNotified: number}}
+ * @sideeffect auto-creates an EmployeeProfile when promoted to HR/L&D/Accounts staff;
+ *   tells the employee's company CEO/MD when HR changed a name, email or phone
  */
 // PUT /api/admin/users/:id
 const updateUser = asyncHandler(async (req, res) => {
@@ -288,8 +289,9 @@ const updateUser = asyncHandler(async (req, res) => {
   // employee edit form carries the person's phone and login email alongside
   // their profile fields, so refusing the account call outright would leave that
   // grant half-usable — you could correct a manager's department but not their
-  // number. It buys those identity fields only, and they still go to the CEO/MD
-  // for approval below; the role, the password and activation stay SuperAdmin-only.
+  // number. It buys those identity fields only (applied directly, with the CEO/MD
+  // told, as for any HR edit below); the role, the password and activation stay
+  // SuperAdmin-only.
   const grantedManagerEdit = isManagerProfileRole(user.role) && canEditManagerProfiles(req.user);
   if (req.user.role !== 'SuperAdmin' && user.role !== 'Employee' && !grantedManagerEdit) {
     res.status(403);
@@ -324,13 +326,13 @@ const updateUser = asyncHandler(async (req, res) => {
   }
 
   // The employee's identity details (name, login email, phone) are catalogue
-  // fields: the Backend and an edit-mode exec change them directly (audited),
-  // but an HR Manager cannot — each change to an Employee is queued to that
-  // employee's company CEO/MD instead. Role / isActive / password are
-  // operational and stay direct for whoever is allowed to set them.
-  const writesDirectly = req.user.role === 'SuperAdmin' || isEditingExec(req.user);
-  const hrRouting = !writesDirectly && req.user.role === 'HRManager' && (user.role === 'Employee' || grantedManagerEdit);
-  const { auditFieldChange } = require('../services/profileChanges');
+  // fields, changed directly by whoever may edit this account — the Backend, an
+  // edit-mode exec, and HR — each change audited. HR's used to be queued for the
+  // company CEO/MD to approve; since 2026-09-26 they apply at once and the
+  // CEO/MD are told instead (after the save, below). Role / isActive / password
+  // are operational and stay direct for whoever is allowed to set them.
+  const informsExecs = req.user.role !== 'SuperAdmin' && !isEditingExec(req.user);
+  const { auditFieldChange, notifyExecsOfHrChanges } = require('../services/profileChanges');
   const IDENTITY = [
     { key: 'firstName', label: 'First Name', incoming: firstName },
     { key: 'lastName', label: 'Last Name', incoming: lastName },
@@ -338,15 +340,12 @@ const updateUser = asyncHandler(async (req, res) => {
     { key: 'email', label: 'Login Email', incoming: email, isEmail: true },
   ];
   let emailChanged = false;
-  const identityQueue = []; // HR → exec
-  const identityAudits = []; // direct → audit
+  const identityAudits = [];
   for (const f of IDENTITY) {
     if (f.incoming === undefined) continue;
     const next = f.isEmail ? String(f.incoming).toLowerCase().trim() : f.incoming;
     const cur = user.get(f.key);
     if (String(next ?? '') === String(cur ?? '')) continue; // unchanged
-    if (hrRouting) { identityQueue.push({ field: f.key, value: next }); continue; }
-    // Direct apply (Backend / edit-mode exec).
     if (f.isEmail) {
       if (!next) { res.status(400); throw new Error('Email cannot be empty'); }
       const clash = await activeAccountWithEmail(next, user._id);
@@ -356,7 +355,7 @@ const updateUser = asyncHandler(async (req, res) => {
     } else {
       user.set(f.key, next);
     }
-    identityAudits.push({ meta: { label: f.label }, from: cur ?? '', to: next ?? '' });
+    identityAudits.push({ key: f.key, meta: { label: f.label }, from: cur ?? '', to: next ?? '' });
   }
 
   if (isActive !== undefined) user.isActive = isActive;
@@ -374,25 +373,19 @@ const updateUser = asyncHandler(async (req, res) => {
 
   // CEO/MD celebration dates. Keyed on the role the account ENDS UP with, so
   // dates sent alongside a promotion to CEO are kept; they are not identity
-  // fields and never route through the CEO/MD approval queue — a birthday is a
-  // catalogue entry, and only a Super Admin reaches this branch anyway (an HR
-  // Manager cannot edit an exec account at all).
+  // fields, and only a Super Admin reaches this branch anyway (an HR Manager
+  // cannot edit an exec account at all).
   Object.assign(user, execCelebrationDates(user.role, req.body));
 
   await user.save();
 
-  // Audit the direct identity edits, then queue the HR ones for the exec.
+  // Audit the identity edits, and tell the CEO/MD when they came from below them
+  // (HR). Awaited only so the response can say so — the notifier never throws.
   const auditTarget = { name: `${user.firstName || ''} ${user.lastName || ''}`.trim() };
   identityAudits.forEach((c) => auditFieldChange(req.user, c.meta, c.from, c.to, auditTarget));
-  let queuedForApproval = 0;
-  if (identityQueue.length) {
-    const { queueAdminChange } = require('./changeRequestController');
-    for (const q of identityQueue) {
-      // eslint-disable-next-line no-await-in-loop
-      const cr = await queueAdminChange(req.user, user._id, q.field, q.value);
-      if (cr) queuedForApproval += 1;
-    }
-  }
+  const execsNotified = informsExecs && identityAudits.length
+    ? (await notifyExecsOfHrChanges(req.user, user._id, identityAudits)).created
+    : 0;
 
   // Best-effort: the address is already changed, so a mail failure must not
   // fail the request or roll anything back.
@@ -417,7 +410,7 @@ const updateUser = asyncHandler(async (req, res) => {
     try { await ensureEmployeeProfile(user); } catch (err) { console.error('Staff profile auto-create failed:', err.message); }
   }
 
-  res.json({ user, queuedForApproval });
+  res.json({ user, execsNotified });
 });
 
 /**
@@ -505,7 +498,8 @@ const deleteUser = asyncHandler(async (req, res) => {
  */
 // GET /api/admin/permissions/catalog — the capability catalog for the UI.
 const getPermissionCatalog = asyncHandler(async (req, res) => {
-  res.json({ permissions: PERMISSIONS });
+  // Retired modules' capabilities are not offered (see HIDDEN_FROM_CATALOG).
+  res.json({ permissions: PERMISSIONS.filter((p) => !HIDDEN_FROM_CATALOG.has(p.key)) });
 });
 
 /**
@@ -1446,10 +1440,15 @@ const requirePasswordChange = asyncHandler(async (req, res) => {
 const listAppVersions = asyncHandler(async (req, res) => {
   const DeviceToken = require('../models/DeviceToken');
 
-  const users = await User.find({ isActive: true })
+  const active = await User.find({ isActive: true })
     .select('firstName lastName email role')
     .sort({ firstName: 1 })
     .lean();
+  // Nobody who has left — `isActive` misses a last working day already past on
+  // a login still switched on (utils/departed). They are on the Exited tab.
+  const { departedUserIdSet } = require('../utils/departed');
+  const gone = await departedUserIdSet(active.map((u) => u._id));
+  const users = active.filter((u) => !gone.has(String(u._id)));
 
   const [profiles, devices] = await Promise.all([
     EmployeeProfile.find({ user: { $in: users.map((u) => u._id) } })

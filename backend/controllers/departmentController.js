@@ -7,6 +7,7 @@ const asyncHandler = require('express-async-handler');
 const Department = require('../models/Department');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { employeeProfileScope } = require('../utils/employeeScope');
+const { stillHereProfileFilter } = require('../utils/departed');
 
 /**
  * List departments with a live employee count per department.
@@ -28,8 +29,13 @@ const listDepartments = asyncHandler(async (req, res) => {
   // list when they opened it — "4 employees" expanding to "No employees in this
   // department" — and could read headcount for companies they were deliberately
   // excluded from. `{}` for an unrestricted viewer, so nothing changes for them.
+  //
+  // People still here only (utils/departed): a leaver is on the Employees page's
+  // Exited tab and nowhere else, and the member list this badge opens leaves
+  // them out too. Every value in the filter is a real ObjectId/Date, which
+  // matters here — aggregate() does no casting.
   const counts = await EmployeeProfile.aggregate([
-    { $match: { department: { $nin: [null, ''] }, ...employeeProfileScope(req) } },
+    { $match: await stillHereProfileFilter({ department: { $nin: [null, ''] }, ...employeeProfileScope(req) }) },
     { $group: { _id: '$department', count: { $sum: 1 } } },
   ]);
   // Map department name -> headcount so we can attach counts without extra queries

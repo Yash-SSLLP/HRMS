@@ -531,9 +531,14 @@ export default function AdminEmployees() {
     const selfId = String(form.user?._id || form.user || '');
     const currentId = String(form.reportingManager?._id || form.reportingManager || '');
 
+    // `hasLeft` is asked of the PROFILE, before it is mapped to its user: the
+    // user object inside a profile row carries `isActive` but no exit date, so
+    // asked afterwards (in `stays` below) it let through somebody whose last
+    // working day had passed on a login not yet switched off.
     const sameDept = form.department
       ? profiles
-        .filter((p) => p.department === form.department && p.user && String(p.user._id) !== selfId)
+        .filter((p) => p.department === form.department && p.user && String(p.user._id) !== selfId
+          && (!hasLeft(p) || String(p.user._id) === currentId))
         .map((p) => p.user)
       : [];
     const sameDeptIds = new Set(sameDept.map((u) => String(u._id)));
@@ -833,18 +838,16 @@ export default function AdminEmployees() {
       if (!payload.dateOfMarriage) delete payload.dateOfMarriage;
       if (!payload.dateOfBirth) delete payload.dateOfBirth;
       let savedId = editingId;
-      let queuedForApproval = 0;
+      // HR's detail changes save straight away; the server tells the employee's
+      // company CEO/MD what changed and says how many it told (0 for the
+      // Backend's or an exec's own edits, which are not announced).
+      let execsNotified = 0;
       if (editingId) {
         const { data } = await api.put(`/employees/${editingId}`, payload);
-        queuedForApproval = data.queuedForApproval || 0;
+        execsNotified = data.execsNotified || 0;
       } else {
         const { data } = await api.post('/employees', payload);
         savedId = data.profile?._id || savedId;
-      }
-      // An HR Manager's detail changes don't apply directly — they were sent to
-      // the employee's company CEO/MD for approval.
-      if (queuedForApproval > 0) {
-        toast.info(`${queuedForApproval} change${queuedForApproval === 1 ? '' : 's'} sent to the CEO/MD for approval — they'll apply once approved.`);
       }
 
       // Phone and email belong to the User account, so they are a separate call
@@ -853,9 +856,8 @@ export default function AdminEmployees() {
       // the profile save.
       const emailChanged = editingId && editEmail.trim() && editEmail.trim() !== emailAtOpen.current;
       const phoneChanged = editPhone !== phoneAtOpen.current;
-      // The role rides along in the same call. Unlike name/email/phone it is
-      // "operational", so the server applies it directly rather than queueing it
-      // for a CEO/MD — and refuses outright if this admin may not grant it.
+      // The role rides along in the same call. It is SuperAdmin-only, and the
+      // server refuses outright if this admin may not grant it.
       const roleChanged = editingId && canSetRole && editRole && editRole !== roleAtOpen.current;
       if (phoneChanged || emailChanged || roleChanged) {
         const userId = form.user?._id || form.user;
@@ -866,19 +868,15 @@ export default function AdminEmployees() {
         if (userId && Object.keys(patch).length) {
           try {
             const { data: uData } = await api.put(`/admin/users/${userId}`, patch);
-            if (uData?.queuedForApproval > 0) {
-              // HR edit — name/email/phone were sent to the CEO/MD, not applied.
-              toast.info(`${uData.queuedForApproval} change${uData.queuedForApproval === 1 ? '' : 's'} sent to the CEO/MD for approval.`);
-            } else {
-              phoneAtOpen.current = editPhone;
-              if (emailChanged) {
-                emailAtOpen.current = editEmail.trim();
-                toast.success(`Sign-in email changed to ${editEmail.trim()}`);
-              }
-              if (roleChanged) {
-                roleAtOpen.current = editRole;
-                toast.success(`Role changed to ${roleLabel(editRole)}`);
-              }
+            execsNotified = Math.max(execsNotified, uData?.execsNotified || 0);
+            phoneAtOpen.current = editPhone;
+            if (emailChanged) {
+              emailAtOpen.current = editEmail.trim();
+              toast.success(`Sign-in email changed to ${editEmail.trim()}`);
+            }
+            if (roleChanged) {
+              roleAtOpen.current = editRole;
+              toast.success(`Role changed to ${roleLabel(editRole)}`);
             }
           } catch (err) {
             // Name the field that failed — "could not be updated" on its own
@@ -888,6 +886,7 @@ export default function AdminEmployees() {
           }
         }
       }
+      if (execsNotified > 0) toast.info('Saved. The CEO/MD have been notified of the change — nothing for them to approve.');
       setShowModal(false);
       // Came from the employee's own page — take them back to it, now updated.
       if (editingId && returnToDetail) { navigate(`/admin/employees/${editingId}`); return; }
@@ -2039,7 +2038,8 @@ This cannot be undone.`,
                       : f.field === 'workLocation' ? workLocations.map((w) => w.name)
                         : f.field === 'shift' ? shiftNames
                         : ['reportingManager', 'hrPartner'].includes(f.field)
-                          ? allUsers.map((u) => u.email).filter(Boolean)
+                          // A manager or HR partner is somebody still here.
+                          ? allUsers.filter((u) => !hasLeft(u)).map((u) => u.email).filter(Boolean)
                           : [];
                 return (
                   <div key={f._id} className="border border-gray-200 rounded-xl p-4">

@@ -9,6 +9,7 @@ const { TRAINING_STATUS } = require('../models/Training');
 // Company wall: Training.participants refs User, so the User-keyed helper applies.
 const { allowedUserIds } = require('../utils/employeeScope');
 const { pickableUserFilter } = require('../utils/peoplePicker');
+const { departedUserIdSet } = require('../utils/departed');
 // IST day boundaries — the company's calendar day, and what a bare date means.
 const { istDayRange } = require('../utils/istDate');
 
@@ -111,10 +112,16 @@ const listTrainings = asyncHandler(async (req, res) => {
  * @returns {{count: number, users: Object[]}}
  */
 const listTrainingPeople = asyncHandler(async (req, res) => {
-  const users = await User.find(await pickableUserFilter(req))
+  const rows = await User.find(await pickableUserFilter(req))
     .select(USER_FIELDS)
     .sort({ firstName: 1, lastName: 1 })
     .lean();
+  // The filter above is `isActive` only, and a last working day already past on
+  // a login still switched on gets through it (utils/departed). Dropped rather
+  // than flagged, the same as a deactivated login already is — and so the app
+  // already on phones, which renders whatever this returns, is covered too.
+  const gone = await departedUserIdSet(rows.map((u) => u._id));
+  const users = rows.filter((u) => !gone.has(String(u._id)));
   res.json({ count: users.length, users });
 });
 

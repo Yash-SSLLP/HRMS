@@ -21,6 +21,7 @@ import { hasPermission, isExecViewer } from '../config/permissions';
 import { ChainProgress, AmendTrail } from '../components/LeaveApprovalsInbox';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import LeaveAmendModal from '../components/LeaveAmendModal';
+import { hasLeft } from '../utils/peopleOptions';
 
 const STATUS_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -320,7 +321,10 @@ function BalancesTab({ onRefreshing }) {
         api.get('/employees?excludeExecutives=true'),
         api.get(`/leave/balances?year=${year}`),
       ]);
-      setEmployees(empRes.data.profiles);
+      // Every employee still here gets a row — nobody who has left, whose
+      // balance was settled in their exit (utils/peopleOptions; the server
+      // leaves their balances out as well).
+      setEmployees((empRes.data.profiles || []).filter((p) => !hasLeft(p)));
       setBalances(balRes.data.balances);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');

@@ -16,6 +16,9 @@ const { isChatEnabled } = require('../middleware/chatEnabled');
 // Company wall: RosterEntry.employee refs User, so the User-keyed scope helpers
 // apply. Shift definitions themselves are shared config and stay global.
 const { scopeUserField, cannotSeeUser, employeeProfileScope, allowedEmployeeIds } = require('../utils/employeeScope');
+// A shift's roster and headcount are the people still here — a leaver is on the
+// Employees page's Exited tab and nowhere else.
+const { stillHereProfileFilter, departedUserIdSet } = require('../utils/departed');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const { startOfDayIST } = require('../utils/dateHelpers');
@@ -219,7 +222,7 @@ const listShifts = asyncHandler(async (req, res) => {
   // casting — the profile-scope fragment (string ids) cannot be $match-ed.
   const empIds = await allowedEmployeeIds(req);
   const counts = await EmployeeProfile.aggregate([
-    { $match: { shiftRef: { $ne: null }, ...(empIds ? { _id: { $in: empIds } } : {}) } },
+    { $match: await stillHereProfileFilter({ shiftRef: { $ne: null }, ...(empIds ? { _id: { $in: empIds } } : {}) }) },
     { $group: { _id: '$shiftRef', n: { $sum: 1 } } },
   ]);
   const byId = {};
@@ -251,7 +254,7 @@ const listShiftEmployees = asyncHandler(async (req, res) => {
   // makePermissionGuard waves a CEO/MD through on GET before hasPermission is
   // consulted, so a handler that trusted the gate would leak another company's
   // roster to a read-only executive.
-  const employees = await EmployeeProfile.find({ shiftRef: req.params.id, ...employeeProfileScope(req) })
+  const employees = await EmployeeProfile.find(await stillHereProfileFilter({ shiftRef: req.params.id, ...employeeProfileScope(req) }))
     .select('employeeCode designation department user company')
     .populate('user', 'firstName lastName email')
     .populate('company', 'name')
@@ -443,10 +446,16 @@ const listRoster = asyncHandler(async (req, res) => {
   }
   // Company wall: a walled admin only sees their own company's roster.
   await scopeUserField(req, filter, 'employee');
-  const entries = await RosterEntry.find(filter)
+  const rows = await RosterEntry.find(filter)
     .populate('employee', USER_FIELDS)
     .populate('shift')
     .sort({ date: 1 });
+  // A day already worked is a record and stays. A day still to come, rostered
+  // for somebody who has since left, is not going to happen — and would put a
+  // leaver back on the schedule, which the Exited tab exists to prevent.
+  const gone = await departedUserIdSet(rows.map((e) => e.employee?._id || e.employee));
+  const today = startOfDayIST(new Date());
+  const entries = rows.filter((e) => !(gone.has(String(e.employee?._id || e.employee)) && new Date(e.date) >= today));
   res.json({ count: entries.length, entries });
 });
 

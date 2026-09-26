@@ -138,7 +138,9 @@ function RegularizationApprovalSetup() {
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return profiles
-      .filter((p) => p.user)
+      // Nobody who has left has attendance to sign off — they are on the
+      // Employees page's Exited tab and nowhere else.
+      .filter((p) => p.user && !hasLeft(p))
       .filter((p) => (onlyUnset ? chainOf(p).length === 0 : true))
       .filter((p) => {
         if (!needle) return true;

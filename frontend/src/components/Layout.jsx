@@ -3,7 +3,8 @@
 // (global search, quick shortcuts, portal switcher, theme toggle, notification
 // bell, profile menu) and a <Suspense><Outlet/></Suspense> content area plus the
 // docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
@@ -17,7 +18,7 @@ import api, { signOut } from '../api/client';
 import { useChatStore } from '../store/chatStore';
 import PageSkeleton from './PageSkeleton';
 import AuthImage from './AuthImage';
-import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar, FiVideo, FiList, FiKey } from 'react-icons/fi';
+import { FiPlus, FiMinus, FiBell, FiCalendar, FiClock, FiUser, FiLogOut, FiLock, FiChevronDown, FiShield, FiCheckSquare, FiStar, FiVideo, FiList, FiKey, FiChevronsLeft, FiChevronsRight } from 'react-icons/fi';
 import ThemeToggle from './ThemeToggle';
 import { COMPANY_NAME } from '../config/company';
 import BrandLockup from './BrandLockup';
@@ -27,6 +28,7 @@ import { hasPermission, hasAnyPermission, hasExplicitPermission, isViewOnly, isV
 import { ROLE_LABELS } from '../config/roles';
 import { useNavCountsStore } from '../store/navCountsStore';
 import { formatDateTime12 } from '../utils/time';
+import { hasLeft } from '../utils/peopleOptions';
 
 const ChatDock = lazy(() => import('./ChatDock'));
 
@@ -38,6 +40,9 @@ const ChatDock = lazy(() => import('./ChatDock'));
 const ACCOUNT_ONLY_ROLES = ['CEO', 'MD', 'SuperAdmin', 'God'];
 
 const NOTIF_POLL_MS = 20000;
+
+// Where the collapsed/expanded choice for the desktop sidebar is remembered.
+const SIDEBAR_PREF_KEY = 'hrms-sidebar-collapsed';
 
 function initials(user) {
   const a = (user?.firstName || '').trim()[0] || '';
@@ -111,10 +116,205 @@ function NavLeaf({ item, onNavigate, count = 0 }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// The collapsed sidebar: an icon rail (2026-09-26, user ask "make this side bar
+// collapsible"). Every row keeps its icon chip; a category's pages open in a
+// flyout beside the rail, and a plain link names itself in a tooltip. Both are
+// portalled to <body> because the rail's nav is a scroller — anything drawn
+// inside it past its edge would be clipped.
+//
+// Hover opens, and so do focus and click, so it works with a keyboard and on a
+// touch screen that has no hover at all. A click only ever OPENS: on touch the
+// tap arrives as mouseenter + focus + click in one go, and a click that toggled
+// would shut the menu the same tap had just opened. It closes on leaving (with
+// a short grace, and a hover bridge across the gap), Escape, a click elsewhere,
+// any scroll and any navigation.
+// ---------------------------------------------------------------------------
+
+// A rail row that is a plain link: a leaf, or a one-page category.
+function RailLink({ to, end, Icon, label, danger, count, hoverProps, onNavigate }) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onNavigate}
+      aria-label={count ? `${label} — ${count} waiting` : label}
+      className={({ isActive }) => `rail-item${isActive ? ' is-active' : ''}${danger ? ' is-danger' : ''}`}
+      {...hoverProps}
+    >
+      <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={17} /> : null}</span>
+      {count > 0 && <span className="rail-count" aria-hidden="true">{count > 99 ? '99+' : count}</span>}
+    </NavLink>
+  );
+}
+
+function RailNav({ items, grouped, visible, countFor, groupActive, isLeaf, onNavigate }) {
+  const { pathname } = useLocation();
+  // { key, kind: 'tip' | 'menu', top, height, left, label, count, children, anchor, focusFirst }
+  const [fly, setFly] = useState(null);
+  const timer = useRef(null);
+  const flyRef = useRef(null);
+  // Escape hands focus back to the icon it opened from; that focus must not
+  // reopen the very menu Escape just closed.
+  const quietFocus = useRef(false);
+  const cancel = () => clearTimeout(timer.current);
+  const closeSoon = () => { cancel(); timer.current = setTimeout(() => setFly(null), 160); };
+  const show = (key, el, extra) => {
+    cancel();
+    const r = el.getBoundingClientRect();
+    setFly({ key, top: r.top, height: r.height, left: r.right, anchor: el, ...extra });
+  };
+
+  useEffect(() => { setFly(null); }, [pathname]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!fly) return undefined;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      const back = fly.anchor;
+      setFly(null);
+      if (back?.focus) { quietFocus.current = true; back.focus(); }
+    };
+    const onDown = (e) => { if (!e.target.closest?.('.rail-flyout, .rail-item')) setFly(null); };
+    const onScroll = (e) => { if (!flyRef.current?.contains(e.target)) setFly(null); };
+    const onResize = () => setFly(null);
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [fly]);
+
+  // Place the flyout beside its row and keep it on screen. Measured before
+  // paint, so it never flashes at the wrong height.
+  useLayoutEffect(() => {
+    const el = flyRef.current;
+    if (!fly || !el) return;
+    const h = el.offsetHeight;
+    const wanted = fly.kind === 'menu' ? fly.top - 6 : fly.top + (fly.height / 2) - (h / 2);
+    el.style.top = `${Math.max(8, Math.min(wanted, window.innerHeight - h - 8))}px`;
+    el.style.left = `${fly.left + 12}px`;
+    if (fly.focusFirst) el.querySelector('a')?.focus();
+  }, [fly]);
+
+  const hoverProps = (key, extra) => ({
+    onMouseEnter: (e) => show(key, e.currentTarget, extra),
+    onMouseLeave: closeSoon,
+    onFocus: (e) => {
+      if (quietFocus.current) { quietFocus.current = false; return; }
+      show(key, e.currentTarget, extra);
+    },
+    onBlur: closeSoon,
+  });
+
+  const rows = [];
+  let sawLeaf = false;
+  let dividerDone = false;
+  const entries = grouped ? items : visible(items);
+  entries.forEach((g) => {
+    if (!grouped || isLeaf(g)) {
+      if (!visible([g]).length) return;
+      sawLeaf = true;
+      const count = countFor(g);
+      rows.push(
+        <RailLink key={g.to} to={g.to} end={g.end} Icon={g.icon} label={g.label} danger={g.danger}
+          count={count} onNavigate={onNavigate} hoverProps={hoverProps(g.to, { kind: 'tip', label: g.label, count })} />
+      );
+      return;
+    }
+    const children = visible(g.items);
+    if (!children.length) return;
+    // A hairline between the pinned links (Dashboard, Approvals) and the
+    // categories, the same break the open sidebar makes with its section rules.
+    if (sawLeaf && !dividerDone) {
+      rows.push(<div key="rail-divider" className="rail-divider" aria-hidden="true" />);
+      dividerDone = true;
+    }
+    if (children.length === 1 && !g.keepGroup) {
+      const only = children[0];
+      const count = countFor(only);
+      rows.push(
+        <RailLink key={g.group} to={only.to} end={only.end} Icon={g.icon || only.icon} label={g.group} danger={only.danger}
+          count={count} onNavigate={onNavigate} hoverProps={hoverProps(g.group, { kind: 'tip', label: g.group, count })} />
+      );
+      return;
+    }
+    const key = g.group;
+    const Icon = g.icon;
+    const count = children.reduce((n, i) => n + countFor(i), 0);
+    const extra = { kind: 'menu', label: g.group, count, children };
+    const isOpen = fly?.key === key;
+    rows.push(
+      <button
+        key={key}
+        type="button"
+        className={`rail-item${groupActive(g) ? ' is-active' : ''}${isOpen ? ' is-open' : ''}`}
+        aria-label={count ? `${g.group} — ${count} waiting` : g.group}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        {...hoverProps(key, extra)}
+        onClick={(e) => show(key, e.currentTarget, extra)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            show(key, e.currentTarget, { ...extra, focusFirst: true });
+          }
+        }}
+      >
+        <span className="nav-icon" aria-hidden="true">{Icon ? <Icon size={17} /> : null}</span>
+        {count > 0 && <span className="rail-count" aria-hidden="true">{count > 99 ? '99+' : count}</span>}
+      </button>
+    );
+  });
+
+  return (
+    <>
+      <div className="rail-list">{rows}</div>
+      {fly && createPortal(
+        <div
+          ref={flyRef}
+          className={`rail-flyout${fly.kind === 'menu' ? ' is-menu' : ''}`}
+          style={{ top: fly.top, left: fly.left + 12 }}
+          onMouseEnter={cancel}
+          onMouseLeave={closeSoon}
+          onFocus={cancel}
+          onBlur={closeSoon}
+        >
+          {fly.kind === 'menu' ? (
+            <div className="rail-menu" role="menu" aria-label={fly.label}>
+              <div className="rail-menu-head">
+                <span className="truncate min-w-0">{fly.label}</span>
+                <NavCount n={fly.count} label={fly.label} />
+              </div>
+              <div className="space-y-0.5">
+                {fly.children.map((item) => (
+                  <NavLeaf key={item.to} item={item} count={countFor(item)}
+                    onNavigate={() => { setFly(null); onNavigate?.(); }} />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rail-tip" role="tooltip">
+              {fly.label}
+              {fly.count > 0 && <span className="rail-tip-count">{fly.count > 99 ? '99+' : fly.count}</span>}
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 // Sidebar navigation. Accepts either a flat list of items (employee portal) or a
 // list of { group, items } category groups (admin portal), rendered as smooth
 // collapsible dropdowns. The group containing the current route auto-opens.
-function NavList({ items, user, onNavigate }) {
+function NavList({ items, user, onNavigate, rail = false }) {
   const { pathname } = useLocation();
   // Org-wide chat switch — feature-gated items disappear with the module.
   const chatEnabled = useAuthStore((s) => s.features?.chatEnabled);
@@ -166,6 +366,16 @@ function NavList({ items, user, onNavigate }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  // The collapsed sidebar. After every hook above, so switching between the two
+  // forms never changes the hook order — and the open/closed state of the
+  // categories survives a collapse and re-expand.
+  if (rail) {
+    return (
+      <RailNav items={items} grouped={grouped} visible={visible} countFor={countFor}
+        groupActive={groupActive} isLeaf={isLeaf} onNavigate={onNavigate} />
+    );
+  }
 
   if (!grouped) {
     return visible(items).map((item) => (
@@ -350,11 +560,12 @@ function NotificationBell({ isAdmin, portal }) {
     // Legacy course links were stored as "/learning"; the actual route lives
     // under the employee portal. Normalise so older notifications still land.
     if (n.link === '/learning' || n.link.startsWith('/learning/')) return `/employee${n.link}`;
-    // Review links are stored as the admin path, but cashbook/expenses access can
-    // be granted to someone who has no admin portal at all. In My Portal, point
+    // Review links are stored as the admin path, but cashbook access can be
+    // granted to someone who has no admin portal at all. In My Portal, point
     // them at the mirrored *-manage route instead of a page they can't open.
+    // (An old '/admin/expenses' link — Expense Claims was removed 2026-09-26 —
+    // matches no route and lands on the home page.)
     if (portal === 'employee') {
-      if (n.link === '/admin/expenses') return '/employee/expenses-manage';
       if (n.link === '/admin/cashbook') return '/employee/cashbook-manage';
       if (n.link === '/admin/khata') return '/employee/khata-manage';
       if (n.link === '/admin/loans') return '/employee/loans-manage';
@@ -668,8 +879,11 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
             ? api.get('/admin/users', { params: { q: query } }).catch(() => ({ data: { users: [] } }))
             : Promise.resolve({ data: { users: [] } }),
         ]);
-        setEmployees((emp.data.profiles || []).slice(0, 6));
-        setAccounts((usr.data.users || []).filter((u) => ACCOUNT_ONLY_ROLES.includes(u.role)).slice(0, 6));
+        // Nobody who has left: they are found on the Employees page's Exited
+        // tab and nowhere else (utils/peopleOptions). Dropped before the cap,
+        // so a leaver cannot take one of the six places either.
+        setEmployees((emp.data.profiles || []).filter((p) => !hasLeft(p)).slice(0, 6));
+        setAccounts((usr.data.users || []).filter((u) => ACCOUNT_ONLY_ROLES.includes(u.role) && !hasLeft(u)).slice(0, 6));
       } catch {
         setEmployees([]);
         setAccounts([]);
@@ -1000,6 +1214,15 @@ export default function Layout({ navItems = [], sectionTitle }) {
   }, [setUser, setFeatures]);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Desktop sidebar collapsed to its icon rail. A per-browser preference, so it
+  // lives in localStorage — read defensively, since storage can be blocked
+  // (private windows, cleared site data) and the shell must still render.
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_PREF_KEY) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_PREF_KEY, collapsed ? '1' : '0'); } catch { /* not persisted; still works */ }
+  }, [collapsed]);
   // The auth `user` is a User doc (no designation — that lives on the employee
   // profile). Fetch it so the sidebar card can show the person's job title.
   const [designation, setDesignation] = useState('');
@@ -1136,27 +1359,36 @@ export default function Layout({ navItems = [], sectionTitle }) {
     return () => { document.body.style.overflow = prev; };
   }, [mobileOpen]);
 
-  const sidebar = (
+  // `rail` = the desktop sidebar collapsed to icons. The mobile drawer always
+  // renders the full form — it is already a temporary overlay.
+  const renderSidebar = (rail) => (
     // w-full is load-bearing: the desktop <aside> is `lg:flex`, so without an
     // explicit width this wrapper is a flex item sized to its CONTENT — the nav
     // rows came out ~240px in a 320px sidebar, leaving a 67px dead strip on the
     // right. (The mobile drawer's <aside> is a block, so it was unaffected.)
     <div className="flex flex-col h-full w-full min-w-0">
-      <div className="brand-bar h-16 flex items-center gap-2 px-5 shrink-0">
+      <div className={`brand-bar h-16 flex items-center gap-2 shrink-0 ${rail ? 'justify-center px-0' : 'px-5'}`}>
         <Link to={isAdmin || external ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
           <BrandLockup />
         </Link>
       </div>
       {/* pr-[2px]: the scrollbar track is always reserved (see .sidebar-nav in
           index.css), so 2px + the 10px track matches the 12px of pl-3. */}
-      <nav className="sidebar-nav flex-1 overflow-y-auto overflow-x-hidden pl-3 pr-[2px] py-4 space-y-0.5">
-        {sectionTitle && (
+      <nav className={`sidebar-nav flex-1 overflow-y-auto overflow-x-hidden pl-3 pr-[2px] py-4 ${rail ? '' : 'space-y-0.5'}`}>
+        {sectionTitle && !rail && (
           <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold px-3 pb-2">
             {sectionTitle}
           </div>
         )}
-        <NavList items={navItems} user={user} onNavigate={closeMobile} />
+        <NavList items={navItems} user={user} onNavigate={closeMobile} rail={rail} />
       </nav>
+      {rail ? (
+        // Just the avatar; the name is a hover away rather than a squeeze.
+        <div className="border-t border-gray-100 py-3 flex justify-center shrink-0"
+          title={[`${user?.firstName || ''} ${user?.lastName || ''}`.trim(), employeeCode, designation || ROLE_LABELS[user?.role] || user?.role].filter(Boolean).join(' · ')}>
+          <UserAvatar user={user} />
+        </div>
+      ) : (
       <div className="border-t border-gray-100 p-3 shrink-0">
         {/* Portal switch for the drawer. The top-bar switcher needs ~180px it
             can only spare from lg up — below that the bar is already carrying
@@ -1184,6 +1416,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 
@@ -1266,14 +1499,29 @@ export default function Layout({ navItems = [], sectionTitle }) {
   );
 
   return (
-    <div className="min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
+    <div className="app-canvas min-h-full" style={{ backgroundColor: 'var(--bg)' }}>
       {/* Brushed-gold top edge — the brand signature across every page. */}
       <div className="brand-strip h-1 fixed top-0 inset-x-0 z-50" />
 
-      {/* Desktop fixed sidebar */}
-      <aside className="hidden lg:flex fixed top-1 left-0 bottom-0 w-64 2xl:w-80 bg-white border-r border-gray-200 z-40">
-        {sidebar}
+      {/* Desktop fixed sidebar — full, or collapsed to its icon rail. */}
+      <aside className={`sidebar-shell hidden lg:flex fixed top-1 left-0 bottom-0 bg-white border-r border-gray-200 z-40 overflow-hidden ${collapsed ? 'is-rail w-[76px]' : 'w-64 2xl:w-80'}`}>
+        {renderSidebar(collapsed)}
       </aside>
+      {/* The collapse toggle straddles the sidebar's edge, on the line under the
+          brand bar. Outside the aside because the aside clips (it animates its
+          width) and this button sits half beyond it. `w-7 h-7` opts it out of
+          the touch layer's 40px height floor, which would stretch the circle
+          into an oval; its ::before widens the hit area to 44px instead. */}
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className={`sidebar-toggle hidden lg:inline-flex w-7 h-7 ${collapsed ? 'is-rail' : ''}`}
+        aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        aria-expanded={!collapsed}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {collapsed ? <FiChevronsRight size={14} aria-hidden="true" /> : <FiChevronsLeft size={14} aria-hidden="true" />}
+      </button>
 
       {/* Mobile drawer */}
       {mobileOpen && (
@@ -1283,14 +1531,17 @@ export default function Layout({ navItems = [], sectionTitle }) {
               here — no second handler to keep in step. */}
           <div data-modal-close className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={closeMobile} />
           <aside className="fixed top-0 left-0 bottom-0 w-80 max-w-[85vw] bg-white border-r border-gray-200 z-50 lg:hidden">
-            {sidebar}
+            {renderSidebar(false)}
           </aside>
         </>
       )}
 
       {/* Content column */}
-      <div className="lg:pl-64 2xl:pl-80 flex flex-col min-h-screen">
-        <header className="sticky top-1 z-30 h-16 bg-white border-b border-gray-200 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
+      <div className={`app-content flex flex-col min-h-screen ${collapsed ? 'lg:pl-[76px]' : 'lg:pl-64 2xl:pl-80'}`}>
+        {/* Frosted glass rather than a white slab: the page scrolls under it,
+            softened (see .app-topbar). No `bg-white` — the dark remap of that
+            class is !important and would put the slab straight back. */}
+        <header className="app-topbar sticky top-1 z-30 h-16 flex items-center gap-2 sm:gap-3 px-3 sm:px-6">
           <button onClick={() => setMobileOpen(true)} className="topbar-icon-btn shrink-0 lg:hidden" aria-label="Open menu">
             <span className="text-xl leading-none">☰</span>
           </button>

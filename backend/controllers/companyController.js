@@ -16,6 +16,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const { COMPANY_SCOPED_ROLES } = require('../utils/visibility');
 const { viewerCompanyScope, companyScopeFilter } = require('../utils/employeeScope');
+// A company's headcount and roster are the people still here — a leaver is on
+// the Employees page's Exited tab and nowhere else.
+const { stillHereProfileFilter } = require('../utils/departed');
 
 /**
  * Refuse an executive who has been narrowed to certain companies the right to
@@ -78,7 +81,7 @@ const listCompanies = asyncHandler(async (req, res) => {
   const companyFilter = scope ? { _id: { $in: scope.ids } } : {};
   const companies = await Company.find(companyFilter).sort({ name: 1 }).lean();
   const counts = await EmployeeProfile.aggregate([
-    { $match: { company: { $ne: null } } },
+    { $match: await stillHereProfileFilter({ company: { $ne: null } }) },
     { $group: { _id: '$company', n: { $sum: 1 } } },
   ]);
   const byId = {};
@@ -176,10 +179,19 @@ const deleteCompany = asyncHandler(async (req, res) => {
     throw new Error('Company not found');
   }
   assertCompanyScope(req, company);
-  const assigned = await EmployeeProfile.countDocuments({ company: company._id });
+  // Leavers still count here, unlike on the page: their payslips and letters
+  // name this company, so it cannot go while it has any history. The message
+  // says so, because the roster on screen no longer lists them.
+  const [assigned, here] = await Promise.all([
+    EmployeeProfile.countDocuments({ company: company._id }),
+    EmployeeProfile.countDocuments(await stillHereProfileFilter({ company: company._id })),
+  ]);
   if (assigned > 0) {
     res.status(400);
-    throw new Error(`${assigned} employee(s) are still assigned to this company. Reassign them before deleting.`);
+    const gone = assigned - here;
+    throw new Error(gone > 0
+      ? `${assigned} employee(s) are still assigned to this company, ${gone} of them people who have left (see the Employees page's Exited tab). Reassign them before deleting.`
+      : `${assigned} employee(s) are still assigned to this company. Reassign them before deleting.`);
   }
   await company.deleteOne();
 
@@ -241,7 +253,7 @@ const listCompanyEmployees = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Company not found');
   }
-  const profiles = await EmployeeProfile.find(companyScopeFilter(req))
+  const profiles = await EmployeeProfile.find(await stillHereProfileFilter(companyScopeFilter(req)))
     .select('employeeCode designation department company user')
     .populate('user', 'firstName lastName email isActive')
     .populate('company', 'name')

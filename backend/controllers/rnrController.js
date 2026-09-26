@@ -14,6 +14,7 @@ const { startOfDayIST, ymdIST } = require('../utils/dateHelpers');
 // Company wall: winner pickers list EmployeeProfiles; award winners and the
 // announcement audience are User-keyed.
 const { employeeProfileScope, scopeUserFilter, allowedUserIds } = require('../utils/employeeScope');
+const { hasDeparted } = require('../utils/departed');
 
 // Company wall: keep only the winners a walled viewer may see (allowedUserIds
 // string set; null = unrestricted). Winner snapshots carry names/photos, so an
@@ -154,10 +155,12 @@ const listAwards = asyncHandler(async (req, res) => {
 const listPeople = asyncHandler(async (req, res) => {
   // Company wall: a walled admin picks winners only from their own company.
   const profiles = await EmployeeProfile.find(employeeProfileScope(req))
-    .select('designation department user')
+    .select('designation department user dateOfExit')
     .populate('user', 'firstName lastName photo isActive');
   const people = profiles
-    .filter((p) => p.user && p.user.isActive !== false)
+    // Nobody who has left (utils/departed) — a deactivated login OR a last
+    // working day already past.
+    .filter((p) => p.user && !hasDeparted(p.user, p))
     .map((p) => ({
       user: p.user._id,
       name: `${p.user.firstName || ''} ${p.user.lastName || ''}`.trim(),

@@ -21,6 +21,7 @@ import { useAuthStore } from '../store/authStore';
 import { COMPANY_NAME } from '../config/company';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog } from '../components/dialogs';
+import { hasLeft } from '../utils/peopleOptions';
 import { toast } from 'react-toastify';
 
 const MONTH_NAMES = [
@@ -309,7 +310,8 @@ export default function Calendar() {
         notes: form.notes.trim(),
         priority: form.priority,
         scope: canBroadcast ? form.scope : 'self',
-        recipients: form.recipients,
+        // A reminder goes to nobody who has left, even one saved before they did.
+        recipients: form.recipients.filter((id) => !leftUserIds.has(String(id))),
         department: form.department,
       };
       if (form.id) await api.put(`/reminders/${form.id}`, body);
@@ -355,9 +357,18 @@ export default function Calendar() {
       : [...f.recipients, userId],
   }));
 
+  // Somebody who has left is not in the list (utils/peopleOptions) — the Exited
+  // tab on the Employees page is the one place they appear. Their user ids are
+  // kept aside so a reminder saved before they left does not count them, or
+  // send to them, when it is edited.
+  const leftUserIds = useMemo(
+    () => new Set(people.filter((p) => p.user && hasLeft(p)).map((p) => String(p.user._id))),
+    [people],
+  );
+
   const peopleMatches = useMemo(() => {
     const q = peopleQ.trim().toLowerCase();
-    const list = people.filter((p) => p.user);
+    const list = people.filter((p) => p.user && !hasLeft(p));
     if (!q) return list.slice(0, 60);
     return list.filter((p) => {
       const name = `${p.user.firstName || ''} ${p.user.lastName || ''}`.toLowerCase();
@@ -813,7 +824,7 @@ export default function Calendar() {
               {canBroadcast && form.scope === 'users' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    People <span className="text-gray-400 font-normal">({form.recipients.length} selected)</span>
+                    People <span className="text-gray-400 font-normal">({form.recipients.filter((id) => !leftUserIds.has(String(id))).length} selected)</span>
                   </label>
                   <input
                     type="text"

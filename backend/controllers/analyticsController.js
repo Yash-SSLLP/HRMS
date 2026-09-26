@@ -8,6 +8,7 @@
 const asyncHandler = require('express-async-handler');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { employeeProfileScope } = require('../utils/employeeScope');
+const { hasDeparted } = require('../utils/departed');
 
 // Buckets an employee's tenure (years since dateOfJoining) into a band label.
 function tenureBucket(years) {
@@ -46,7 +47,7 @@ const overview = asyncHandler(async (req, res) => {
     .select(
       'gender dateOfJoining dateOfExit department employmentType confirmationStatus employeeCode designation user'
     )
-    .populate('user', 'firstName lastName')
+    .populate('user', 'firstName lastName isActive')
     .lean();
 
   // The department list is always computed from the *unfiltered* set, so the
@@ -70,8 +71,11 @@ const overview = asyncHandler(async (req, res) => {
     date,
   });
 
-  // --- Active set (no exit date) ---
-  const active = profiles.filter((p) => !p.dateOfExit);
+  // --- Active set: the people still here ---
+  // The portal-wide rule (utils/departed), not "has no exit date": a login that
+  // was switched off without a date is gone too, and somebody serving notice
+  // with a last day still ahead is not gone yet.
+  const active = profiles.filter((p) => !hasDeparted(p.user, p));
   const totalActive = active.length;
 
   // --- Headcount by department (active, sorted desc) ---

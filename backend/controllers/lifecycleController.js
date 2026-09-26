@@ -8,6 +8,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const { reservedAppointmentCodes } = require('../utils/reservedCodes');
 // Company wall: confirmations list/act directly on EmployeeProfile.
 const { employeeProfileScope, cannotManageProfile, assertCanEditProfileOf } = require('../utils/employeeScope');
+// Somebody who has left is confirmed by nobody: they are on the Employees
+// page's Exited tab and nowhere else — not in this table, not in its badge.
+const { stillHereProfileFilter } = require('../utils/departed');
 
 // `role` rides along so the client knows which rows are Managers — confirming
 // one needs the manager-profile grant (see assertCanEditProfileOf below) — and
@@ -75,7 +78,7 @@ function isConfirmationDue(profile, asOf = new Date()) {
  */
 async function countDueConfirmations(req) {
   const profiles = await EmployeeProfile
-    .find({ ...employeeProfileScope(req), confirmationStatus: { $ne: 'Confirmed' } })
+    .find(await stillHereProfileFilter({ ...employeeProfileScope(req), confirmationStatus: { $ne: 'Confirmed' } }))
     .select('confirmationStatus confirmationDueDate dateOfJoining probationMonths')
     .lean();
   const now = new Date();
@@ -94,7 +97,7 @@ const listConfirmations = asyncHandler(async (req, res) => {
   const filter = { ...employeeProfileScope(req) };
   if (req.query.status) filter.confirmationStatus = req.query.status;
 
-  const profiles = await EmployeeProfile.find(filter).populate('user', USER_FIELDS);
+  const profiles = await EmployeeProfile.find(await stillHereProfileFilter(filter)).populate('user', USER_FIELDS);
 
   const items = profiles.map((p) => {
     const u = p.user || {};

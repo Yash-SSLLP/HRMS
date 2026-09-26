@@ -173,6 +173,20 @@ const PERMISSIONS = [
  */
 const GRANTABLE_ROLES = ['HRManager', 'Manager'];
 
+/**
+ * Capabilities the server still honours but the Permissions screens no longer
+ * OFFER, because the module each one opens was removed from web and mobile
+ * (user requests, 2026-09-26): Expense Claims and Travel Requests. A checkbox
+ * that opens nothing is a control that lies, so GET /admin/permissions/catalog
+ * leaves these out — the fix this file already prescribes for a confusing key
+ * (see incentive.manage above): filter it out of the catalogue response.
+ *
+ * They stay in PERMISSIONS on purpose. That is what validates a save, and a list
+ * someone already holds may still contain them; and the API routes behind them
+ * still exist, so nothing about who may call what changed.
+ */
+const HIDDEN_FROM_CATALOG = new Set(['expenses.manage', 'travel.manage']);
+
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
 /**
@@ -181,4 +195,4 @@ const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
  */
 const isValidPermission = (key) => PERMISSION_KEY_SET.has(key);
 
-module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, GRANTABLE_ROLES, isValidPermission };
+module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG };

@@ -3,11 +3,12 @@ const mongoose = require('mongoose');
 // A request to change one whitelisted profile/credential field, routed for
 // approval before it is applied to the User or EmployeeProfile record.
 //
-// Two directions share this model:
-//   • Employee-raised  → decided by the employee's HR partner (approverKind 'hr').
-//   • HR-raised        → decided by the employee's company CEO/MD (approverKind
-//                        'exec'). HR cannot change an employee's details directly.
-// The Backend (SuperAdmin) never needs a request — it edits directly (audited).
+// Every request is employee-raised and decided by the employee's HR partner
+// (approverKind 'hr'). HR, the Backend (SuperAdmin) and an edit-mode CEO/MD never
+// need one — they edit directly (audited). 'exec' rows are HR edits from before
+// 2026-09-26, when those waited on the company CEO/MD; nothing raises one now
+// (HR's edits apply at once and the CEO/MD are notified), but the old rows keep
+// their kind so they still read and decide correctly.
 //
 // pending -> awaiting decision; approved -> applied; declined -> rejected.
 const CHANGE_REQUEST_STATUSES = ['pending', 'approved', 'declined'];

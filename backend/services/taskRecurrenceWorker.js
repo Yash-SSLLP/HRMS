@@ -26,6 +26,7 @@ const Task = require('../models/Task');
 const TaskUpdate = require('../models/TaskUpdate');
 const notify = require('./taskNotify');
 const { FREQUENCY } = require('../config/tasks');
+const { departedUserIdSet } = require('../utils/departed');
 
 /** How far back a sleeping schedule may catch up. See the docblock. */
 const CATCHUP_DAYS = 7;
@@ -97,9 +98,22 @@ function firstDueDate(schedule) {
   return atTime(start, schedule.time);
 }
 
-/** Build one occurrence from a schedule. Returns null if it already exists. */
+/**
+ * Build one occurrence from a schedule. Returns null if it already exists — or
+ * if everybody it is for has left.
+ *
+ * A schedule outlives the people on it: set in March for somebody who resigned
+ * in August, it went on raising their Friday report every week, and each new
+ * task put a leaver's name back on the board. Nobody who has left is given new
+ * work (utils/departed), so they are dropped from each occurrence as it is made;
+ * the schedule itself is left alone, so the person who set it can re-point it.
+ */
 async function mintOccurrence(schedule, dueDate) {
   const occurrenceKey = occurrenceKeyFor(dueDate);
+  const gone = await departedUserIdSet([...(schedule.assignees || []), ...(schedule.loopUsers || [])]);
+  const assignees = (schedule.assignees || []).filter((u) => !gone.has(String(u)));
+  if (!assignees.length) return null;
+  const loopUsers = (schedule.loopUsers || []).filter((u) => !gone.has(String(u)));
   try {
     const task = await Task.create({
       title: schedule.title,
@@ -108,8 +122,8 @@ async function mintOccurrence(schedule, dueDate) {
       company: schedule.company,
       createdBy: schedule.createdBy,
       createdByName: schedule.createdByName,
-      assignees: (schedule.assignees || []).map((u) => ({ user: u })),
-      loopUsers: schedule.loopUsers,
+      assignees: assignees.map((u) => ({ user: u })),
+      loopUsers,
       ...(schedule.onBehalf?.by ? { onBehalf: schedule.onBehalf } : {}),
       priority: schedule.priority,
       points: schedule.points,

@@ -8,6 +8,7 @@ const express = require('express');
 const {
   getMyBalance,
   listMyRequests,
+  whoIsOnLeave,
   applyForLeave,
   previewLeave,
   cancelMyRequest,
@@ -38,6 +39,10 @@ router.get('/me/leave-preview', previewLeave);
 router.post('/me/requests', applyForLeave);
 // PATCH /me/requests/:id/cancel — cancel own leave request; protected.
 router.patch('/me/requests/:id/cancel', cancelMyRequest);
+// GET /on-leave?date=YYYY-MM-DD — who is on leave that day (the employee
+// dashboard's "On leave" card). Any signed-in user, walled to their own company;
+// names and full/half day only — never the leave type or the reason.
+router.get('/on-leave', whoIsOnLeave);
 
 // PATCH /emergency/:id/double-cut — charge (or un-charge) a flagged emergency
 // leave at double pay. Sits ABOVE the leave.manage gate on purpose: the handler

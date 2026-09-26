@@ -36,6 +36,22 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 
 const Task = require('../models/Task');
+const { departedUserIdSet } = require('../utils/departed');
+
+/**
+ * Drop the rows of people who have left from a per-person table.
+ *
+ * "How is the team doing" is asked about the team as it stands: a leaver is on
+ * the Employees page's Exited tab and nowhere else. Their tasks are still
+ * there — on the list, in the category and trend tabs — they just do not get a
+ * row of their own on a scoreboard of current colleagues.
+ * @param {Array<{_id: *}>} rows - aggregation rows keyed by user id
+ * @returns {Promise<Array>}
+ */
+async function withoutLeavers(rows) {
+  const gone = await departedUserIdSet(rows.map((r) => r._id));
+  return rows.filter((r) => !gone.has(String(r._id)));
+}
 const {
   STATUS, KIND_TASK, normaliseStatus, normaliseStatusStage, spellingsOf,
 } = require('../config/tasks');
@@ -256,7 +272,7 @@ const dashboard = asyncHandler(async (req, res) => {
     ]);
     return res.json({
       view,
-      rows: rows.map((r) => scoreRow(r, r.name || '—', { key: String(r._id), code: r.code || '' })),
+      rows: (await withoutLeavers(rows)).map((r) => scoreRow(r, r.name || '—', { key: String(r._id), code: r.code || '' })),
     });
   }
 
@@ -284,7 +300,7 @@ const dashboard = asyncHandler(async (req, res) => {
 
   res.json({
     view,
-    rows: rows.map((r) => scoreRow(r, r.name || '—', { key: String(r._id), code: r.code || '' })),
+    rows: (await withoutLeavers(rows)).map((r) => scoreRow(r, r.name || '—', { key: String(r._id), code: r.code || '' })),
   });
 });
 

@@ -34,6 +34,7 @@ const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audie
 const { hasPermission, hasExplicitPermission, isPortalViewer } = require('../middleware/authMiddleware');
 const { allowedEmployeeIds, scopeEmployeeFilter, cannotManageProfile, employeeProfileScope, assertNotOwnRequest } = require('../utils/employeeScope');
 const { HIDDEN_ROLES } = require('../utils/visibility');
+const { stillHereProfileFilter, hasDeparted } = require('../utils/departed');
 // Punching in on a day you are on approved leave. The leave-side rules (which
 // day a leave still claims, who sits at the top of the ladder, and how a day is
 // handed back) live in leaveController; this module owns the punch and the
@@ -998,22 +999,25 @@ const computeHeatmapWindow = async ({ empIds, span }) => {
   const start = startOfDay(new Date());
   start.setDate(start.getDate() - (span - 1));
 
-  const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
+  // The people still here, and only them. The heatmap describes the team as it
+  // stands: somebody who has left is on the Employees page's Exited tab and
+  // nowhere else, so their days drop out with them (the punches themselves stay
+  // in the attendance log, which is the record). Left in, every leaver the
+  // company ever had inflated `totalEmployees` and came back by name in the
+  // day drill-down.
+  const profiles = await EmployeeProfile.find(await stillHereProfileFilter(empIds ? { _id: { $in: empIds } } : {}))
     .select('_id user').lean();
   const idSet = new Set(profiles.map((p) => String(p._id)));
+  const profileIds = profiles.map((p) => p._id);
   const userIds = profiles.map((p) => p.user).filter(Boolean);
   // CompOff.employee is a User id; map it to the EmployeeProfile id used elsewhere.
   const userToEmp = {};
   for (const p of profiles) userToEmp[String(p.user)] = String(p._id);
 
-  const attFilter = { date: { $gte: start, $lte: end } };
-  const leaveFilter = { status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start } };
-  const compFilter = { status: 'Availed', availedOn: { $gte: start, $lte: end } };
-  if (empIds) {
-    attFilter.employee = { $in: empIds };
-    leaveFilter.employee = { $in: empIds };
-    compFilter.employee = { $in: userIds };
-  }
+  // Always narrowed to those people, the unrestricted (whole-org) view included.
+  const attFilter = { date: { $gte: start, $lte: end }, employee: { $in: profileIds } };
+  const leaveFilter = { status: 'Approved', startDate: { $lte: end }, endDate: { $gte: start }, employee: { $in: profileIds } };
+  const compFilter = { status: 'Availed', availedOn: { $gte: start, $lte: end }, employee: { $in: userIds } };
 
   const [records, leaves, comps] = await Promise.all([
     Attendance.find(attFilter).select('employee date status checkIn halfDayDeclared shift shiftName shiftStart shiftEnd shiftDurationMin shiftCrossesMidnight').lean(),
@@ -1026,7 +1030,7 @@ const computeHeatmapWindow = async ({ empIds, span }) => {
   const lateSet = new Set();
 
   for (const r of records) {
-    if (empIds && !idSet.has(String(r.employee))) continue;
+    if (!idSet.has(String(r.employee))) continue;
     const key = `${String(r.employee)}|${ymdLocal(r.date)}`;
     if (r.status === 'Present') {
       cls.set(key, 'full');
@@ -1090,22 +1094,21 @@ const computeDayDetails = async ({ empIds, dateStr }) => {
   const next = new Date(day);
   next.setDate(day.getDate() + 1);
 
-  const profiles = await EmployeeProfile.find(empIds ? { _id: { $in: empIds } } : {})
+  // Current people only, as in computeHeatmapWindow above: a leaver is not
+  // named here, whichever day is asked about.
+  const profiles = await EmployeeProfile.find(await stillHereProfileFilter(empIds ? { _id: { $in: empIds } } : {}))
     .select('_id user employeeCode designation department dateOfJoining dateOfExit')
     .populate('user', 'firstName lastName isActive')
     .lean();
   const byId = new Map(profiles.map((p) => [String(p._id), p]));
+  const profileIds = profiles.map((p) => p._id);
   const userIds = profiles.map((p) => p.user?._id || p.user).filter(Boolean);
   const userToEmp = {};
   for (const p of profiles) userToEmp[String(p.user?._id || p.user)] = String(p._id);
 
-  const attFilter = { date: { $gte: day, $lt: next } };
-  const leaveFilter = { status: 'Approved', startDate: { $lte: day }, endDate: { $gte: day } };
+  const attFilter = { date: { $gte: day, $lt: next }, employee: { $in: profileIds } };
+  const leaveFilter = { status: 'Approved', startDate: { $lte: day }, endDate: { $gte: day }, employee: { $in: profileIds } };
   const compFilter = { status: 'Availed', availedOn: { $gte: day, $lt: next }, employee: { $in: userIds } };
-  if (empIds) {
-    attFilter.employee = { $in: empIds };
-    leaveFilter.employee = { $in: empIds };
-  }
 
   const [records, leaves, comps, holidays] = await Promise.all([
     Attendance.find(attFilter)
@@ -1921,15 +1924,18 @@ const todayBoard = asyncHandler(async (req, res) => {
   const records = await Attendance.find(boardFilter)
     .populate({
       path: 'employee',
-      select: 'employeeCode designation department user',
+      select: 'employeeCode designation department user dateOfExit',
       // `photo` costs nothing extra (a scalar on an already-populated doc) and
       // is what lets the dashboard card show a real face instead of initials.
-      populate: { path: 'user', select: 'firstName lastName photo' },
+      populate: { path: 'user', select: 'firstName lastName photo isActive' },
     })
     .lean();
 
   let rows = records
-    .filter((r) => r.employee && r.employee.user)
+    // A punch from somebody who has left (an exit date already past on a login
+    // still switched on) is not a colleague arriving — they are on the Exited
+    // tab and nowhere else.
+    .filter((r) => r.employee && r.employee.user && !hasDeparted(r.employee.user, r.employee))
     .map((r) => {
       const p = r.employee;
       return {
@@ -2025,9 +2031,11 @@ const presenceBoard = asyncHandler(async (req, res) => {
       .lean(),
   ]);
 
-  // Only active, not-yet-exited employees make up the headcount.
+  // Only people still here make up the headcount — not somebody who has left
+  // since (utils/departed), whichever day is on the board, and not somebody
+  // whose exit falls before the day being looked at.
   const activeProfiles = profiles.filter(
-    (p) => p.user && p.user.isActive !== false && (!p.dateOfExit || new Date(p.dateOfExit) > today)
+    (p) => p.user && !hasDeparted(p.user, p) && (!p.dateOfExit || new Date(p.dateOfExit) > today)
   );
   const byId = new Map(activeProfiles.map((p) => [String(p._id), p]));
 

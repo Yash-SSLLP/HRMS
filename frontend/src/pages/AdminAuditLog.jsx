@@ -11,7 +11,7 @@
  *     dialog promised is what goes. With no filters set it is "Delete entire
  *     log", and DELETE has to be typed out.
  * A deleted entry also drops out of the status histories built from the log
- * (expense-claim History, the rest-day decision trail) — the dialogs say so.
+ * (the rest-day decision trail) — the dialogs say so.
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -112,7 +112,7 @@ export default function AdminAuditLog() {
     const ok = await confirmDialog({
       title: `Delete ${entries(ids.length)} permanently?`,
       message: 'They are removed from the audit log for good, along with the steps they add to any '
-        + 'status history (expense claims, rest-day decisions). This cannot be undone.',
+        + 'status history (rest-day decisions). This cannot be undone.',
       confirmText: 'Delete permanently',
       tone: 'danger',
     });

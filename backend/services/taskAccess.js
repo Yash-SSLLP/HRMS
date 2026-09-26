@@ -58,6 +58,7 @@ const mongoose = require('mongoose');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { hasPermission } = require('../middleware/authMiddleware');
 const { companyScopeFilter } = require('../utils/employeeScope');
+const { departedUserIdSet } = require('../utils/departed');
 const { KIND_TASK } = require('../config/tasks');
 
 const MAX_CHAIN = 20; // cycle guard, same depth the leave ladder uses
@@ -364,7 +365,12 @@ async function annotatePeople(req, people = []) {
  */
 async function defaultOpenTo(userId) {
   const { direct } = await teamOf(userId);
-  return direct;
+  // The reporting tree still holds everybody who ever reported here — a leaver
+  // keeps their reportingManager — so the pool is cut to the people still here.
+  // Offering a piece of work to somebody who has left is the one thing the
+  // portal-wide rule exists to stop (utils/departed).
+  const gone = await departedUserIdSet(direct);
+  return direct.filter((id) => !gone.has(String(id)));
 }
 
 // ===== Visibility =====

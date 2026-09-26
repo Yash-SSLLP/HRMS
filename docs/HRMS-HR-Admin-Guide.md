@@ -343,15 +343,7 @@ Setting a **Manager**'s structure or CTC needs the *Manager profiles* permission
 
 ## 8. Money out
 
-### Expenses
-
-Review claims by category, amount, date and receipt, then set them to Approved, Rejected or Reimbursed.
-
-[!NOTE] A receipt is mandatory on the employee's side, and marking a claim reimbursed posts a matching cash-out entry to the cashbook against the account you choose, carrying the receipt across for verification.
-
-### Travel
-
-Approve travel requests and handle reimbursements separately, including the uploaded bills.
+There are no separate expense claims: staff record what they spend in their own cashbook, against the advance they hold, and the accounts team confirms each entry in **Employee Cashbook** (below).
 
 ### Cashbook
 
@@ -478,17 +470,17 @@ The monthly recognition programme, curated by HR.
 
 **Complaints** are visible to the Backend, HR Managers and the CEO, each seeing everything except complaints against themselves. A complaint can name a person or be marked **General** — a grievance about the workplace with nobody named, which every leader can see because it accuses none of them. A complaint about an admin, or about the complainant's own HR partner, escalates to the Backend; otherwise it goes to their HR partner (a General one takes that same ordinary route). The CEO can view but not action them. Notifications are deliberately vague and are never sent to the person the complaint concerns.
 
-**Change requests** carry every edit to an employee's details through approval. The rules are the same for a name, a bank account, an address or a statutory ID:
+**Change requests** carry an employee's edits to their own details through approval. The rules are the same for a name, a bank account, an address or a statutory ID:
 
 - An employee **fills in anything that is missing** themselves, from their Account page (or the Profile tab of the app) — it saves straight away.
 - A short list of **contact and life-event details is theirs to change, once a day each**: phone, gender, marital status, date of birth, wedding anniversary and both addresses. That change applies immediately and is written to the audit log; the day's *second* change to the same detail becomes an ordinary request to you. HR Managers and Managers are not capped on their own record, because their approver is the Backend rather than someone in their own company.
 - Everything else — name, login email, statutory IDs, bank details, designation, department — is a request to that employee's **HR partner**, who approves (applying the value, with validation) or declines with a note.
-- An **HR Manager cannot change an employee's details directly.** When HR edits a detail on the employee record, each change is sent to that employee's **company CEO/MD** for approval instead of saving — the Employees page tells HR how many changes were queued. It applies only once the exec approves it, from their own Change Requests inbox.
+- An **HR Manager changes an employee's details directly.** An edit HR makes on the employee record saves straight away and is written to the audit log — nothing waits for approval. The employee's **company CEO/MD** are notified instead: one notification per save, listing each detail with its old and new value (statutory IDs and bank account numbers show only their last four characters) and opening the employee's record. It is for their information; there is nothing for them to approve.
 - The **Backend** edits anything directly, with no request — every such change is written to the audit log.
 
 Documents follow the same idea: an employee uploads a **missing** required document, but once it is submitted it is **locked** — they cannot delete or replace it (only a document HR has *rejected* can be re-uploaded). To change a submitted document, the employee uses **Request replacement** — they attach the new file and it goes to HR, who approves it (the new file swaps in) or declines it, from the panel at the top of the **Employee Documents** page.
 
-Identity fields (name, login email, phone) work exactly like the profile details above: an HR Manager's change to an employee's name, email or phone is queued to the company CEO/MD rather than applied, while the Backend changes them directly.
+Identity fields (name, login email, phone) work exactly like the profile details above: an HR Manager's change to an employee's name, email or phone applies at once and the company CEO/MD are notified, while the Backend changes them directly.
 
 **Password resets** arrive from the login page. HR Managers can reset Employee accounts only; admin-account resets are Backend territory. A reset signs the user out of every device.
 
@@ -517,7 +509,7 @@ Once an exit is **Completed**, a **Relieving Letter** button on it opens the let
 HR and managers get an admin surface in the Android app as well:
 
 - **Admin Hub** — organisation statistics, today's split, trend charts, the attendance heatmap, headcount by department, pending leave and upcoming holidays. Executives see a read-only badge.
-- **Approvals** — one entry holding both inboxes: **Waiting on me** (the same chain inbox as the web — leave, regularizations, work-on-leave claims, resignations and clearance) and **HR desk** (the company-wide queues — leave, expenses, travel, regularizations, loans, profile changes, document swaps and salary changes). Each side shows its own count, and the screen opens on whichever has something waiting.
+- **Approvals** — one entry holding both inboxes: **Waiting on me** (the same chain inbox as the web — leave, regularizations, work-on-leave claims, resignations and clearance) and **HR desk** (the company-wide queues — leave, regularizations, loans, profile changes, document swaps and salary changes). Each side shows its own count, and the screen opens on whichever has something waiting.
 - **My Team**, **today's and monthly attendance**, **directory**, **employee detail**, **add employee**, and **work locations**.
 - **Payroll** — list, approve, mark paid, and the payslip PDF: **View** opens it, **Share** sends it on.
 - **Incentive** — Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard, for whoever holds a role in an incentive. It is its own group rather than a row under Payroll, and it is there whether or not that person has an admin section at all.

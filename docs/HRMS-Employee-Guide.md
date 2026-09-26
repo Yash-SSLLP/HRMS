@@ -10,7 +10,7 @@ This is your company's **HRMS** — Human Resource Management System. It is the 
 
 - Marking attendance, applying for leave, and checking your shifts.
 - Viewing payslips, requesting a loan or advance, and filing your tax declaration.
-- Recording what you spend, claiming travel, tracking goals, taking courses, and completing tasks.
+- Recording what you spend, tracking goals, taking courses, and completing tasks.
 - Reading announcements, answering surveys, and seeing each month's Rewards and Recognition winners.
 - Keeping your profile and documents in order — and, when the time comes, submitting your resignation.
 
@@ -220,9 +220,7 @@ Save a draft as often as you like. Once **submitted**, the form becomes read-onl
 
 ### 7.4 Expenses
 
-Spending is now filed through **My Cashbook**, which covers the same ground against the advance you are holding — see section 7.6. Separate expense claims are no longer raised from the menu.
-
-[!NOTE] Claims you filed before this changed are still with HR and will be processed as normal, through Pending, Approved and Reimbursed. You simply no longer start new ones here.
+Spending is filed through **My Cashbook**, against the advance you are holding — see section 7.6. There are no separate expense claims.
 
 ### 7.5 My Incentive
 
@@ -271,10 +269,6 @@ There are three to choose from:
 Each can be downloaded as a **PDF** to read, send or print, or as an **Excel** file to work with. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file goes straight to the share sheet, so you can WhatsApp or email it from site without a laptop.
 
 [!NOTE] Only approved entries count towards the totals. Anything rejected or reversed is still listed, struck through, so a report never hides part of the history.
-
-### 7.7 Travel
-
-Raise a request with the purpose, origin and destination, dates, mode of travel, estimated cost, any advance needed, and notes. If you have already paid, complete the reimbursement block and attach the bill. The request status and the reimbursement status are tracked separately.
 
 ---
 
@@ -440,7 +434,7 @@ You can see the status throughout, along with your HR contact. You cannot open a
 Almost everything above is in the Android app, organised under a **Menu**:
 
 - **Time and Attendance** — Leave, Attendance, Regularization, My Roster.
-- **Money** — Payslips, My Cashbook, Travel, Loans.
+- **Money** — Payslips, My Cashbook, Loans.
 - **Incentive** — My Incentive, which is open to everybody who can earn points; Point Rate, Boys Incentive, Billing Incentive and the Points Dashboard are there only if you run an incentive yourself.
 - **Growth** — Tasks, My Interviews, Goals, Reviews, Learning.
 - **Requests and lifecycle** — Approvals, Change Requests, Complaints, Tax Declaration, Onboarding, Resignation.

@@ -187,9 +187,14 @@ const listRequests = asyncHandler(async (req, res) => {
     .sort({ updatedAt: -1 })
     .lean();
 
+  // A request to or from somebody who has left goes nowhere — they are on the
+  // Employees page's Exited tab and nowhere else (see listConnections).
+  const gone = await departedUserIdSet(pending.map((c) => (c.recipient._id.equals(meId) ? c.requester._id : c.recipient._id)));
+
   const incoming = [];
   const outgoing = [];
   for (const c of pending) {
+    if (gone.has(String(c.recipient._id.equals(meId) ? c.requester._id : c.recipient._id))) continue;
     if (c.recipient._id.equals(meId)) {
       incoming.push({ _id: c._id, from: publicUser(c.requester), createdAt: c.createdAt });
     } else {
@@ -252,11 +257,17 @@ const respondRequest = asyncHandler(async (req, res) => {
 const unreadCount = asyncHandler(async (req, res) => {
   const meId = req.user._id;
 
-  const [conns, groups] = await Promise.all([
+  const [allConns, groups] = await Promise.all([
     Connection.find({ status: 'accepted', $or: [{ requester: meId }, { recipient: meId }] })
-      .select('_id').lean(),
+      .select('_id requester recipient').lean(),
     ChatGroup.find({ 'members.user': meId }).select('members').lean(),
   ]);
+  // Only the conversations the list shows: a thread with somebody who has left
+  // is not in it (listConnections), so its unread messages must not light a
+  // badge nobody can clear.
+  const otherOf = (c) => (String(c.requester) === String(meId) ? c.recipient : c.requester);
+  const gone = await departedUserIdSet(allConns.map(otherOf));
+  const conns = allConns.filter((c) => !gone.has(String(otherOf(c))));
 
   // A group counts from MY own lastReadAt, which is per member — so each group
   // contributes its own cutoff, exactly as listGroups builds it.
@@ -352,12 +363,16 @@ const listConnections = asyncHandler(async (req, res) => {
     );
   }
 
-  // Flag the other parties who have left the organization so the client shows a
-  // "Resigned" badge and blocks messaging (covers dateOfExit-only departures too).
+  // Somebody who has left the organization is on the Employees page's Exited
+  // tab and nowhere else — a conversation with them included, so the thread
+  // leaves the list (covers dateOfExit-only departures too). Nothing is
+  // deleted: the messages stay on the server and in the admin chat export, and
+  // messaging them was already blocked. `resigned` is still sent, always false
+  // now, because both clients read it.
   const otherIds = conns.map((c) => (c.requester._id.equals(meId) ? c.recipient._id : c.requester._id));
   const departed = await departedUserIdSet(otherIds);
 
-  const out = conns.map((c) => {
+  const out = conns.filter((c, i) => !departed.has(String(otherIds[i]))).map((c) => {
     const other = c.requester._id.equals(meId) ? c.recipient : c.requester;
     const stat = statsBy.get(String(c._id));
     const person = publicUser(other);
@@ -691,6 +706,9 @@ const listGroups = asyncHandler(async (req, res) => {
     : [[], []];
   const lastBy = new Map(lasts.map((l) => [String(l._id), l]));
   const unreadBy = new Map(unreads.map((u) => [String(u._id), u.count]));
+  // The head-count matches the member list (getGroupInfo), which leaves out
+  // anybody who has left.
+  const gone = await departedUserIdSet(accepted.flatMap(({ g }) => g.members.map((m) => m.user?._id)));
 
   for (const { g, mem } of accepted) {
     const last = lastBy.get(String(g._id));
@@ -699,7 +717,7 @@ const listGroups = asyncHandler(async (req, res) => {
       name: g.name,
       hasPhoto: Boolean(g.photo),
       myRole: mem.role,
-      memberCount: g.members.filter((m) => m.status === 'accepted').length,
+      memberCount: g.members.filter((m) => m.status === 'accepted' && m.user && !gone.has(String(m.user._id))).length,
       lastMessage: last
         ? { body: last.lastBody, createdAt: last.lastAt, mine: String(last.lastSender) === String(meId) }
         : null,
@@ -886,9 +904,12 @@ const getGroupInfo = asyncHandler(async (req, res) => {
     throw new Error('You are not a member of this group');
   }
   // Accepted members first, then pending invites; owner/admin sorted to the top.
+  // Nobody who has left is listed — they are on the Employees page's Exited tab
+  // and nowhere else. What they posted stays in the thread; that is a record.
   const order = { owner: 0, admin: 1, member: 2 };
+  const gone = await departedUserIdSet(group.members.map((m) => m.user?._id));
   const members = group.members
-    .filter((m) => m.user && m.status !== 'declined')
+    .filter((m) => m.user && m.status !== 'declined' && !gone.has(String(m.user._id)))
     .sort((a, b) => (order[a.role] - order[b.role]))
     .map(shapeMember);
   res.json({

@@ -14,20 +14,30 @@ const { advanceApproval, grantOneDayLeaveFor } = require('./leaveController');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { haversineMeters } = require('../utils/geo');
 const { lateMinutes, getLatePolicy, graceMinutesFor } = require('../utils/workday');
+const { stillHereProfileFilter } = require('../utils/departed');
 const {
   computeHeatmapWindow, computeDayDetails, runAttendanceExport,
   buildRestDayClaims, applyRestDayDecision,
 } = require('./attendanceController');
 
+// The team is the people who report to you AND still work here. A leaver keeps
+// their `reportingManager` — finalizeExit scrubs nothing — so without the
+// still-here rule they stayed on the board forever, marked absent every day.
+// Their records do not vanish: `includeDeparted` is for the two lists that are
+// records, not a roster (a leave request, a Sunday worked before they left
+// that still has to be approved for their final pay).
+
 // EmployeeProfile ids of the caller's direct reports (for team-scoped queries).
-async function myReportIds(userId) {
-  const rows = await EmployeeProfile.find({ reportingManager: userId }).select('_id').lean();
+async function myReportIds(userId, { includeDeparted = false } = {}) {
+  const filter = { reportingManager: userId };
+  const rows = await EmployeeProfile.find(includeDeparted ? filter : await stillHereProfileFilter(filter))
+    .select('_id').lean();
   return rows.map((p) => p._id);
 }
 
 // EmployeeProfile ids of the people who report directly to the current user.
 async function myReportProfiles(userId) {
-  return EmployeeProfile.find({ reportingManager: userId })
+  return EmployeeProfile.find(await stillHereProfileFilter({ reportingManager: userId }))
     .select('employeeCode designation department user workLocationRef remotePunchAllowed')
     .populate('user', 'firstName lastName email photo')
     .populate('workLocationRef', 'name lat lng radiusM')
@@ -304,8 +314,8 @@ const markReportOnLeave = asyncHandler(async (req, res) => {
  */
 // GET /api/manager/leave-requests?status= — leave requests from my reports.
 const listTeamLeave = asyncHandler(async (req, res) => {
-  const reports = await myReportProfiles(req.user._id);
-  const ids = reports.map((p) => p._id);
+  // Records, not a roster: a leaver's requests are still their history.
+  const ids = await myReportIds(req.user._id, { includeDeparted: true });
   const filter = { employee: { $in: ids } };
   if (req.query.status) filter.status = req.query.status;
 
@@ -421,7 +431,9 @@ const exportTeamAttendance = asyncHandler(async (req, res) => {
  */
 // GET /api/manager/rest-day-work
 const listTeamRestDayWork = asyncHandler(async (req, res) => {
-  const ids = await myReportIds(req.user._id);
+  // Leavers included: a Sunday worked in someone's last month still pays 2×
+  // on their final payslip, and it is this manager who has to approve it.
+  const ids = await myReportIds(req.user._id, { includeDeparted: true });
   const now = new Date();
   if (!ids.length) {
     res.json({ year: now.getFullYear(), month: now.getMonth() + 1, counts: { pending: 0, approved: 0, rejected: 0 }, claims: [] });
@@ -455,7 +467,7 @@ const decideTeamRestDayWork = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Attendance record not found');
   }
-  const ids = await myReportIds(req.user._id);
+  const ids = await myReportIds(req.user._id, { includeDeparted: true });
   if (!ids.some((id) => String(id) === String(record.employee))) {
     res.status(403);
     throw new Error('That day belongs to someone who does not report to you');

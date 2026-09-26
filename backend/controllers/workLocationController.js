@@ -9,6 +9,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 // Company wall: WorkLocation carries its own `company`; assigned-employee
 // listings are EmployeeProfile queries.
 const { viewerCompanyScope, employeeProfileScope, allowedEmployeeIds } = require('../utils/employeeScope');
+// A site's headcount and its list are the people still here — a leaver is on the
+// Employees page's Exited tab and nowhere else.
+const { stillHereProfileFilter } = require('../utils/departed');
 
 /**
  * List all work locations, each with its assigned-employee count.
@@ -32,7 +35,7 @@ const listLocations = asyncHandler(async (req, res) => {
   // filter fragment (string ids) can't be $match-ed directly.
   const empIds = await allowedEmployeeIds(req);
   const counts = await EmployeeProfile.aggregate([
-    { $match: { workLocationRef: { $ne: null }, ...(empIds ? { _id: { $in: empIds } } : {}) } },
+    { $match: await stillHereProfileFilter({ workLocationRef: { $ne: null }, ...(empIds ? { _id: { $in: empIds } } : {}) }) },
     { $group: { _id: '$workLocationRef', n: { $sum: 1 } } },
   ]);
   // Map location id -> headcount to attach counts without extra queries
@@ -143,11 +146,16 @@ const deleteLocation = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Work location not found');
   }
-  const assigned = await EmployeeProfile.countDocuments({ workLocationRef: location._id });
+  // Only the people still here block a delete — they are the ones the site's
+  // list shows. A leaver still pointing at it would otherwise block it with a
+  // count nobody can find on screen; their pointer is cleared with the site
+  // instead (it only ever fenced punches they can no longer make).
+  const assigned = await EmployeeProfile.countDocuments(await stillHereProfileFilter({ workLocationRef: location._id }));
   if (assigned > 0) {
     res.status(400);
     throw new Error(`${assigned} employee(s) are still assigned to this location. Reassign them before deleting.`);
   }
+  await EmployeeProfile.updateMany({ workLocationRef: location._id }, { $unset: { workLocationRef: '' } });
   await location.deleteOne();
   res.json({ id: req.params.id, deleted: true });
 });
@@ -162,7 +170,7 @@ const deleteLocation = asyncHandler(async (req, res) => {
 const listAssigned = asyncHandler(async (req, res) => {
   // Company wall: on a shared (company-less) site, a walled viewer still only
   // sees their own company's people assigned there.
-  const employees = await EmployeeProfile.find({ workLocationRef: req.params.id, ...employeeProfileScope(req) })
+  const employees = await EmployeeProfile.find(await stillHereProfileFilter({ workLocationRef: req.params.id, ...employeeProfileScope(req) }))
     .select('employeeCode designation user')
     .populate('user', 'firstName lastName email')
     .sort({ employeeCode: 1 })

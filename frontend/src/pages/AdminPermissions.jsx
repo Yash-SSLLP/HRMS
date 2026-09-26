@@ -25,7 +25,7 @@
  *     reading as two more cards of the same weight.
  *
  * Grants it manages, all SuperAdmin-only on the server too: standalone module
- * access for anyone (cashbook / expenses / assets / khata), the separate khata
+ * access for anyone (cashbook / assets / khata), the separate khata
  * DOWNLOAD grant, the two per-employee attendance grants (WFH and
  * punch-anywhere), executive edit mode for a CEO/MD account, and the granular
  * capability list for HR Managers and Managers. It also hosts the org-wide
@@ -45,6 +45,7 @@ import RegularizationApprovalSetup from '../components/permissions/Regularizatio
 import { roleLabel } from '../config/roles';
 import { GRANTABLE_ROLES, INCENTIVE_MODULES, INCENTIVE_ROLE_LABELS, hasExplicitPermission } from '../config/permissions';
 import { useAuthStore } from '../store/authStore';
+import { hasLeft } from '../utils/peopleOptions';
 
 /**
  * Role chips are the ONE place a colour carries information on this page: which
@@ -77,7 +78,6 @@ const initials = (u) => `${(u.firstName || '')[0] || ''}${(u.lastName || '')[0] 
  */
 const GRANT_HELP = {
   cashbook: 'Open the cashbook: record money in and out of the company’s cash accounts. A standalone grant — any account can hold it, whatever their role.',
-  expenses: 'Review, approve and settle staff expense claims.',
   assets: 'Issue, return and track company assets.',
   training: 'Opens the training module: the schedule, and booking on it. They can create a training, set its dates and times, add participants, edit it and cancel it — the same page HR uses, reached from My Portal. A standalone grant because whoever organises training is as often a department lead or a coordinator as HR, and the capability list only reaches HR Manager and Manager accounts.',
   taskProxy: 'Assign a task on somebody else’s behalf: the assign form offers “On behalf of”, and the task goes out in that person’s name — they approve it and it sits in their “Assigned by me” — while the record keeps who actually sent it. The sender does not keep it: once sent, it leaves their own lists and they hear nothing more about it. For an assistant or coordinator who hands out work for a director or a department head.',
@@ -208,7 +208,10 @@ function AccessTab({ showGuide, setShowGuide }) {
         api.get('/admin/org-settings').catch(() => ({ data: {} })),
         api.get('/companies').catch(() => ({ data: { companies: [] } })),
       ]);
-      setUsers(u.data.users || []);
+      // Nobody who has left: there is nothing left to grant them, and they are
+      // on the Users page's Exited tab and nowhere else (utils/peopleOptions —
+      // `departed` is stamped on every row by /admin/users).
+      setUsers((u.data.users || []).filter((x) => !hasLeft(x)));
       setCompanies(comp.data.companies || []);
       setCatalog(c.data.permissions || []);
       if (c.data.failed) setError('Could not load the permission list — reload the page before changing anyone\u2019s capabilities.');
@@ -295,10 +298,6 @@ function AccessTab({ showGuide, setShowGuide }) {
 
   const toggleCashbook = (u) => toggleAccess(u, {
     path: 'cashbook-access', field: 'cashbookAccess', enabled: !u.cashbookAccess, errorText: 'Could not update cashbook access',
-  });
-
-  const toggleExpenses = (u) => toggleAccess(u, {
-    path: 'expenses-access', field: 'expensesAccess', enabled: !u.expensesAccess, errorText: 'Could not update expenses access',
   });
 
   const toggleAssets = (u) => toggleAccess(u, {
@@ -470,12 +469,13 @@ function AccessTab({ showGuide, setShowGuide }) {
       && (!t || `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(t)));
   }, [users, q, roleFilter]);
 
-  // Account, Role, Company Accounts, Expenses, Assets, Loans, Training,
+  // Account, Role, Company Accounts, Assets, Loans, Training, Tasks on behalf,
   // Incentive, Employee Cashbook, Attendance, CEO/MD, Manager profiles,
   // Capabilities. THIRTEEN — it is the colSpan of the loading skeleton and of
   // the "no accounts match" panel, so a column added above without touching
-  // this leaves both a cell short of the table.
-  const COLS = 14;
+  // this leaves both a cell short of the table. (The Expenses column went with
+  // the Expense Claims module, 2026-09-26.)
+  const COLS = 13;
 
   return (
     <div>
@@ -504,7 +504,6 @@ function AccessTab({ showGuide, setShowGuide }) {
           <dl className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-3.5">
             {[
               ['Company Accounts', GRANT_HELP.cashbook],
-              ['Expenses', GRANT_HELP.expenses],
               ['Assets', GRANT_HELP.assets],
               ['Loans & Advances', GRANT_HELP.loans],
               ['Training', GRANT_HELP.training],
@@ -637,7 +636,6 @@ function AccessTab({ showGuide, setShowGuide }) {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Account</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Role</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Company Accounts</th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">Expenses</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.loans}>Loans</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.training}>Training</th>
@@ -712,13 +710,6 @@ function AccessTab({ showGuide, setShowGuide }) {
                     {isExternal ? outside : (
                       <ToggleSwitch checked={!!u.cashbookAccess} busy={isBusy('cashbookAccess')} label="Cashbook access"
                         title={GRANT_HELP.cashbook} onChange={() => toggleCashbook(u)} />
-                    )}
-                  </td>
-
-                  <td className="px-4 py-3">
-                    {isExternal ? outside : (
-                      <ToggleSwitch checked={!!u.expensesAccess} busy={isBusy('expensesAccess')} label="Expenses access"
-                        title={GRANT_HELP.expenses} onChange={() => toggleExpenses(u)} />
                     )}
                   </td>
 
