@@ -136,6 +136,34 @@ const lastUpdatedAt = (p) => {
   return max ? new Date(max) : null;
 };
 
+// The four bank fields a salary transfer needs. Branch and account type are on
+// the form too, but they are not what decides whether HR can pay somebody, so
+// they do not count against "complete".
+const BANK_REQUIRED = [
+  ['accountNumber', 'account number'],
+  ['ifsc', 'IFSC'],
+  ['accountHolderName', 'account holder'],
+  ['bankName', 'bank name'],
+];
+
+/**
+ * Whether an employee's bank details are there to pay them with — the Bank
+ * column, its sort, its filter and the phone card all read this one answer.
+ * `rank` orders the column: 0 nothing added, 1 partly filled, 2 complete.
+ * `summary` is "HDFC Bank · ••4455": the account number is masked to its last
+ * four, enough to recognise it in a list, not enough to use it.
+ * @param {object} p - an EmployeeProfile row from GET /employees
+ * @returns {{rank: number, missing: string[], summary: string}}
+ */
+function bankState(p) {
+  const b = p.bankDetails || {};
+  const missing = BANK_REQUIRED.filter(([k]) => !String(b[k] ?? '').trim()).map(([, label]) => label);
+  const acct = String(b.accountNumber || '').replace(/\s+/g, '');
+  const summary = [String(b.bankName || '').trim(), acct ? `••${acct.slice(-4)}` : ''].filter(Boolean).join(' · ');
+  const rank = missing.length === 0 ? 2 : missing.length === BANK_REQUIRED.length ? 0 : 1;
+  return { rank, missing, summary };
+}
+
 /**
  * The sortable columns, each with the value to sort on.
  *
@@ -159,6 +187,7 @@ const SORTS = {
   designation: { label: 'Designation', get: (p) => p.designation || '' },
   department: { label: 'Department', get: (p) => p.department || '' },
   documents: { label: 'Documents', type: 'num', get: (p, docs) => (docs[String(p._id)]?.complete ? 1 : 0) },
+  bank: { label: 'Bank details', type: 'num', get: (p) => bankState(p).rank },
   status: { label: 'Status', type: 'num', get: (p) => (p.user?.isActive ? 1 : 0) },
   updated: { label: 'Last update', type: 'num', get: (p) => (lastUpdatedAt(p)?.getTime() || 0) },
 };
@@ -1001,13 +1030,13 @@ This cannot be undone.`,
   // submitting, which is what makes the Search button mean something.
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
-  const [filters, setFilters] = useState({ department: '', company: '', status: '', documents: '' });
+  const [filters, setFilters] = useState({ department: '', company: '', status: '', documents: '', bank: '' });
   const setFilter = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
   // `key: ''` = leave the server's order alone (newest added first), which is
   // what the page has always shown — sorting is opt-in, not a new default.
   const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const clearFilters = () => {
-    setFilters({ department: '', company: '', status: '', documents: '' });
+    setFilters({ department: '', company: '', status: '', documents: '', bank: '' });
     setSearch(''); setQuery(''); setSort({ key: '', dir: 'asc' });
   };
   const activeFilterCount = Object.values(filters).filter(Boolean).length + (query ? 1 : 0) + (sort.key ? 1 : 0);
@@ -1072,6 +1101,13 @@ This cannot be undone.`,
         if (filters.documents === 'complete' && !complete) return false;
         if (filters.documents === 'incomplete' && complete) return false;
       }
+      // "Missing" is anything short of complete — partly filled cannot pay
+      // anybody either, so it belongs in the list HR has to chase.
+      if (filters.bank) {
+        const complete = bankState(p).rank === 2;
+        if (filters.bank === 'complete' && !complete) return false;
+        if (filters.bank === 'missing' && complete) return false;
+      }
       if (!t) return true;
       // Everything on the row, plus the fields somebody would reasonably type
       // (PAN and the company name) even though only some of them are columns.
@@ -1110,22 +1146,42 @@ This cannot be undone.`,
     return said.length ? `Declared: ${said.join('; ')}` : '';
   };
 
-  const docBadge = (p) => {
+  // `label` works as on bankBadge below: the phone cards show both chips side by
+  // side with no header over them, so each says which one it is.
+  const docBadge = (p, label = '') => {
     const s = docStatus[String(p._id)];
     if (!s) return <span className="text-xs text-gray-400">-</span>;
     const declared = declaredNote(s);
+    const prefix = label ? `${label} · ` : '';
     if (s.complete) {
       return (
         <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
           title={[s.verified ? 'Marked all-submitted by HR' : 'All required documents accounted for', declared].filter(Boolean).join(' · ')}>
-          Complete{s.verified ? ' ✓' : ''}
+          {prefix}Complete{s.verified ? ' ✓' : ''}
         </span>
       );
     }
     return (
       <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800"
         title={[`Missing: ${s.missing.map((c) => docLabel(c)).join(', ')}`, declared].filter(Boolean).join(' · ')}>
-        Incomplete ({s.missing.length})
+        {prefix}Incomplete ({s.missing.length})
+      </span>
+    );
+  };
+  // Green complete, amber partly filled, red nothing at all — the last is the one
+  // that stops a salary going out. `label` prefixes the chip where no column
+  // header says what it is about (the phone cards), so it cannot be mistaken for
+  // the Documents chip beside it.
+  const bankBadge = (p, label = '') => {
+    const s = bankState(p);
+    const [cls, text, title] = s.rank === 2
+      ? ['bg-green-100 text-green-800', 'Complete', `Bank details complete${s.summary ? ` · ${s.summary}` : ''}`]
+      : s.rank === 1
+        ? ['bg-amber-100 text-amber-800', `Incomplete (${s.missing.length})`, `Missing: ${s.missing.join(', ')}`]
+        : ['bg-red-100 text-red-800', 'Not added', 'No bank details on record yet'];
+    return (
+      <span className={`inline-block px-2 py-0.5 text-xs rounded-lg whitespace-nowrap ${cls}`} title={title}>
+        {label ? `${label} · ` : ''}{text}
       </span>
     );
   };
@@ -1340,6 +1396,13 @@ This cannot be undone.`,
             <option value="incomplete">Documents incomplete</option>
           </select>
 
+          <select value={filters.bank} onChange={(e) => setFilter('bank', e.target.value)}
+            aria-label="Filter by bank details" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            <option value="">Any bank details</option>
+            <option value="complete">Bank details complete</option>
+            <option value="missing">Bank details missing</option>
+          </select>
+
           {/* The same sort the column headers drive. It lives here as well
               because the phone/tablet view is a card list with no headers to
               click — without this, sorting would be desktop-only. */}
@@ -1362,6 +1425,7 @@ This cannot be undone.`,
             <option value="updated:desc">Last update — newest</option>
             <option value="updated:asc">Last update — oldest</option>
             <option value="documents:asc">Documents — incomplete first</option>
+            <option value="bank:asc">Bank details — missing first</option>
             <option value="status:asc">Status — inactive first</option>
           </select>
 
@@ -1391,6 +1455,7 @@ This cannot be undone.`,
               <SortHeader label="Designation" sortKey="designation" sort={sort} onSort={toggleSort} />
               {/* PAN is an identifier nobody scans in order — no sort. */}
               <th className="px-4 py-3 text-left font-medium text-gray-700">PAN</th>
+              <SortHeader label="Bank" sortKey="bank" sort={sort} onSort={toggleSort} />
               <SortHeader label="Documents" sortKey="documents" sort={sort} onSort={toggleSort} />
               <SortHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
               <SortHeader label="Last update" sortKey="updated" sort={sort} onSort={toggleSort} />
@@ -1399,11 +1464,11 @@ This cannot be undone.`,
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : visibleProfiles.length === 0 ? (
               // "No profiles yet" is wrong when a filter is what emptied the
               // table — it reads as data loss rather than as a narrow search.
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">
                 {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
               </td></tr>
             ) : visibleProfiles.map((p) => (
@@ -1419,6 +1484,14 @@ This cannot be undone.`,
                 </td>
                 <td className="px-4 py-3">{p.designation || '-'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
                 <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
+                <td className="px-4 py-3">
+                  {bankBadge(p)}
+                  {bankState(p).summary ? (
+                    <div className="text-xs text-gray-500 mt-1 max-w-[11rem] truncate" title={bankState(p).summary}>
+                      {bankState(p).summary}
+                    </div>
+                  ) : null}
+                </td>
                 <td className="px-4 py-3">{docBadge(p)}</td>
                 <td className="px-4 py-3">{statusBadge(p)}</td>
                 {/* Date AND time, 12-hour per the portal convention — "last
@@ -1460,7 +1533,8 @@ This cannot be undone.`,
               {p.designation || '-'}{p.department ? <span className="text-gray-400"> · {p.department}</span> : null}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              {docBadge(p)}
+              {docBadge(p, 'Docs')}
+              {bankBadge(p, 'Bank')}
               {statusBadge(p)}
               {p.pan ? <span className="font-mono text-[11px] text-gray-500">PAN {p.pan}</span> : null}
             </div>
