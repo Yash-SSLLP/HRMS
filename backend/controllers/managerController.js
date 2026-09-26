@@ -419,7 +419,12 @@ const teamDayDetails = asyncHandler(async (req, res) => {
 // the admin export: a single day, a whole month (all reports), or one report's
 // month / trailing months. Passing an employee outside the team is rejected.
 const exportTeamAttendance = asyncHandler(async (req, res) => {
-  const scopeIds = await myReportIds(req.user._id);
+  // Leavers included, like the rest-day list below: an export is a record of a
+  // month that has happened, and somebody who left since still worked it. With
+  // only the people still here, September exported in October silently dropped
+  // everyone who had left in between (2026-09-26). The date window keeps a
+  // long-gone leaver out anyway — they have no rows in a month they were gone.
+  const scopeIds = await myReportIds(req.user._id, { includeDeparted: true });
   await runAttendanceExport(req, res, { scopeIds, bulkLabel: 'team' });
 });
 

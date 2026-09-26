@@ -12,6 +12,8 @@
  *   - WHO IS THE SAME PERSON. A re-applicant is a new candidate row — the old one
  *     is the history — so there is no link between the records and the match is
  *     made on contact details.
+ *   - WHICH CONSULTANCY SENT THEM, when HR entered the candidate itself: a name
+ *     for the Source column that must never become the agency's portal link.
  *
  * None of it touches Mongo, so `scripts/testRecruitmentRules.js` can re-verify
  * the lot in a second. The controller keeps the queries, the 400s and the
@@ -234,10 +236,75 @@ function summarizePriorRejections(shaped) {
   };
 }
 
+// A consultancy is recorded by its firm name, not a note.
+const MAX_CONSULTANCY_CHARS = 120;
+
+/**
+ * What to write when HR records WHICH HR consultancy sent a candidate HR entered
+ * itself — the "Consultancy" box on Add / Edit Candidate: an agency with no
+ * portal login, or a CV an agency emailed over. HR used to type it into the
+ * free-text notes ("krisave"), where the Source column could not see it.
+ *
+ * A NAME only. `consultancy.user` is what hands an agency Round 1 and the row on
+ * its own board, and the consultancy's own endpoint is the only thing that sets
+ * it — so a candidate an agency added from its portal is never touched here,
+ * whatever a form sends. `source` moves between Portal and Consultancy with the
+ * name (the app's "via …" line already reads it), while an online application
+ * stays 'Application', so clearing the name always puts back what was there.
+ *
+ * @param {{source?: string, consultancy?: {user?: *}}|null} current - the row as it stands; null when creating
+ * @param {*} rawName - what HR typed: blank clears it, `undefined` = not sent
+ * @param {string[]} [known] - names already on record; one matching whatever
+ *   the case is kept in its recorded spelling, so "krisave hr" files under
+ *   "Krisave HR" rather than starting a second agency
+ * @returns {null|{source: string, name: (string|undefined)}} null = leave it alone
+ */
+function recordedConsultancy(current, rawName, known = []) {
+  if (rawName === undefined || current?.consultancy?.user) return null;
+  const typed = String(rawName ?? '').trim().replace(/\s+/g, ' ').slice(0, MAX_CONSULTANCY_CHARS);
+  const name = (typed && known.find((k) => String(k || '').toLowerCase() === typed.toLowerCase())) || typed || undefined;
+  if ((current?.source || 'Portal') === 'Application') return { source: 'Application', name };
+  return { source: name ? 'Consultancy' : 'Portal', name };
+}
+
+/**
+ * Does an HR consultancy account serve (one of) the viewer's companies? An
+ * agency with no companies ticked works for all of them — the same reading as
+ * viewerCompanyScope gives the agency itself.
+ * @param {Array<*>} agencyCompanies - User.companies of the agency
+ * @param {{ids: string[]}|null} scope - viewerCompanyScope(req); null = unrestricted
+ * @returns {boolean}
+ */
+function agencyServes(agencyCompanies, scope) {
+  const list = (agencyCompanies || []).filter(Boolean).map(String);
+  return !scope || !list.length || list.some((c) => scope.ids.includes(c));
+}
+
+/**
+ * The Add / Edit Candidate dropdown's consultancies: the agencies with a portal
+ * login first in the merge (their account spelling wins), then the names HR has
+ * recorded on candidates. One entry per name whatever the case, alphabetical.
+ * @param {string[]} accountNames
+ * @param {string[]} recordedNames
+ * @returns {string[]}
+ */
+function consultancyChoices(accountNames, recordedNames) {
+  const byKey = new Map();
+  for (const raw of [...(accountNames || []), ...(recordedNames || [])]) {
+    const name = String(raw || '').trim().replace(/\s+/g, ' ');
+    if (name && !byKey.has(name.toLowerCase())) byKey.set(name.toLowerCase(), name);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
 module.exports = {
   MAX_JOB_LOCATIONS,
   MAX_LOCATION_CHARS,
   MAX_PRIOR_REJECTIONS,
+  MAX_CONSULTANCY_CHARS,
+  recordedConsultancy,
+  agencyServes,
+  consultancyChoices,
   cleanLocationList,
   normalizeJobLocations,
   matchJobLocation,

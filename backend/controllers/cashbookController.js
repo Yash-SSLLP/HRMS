@@ -12,7 +12,11 @@ const ExcelJS = require('exceljs');
 const CashAccount = require('../models/CashAccount');
 const CashCategory = require('../models/CashCategory');
 const CashbookEntry = require('../models/CashbookEntry');
-const { ENTRY_STATUS, PAYMENT_MODES } = require('../models/CashbookEntry');
+// POSTED_STATUSES: what counts as money on an account — Approved AND Reversed.
+// An employee advance that is reversed stays on the account beside the mirror
+// row that puts the cash back, and the two net to nothing; counting 'Approved'
+// alone would drop the advance and keep the refund of it.
+const { ENTRY_STATUS, PAYMENT_MODES, POSTED_STATUSES } = require('../models/CashbookEntry');
 const User = require('../models/User');
 const storage = require('../services/storage');
 const { viewerCompanyScope, cannotSeeUser, allowedUserIds } = require('../utils/employeeScope');
@@ -93,7 +97,7 @@ async function recomputeBalance(accountId) {
   const acc = await CashAccount.findById(accountId);
   if (!acc) return null;
   const agg = await CashbookEntry.aggregate([
-    { $match: { account: acc._id, status: 'Approved' } },
+    { $match: { account: acc._id, status: { $in: POSTED_STATUSES } } },
     { $group: { _id: '$type', total: { $sum: '$amount' } } },
   ]);
   let inSum = 0, outSum = 0;
@@ -662,7 +666,7 @@ const overview = asyncHandler(async (req, res) => {
   const pendingFilter = await scopeEntryAccounts(req, { status: 'Pending' });
   const [todayAgg, pending] = await Promise.all([
     CashbookEntry.aggregate([
-      { $match: { status: 'Approved', date: { $gte: startOfDay }, ...scoped } },
+      { $match: { status: { $in: POSTED_STATUSES }, date: { $gte: startOfDay }, ...scoped } },
       { $group: { _id: '$type', total: { $sum: '$amount' } } },
     ]),
     CashbookEntry.countDocuments(pendingFilter),
@@ -690,17 +694,17 @@ const daybook = asyncHandler(async (req, res) => {
   const to = req.query.to && parseDate(req.query.to);
   if (to) to.setHours(23, 59, 59, 999);
 
-  // Opening = account opening balance + all approved movement strictly before `from`.
+  // Opening = account opening balance + all posted movement strictly before `from`.
   let opening = acc.openingBalance || 0;
   if (from) {
     const before = await CashbookEntry.aggregate([
-      { $match: { account: acc._id, status: 'Approved', date: { $lt: from } } },
+      { $match: { account: acc._id, status: { $in: POSTED_STATUSES }, date: { $lt: from } } },
       { $group: { _id: '$type', total: { $sum: '$amount' } } },
     ]);
     before.forEach((r) => { opening += r._id === 'in' ? r.total : -r.total; });
   }
 
-  const range = { account: acc._id, status: 'Approved' };
+  const range = { account: acc._id, status: { $in: POSTED_STATUSES } };
   if (from || to) { range.date = {}; if (from) range.date.$gte = from; if (to) range.date.$lte = to; }
   const rows = await CashbookEntry.find(range).sort({ date: 1, createdAt: 1 }).lean();
 
@@ -727,7 +731,7 @@ const daybook = asyncHandler(async (req, res) => {
  */
 // GET /api/cashbook/reports/summary?from=&to=&account= — category/mode breakdown
 const summary = asyncHandler(async (req, res) => {
-  const match = { status: 'Approved' };
+  const match = { status: { $in: POSTED_STATUSES } };
   if (req.query.account) match.account = new mongoose.Types.ObjectId(req.query.account);
   // Company wall — aggregate() does not cast strings, so use real ObjectIds.
   const allowedAcc = await allowedAccountIds(req);

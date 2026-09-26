@@ -370,6 +370,10 @@ export default function App() {
         <Route path="khata" element={<EmployeeKhata />} />
         {/* The khata admin surface for standalone-grant holders who have no admin portal. */}
         <Route path="khata-manage" element={<AdminKhata />} />
+        {/* …and the Cash Out category list those same people keep, which lives
+            on Permissions. The page shows only the tabs an account holds, so
+            here that is the one tab. The server's own gate is the real check. */}
+        <Route path="permissions" element={<AdminPermissions />} />
         {/* Same for the incentive module — the supervisor who records the day's
             rolling team is an ordinary employee with the standalone grant.
             The backend's incentive.manage gate is the real check. */}

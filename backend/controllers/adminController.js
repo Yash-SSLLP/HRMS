@@ -919,9 +919,8 @@ const orgSettingsPayload = (s) => {
   return {
     includeExecutivesInLists: !!s.includeExecutivesInLists,
     chatEnabled: !!s.chatEnabled,
-    // Does a cash-advance request need a CEO/MD sanction before the accounts
-    // team sees it? Defaults ON, so an untouched deployment gains the gate.
-    khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
+    // (The CEO/MD sanction on a cash advance is no longer a setting — it is
+    // always required since 2026-09-26; see khataController.requestAdvance.)
     // The contact strip on the khata statement PDF. Always sent as a pair so the
     // form can render two empty inputs rather than guess at a missing shape.
     documentFooter: {
@@ -1127,7 +1126,7 @@ const getBrandingSignature = asyncHandler(async (req, res) => {
 /**
  * Read org-wide settings a SuperAdmin controls.
  * @route GET /api/admin/org-settings  (SuperAdmin)
- * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean, khataAdvanceApprovalRequired: boolean}}
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
  */
 // GET /api/admin/org-settings  (SuperAdmin)
 // Org-wide preferences a SuperAdmin controls: whether CEO/MD show up in
@@ -1181,8 +1180,7 @@ const updateBrandingSettings = asyncHandler(async (req, res) => {
  * @route PUT /api/admin/org-settings  (SuperAdmin)
  * @param {boolean} [req.body.includeExecutivesInLists]
  * @param {boolean} [req.body.chatEnabled]
- * @param {boolean} [req.body.khataAdvanceApprovalRequired]
- * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean, khataAdvanceApprovalRequired: boolean}}
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
  */
 // PUT /api/admin/org-settings  (SuperAdmin)
 const updateOrgSettings = asyncHandler(async (req, res) => {
@@ -1194,9 +1192,8 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   if (req.body.chatEnabled !== undefined) {
     s.chatEnabled = !!req.body.chatEnabled;
   }
-  if (req.body.khataAdvanceApprovalRequired !== undefined) {
-    s.khataAdvanceApprovalRequired = !!req.body.khataAdvanceApprovalRequired;
-  }
+  // `khataAdvanceApprovalRequired` is ignored if an older app still sends it:
+  // the CEO/MD sanction on a cash advance is no longer switchable.
   // Each half is settable on its own, and an empty string is a real value —
   // clearing the helpline is how you take the number off the document.
   if (req.body.documentFooter && typeof req.body.documentFooter === 'object') {
