@@ -91,6 +91,20 @@ they cannot drift apart on the most confusable thing in the module.
    The ledger reads `₹5,000 out, ₹5,000 back, ₹4,500 out` — never a row that
    silently changed. A reversal is filed under whatever it cancels, so undoing
    an expense also takes the cost back off the book it was charged to.
+   **BOTH halves count** — `POSTED_STATUSES = ['Approved', 'Reversed']`
+   (`models/CashbookEntry.js`) is the one "is this money?" test for the wallet
+   replay, a book's `spent`, a cash account's balance, the feed's figures, the
+   summary rows and every report. Until 2026-09-26 everything counted
+   `Approved` alone, which dropped the Reversed original and kept its mirror:
+   every reversal credited the wallet twice (a ₹1 expense reversed left the
+   person "holding" ₹1), came off the book's cost twice, and would have put a
+   reversed advance back into the cash tin twice. Counting both is also what
+   makes a reversal of a reversal come out right, by the chain's parity. In the
+   summary rows a reversal sits on the line of whatever it reversed
+   (`summaryLine` follows `reversalOf`), never in "Advanced to you". Stored
+   figures written under the old rule are re-counted by
+   `scripts/recountReversals.js` (dry run by default; run it only once the new
+   backend is live).
 
 ---
 
@@ -196,12 +210,21 @@ Both apps say so on the form, in plain words, before the employee submits.
 Captured on FILING only — a later correction does not overwrite it, since the
 question it answers is where the expense was originally declared.
 
-## Closing a book is the company's act
+## Closing a book — the owner or the company; re-opening — the cashbook authority
 
-Only `khata.manage` can close a book (`PUT /khatas/:khataId`, `isActive:false`).
-There is no self-service equivalent anywhere in the API or either client, and
-that is deliberate: closing is finance saying *"this job is done and its figures
-are ours now"*.
+Since 2026-09-26 (user decision) the **owner may close their own book**
+(`POST /me/khatas/:id/close`, from the ⋯ menu in both clients) and the company
+still can (`PUT /khatas/:khataId`, `isActive:false`, behind `khata.manage`).
+**Re-opening is narrower than either**: only the Admin (SuperAdmin), the CEO, the
+MD and a cashbook manager — `isCashbookAuthority` in
+`middleware/authMiddleware.js`, the same group that keeps the Cash Out categories
+— through `PATCH /khatas/:khataId/reopen`, mounted above the `khata.manage` gate
+so a read-only CEO/MD reaches it (it is in both clients' `EXEC_WRITE_PATHS`), and
+refused on the `PUT` for anyone else (an HR Manager holding the module by default
+may close a book but not open one again). `EmployeeKhata.closedAt/closedBy/
+closedByOwner` record the last close, so screens can say "closed by you" or
+"closed by the employee"; re-opening clears them. When the owner closes a shared
+book, its accepted members are notified.
 
 Closing does three things:
 
@@ -212,9 +235,9 @@ Closing does three things:
    would make the closure meaningless; sealing it against its own owner as well
    would leave finance unable to fix what they find in there.
 
-The employee is notified when a book is closed or re-opened, because closing
-takes two things away from them at once and neither should have to be discovered
-by trying.
+The employee is notified when the company closes or re-opens their book, because
+closing takes two things away from them at once and neither should have to be
+discovered by trying.
 
 The **default** book cannot be closed — self-service would have nowhere to file
 an expense. Promote another book first.
@@ -225,11 +248,15 @@ Spending past the advance flips the wallet negative: the company now owes the
 employee. Every other self-service action moves money *towards* the company, so
 without one more the employee would have no way to ask for it back.
 
-`POST /me/reimbursement` is that action — **"Ask to be paid back"**, offered on
-the wallet card only when there is something to claim, and pre-filled with the
-whole outstanding amount. It parks as `Pending` for the accounts team, who pick
-the account it is paid from; approving posts the cash leg and lifts the wallet
-back towards zero.
+`POST /me/reimbursement` is that action — **"Ask for reimbursement"**, the
+second button on the wallet card (it replaced "Cash Out" there on 2026-09-26;
+Cash Out now lives with the books — beside *Your Books* on the web, inside a
+book in the app). It is always shown and **greyed out** whenever there is
+nothing to claim, and its amount is **fixed** to the whole outstanding figure
+rather than typed: a reimbursement is for the remaining negative balance and
+nothing else. It parks as `Pending` for the accounts team, who pick the account
+it is paid from; approving posts the cash leg and lifts the wallet back towards
+zero.
 
 Deliberately **not** behind the CEO/MD gate. That gate asks "should this person
 be given company money?", which is not the question here: this money has already
@@ -242,6 +269,36 @@ second claim submitted before the accounts team has settled the first would
 otherwise ask to be paid the same debt twice, and both would look legitimate
 side by side in the queue.
 
+## Cash Out categories — a company list, in priority order
+
+An expense's `category` is picked from a dropdown, not typed (2026-09-26). The
+list, and the order it is offered in — position 1 is the top, which is what the
+editor calls "priority" — is one ordered array in the settings singleton,
+`Setting.cashOutCategories.list`, edited on **Permissions → Cash Out
+categories** (web tab; a card opening a sheet in the app). Rules live in
+`backend/services/cashOutCategories.js`:
+
+* **Who edits** (`canManageCashOutCategories`): SuperAdmin, CEO, MD (even
+  read-only — named, like the advance form's purposes), the `AccountsManager`
+  role, `cashbookAccess` / `khataAccess` holders, and an HR Manager or Manager
+  with `cashbook.manage` / `khata.manage` **explicitly** ticked. Not
+  `hasPermission`: an unconfigured HR Manager would be swept in. Both clients
+  whitelist `PUT /khata/categories` in `EXEC_WRITE_PATHS`. The web page is also
+  mounted at `/employee/permissions`, for grant holders with no admin portal.
+* **An empty list means no list**: nothing is asked for and the row files as
+  `Expense`, exactly as before — shipping it stopped nobody filing.
+* **With a list, a new expense must name one of its entries**
+  (`resolveExpenseCategory`), stored in the list's own spelling. An app built
+  before the dropdown gets a 400 telling the person to update it.
+* **A correction is only checked when it CHANGES the category** — clients send
+  it back unchanged because the form opens filled in, and a row filed under a
+  retired category must stay correctable. Applies to both `PUT /me/expenses/:id`
+  and `PUT /entries/:id`.
+* **A row keeps the words it was filed under.** Renaming or removing a category
+  rewrites nothing; the book screen's Category filter offers the list plus any
+  older category its rows are seen to carry.
+* Returning cash (`settlement`) carries no category choice — it is `Settlement`.
+
 ## The life of an advance — two gates, two different questions
 
 ```
@@ -252,23 +309,34 @@ employee asks  →  AwaitingApproval  →  Pending  →  Approved
 ```
 
 **Gate A — should they have it?** `POST /me/request` parks the request as
-`AwaitingApproval`, and only a **SuperAdmin, CEO or MD** can decide it
-(`requireAdvanceApprover`). Approving moves **no money**: it drops the request
-into the accounts team's queue. Declining closes it, with a reason the employee
-sees.
+`AwaitingApproval`; both the CEO and the MD are notified and **either** may
+decide it (a SuperAdmin can too, as the fallback — `requireAdvanceApprover`).
+Approving moves **no money**: it drops the request into the cashbook manager's
+queue. Declining closes it, with a reason the employee sees.
 
-A SuperAdmin can switch this gate off org-wide — **Permissions → CEO / MD
-approval for cash advances**. With it off, requests park as `Pending` and go
-straight to the accounts team, exactly as they used to.
+**Always, since 2026-09-26 (user rule).** There used to be an org switch —
+*Permissions → CEO / MD approval for cash advances*
+(`Setting.khataAdvanceApprovalRequired`) — that sent requests straight to the
+accounts team. It is retired: nothing reads the field, the org-settings route
+neither returns nor accepts it, and both Permissions screens say in its place
+that the approval is always required. The one exception is an executive's own
+request (CEO, MD or SuperAdmin — `ADVANCE_SANCTIONERS`): there is nobody above
+them, so theirs parks as `Pending` for the cashbook manager.
 
-> The requirement is read when a request is **raised** and stamped onto the row
-> (`KhataEntry.execApprovalRequired`). Turning the gate off later therefore does
-> not strand requests already sitting with an executive, and turning it on does
-> not retroactively invalidate ones raised while it was off.
+> **Requests that skipped Gate A are sent back to it.** Rows filed while the
+> switch was off sit as `Pending` employee advances with no `execApprovedBy`.
+> `sendUnsanctionedAdvancesToExecs()` moves them to `AwaitingApproval`
+> (`execApprovalRequired: true`) and notifies the executives once. It runs once
+> per process — lazily, from `GET /overview`, `/pending`, `/advance-approvals`
+> and both pay-out paths (`PATCH /entries/:id/approve`, bulk `approve`) — so no
+> such row can be paid before a CEO/MD has seen it. Idempotent; a failure is
+> logged and retried on the next call. At the time of the change there were
+> three (KHT-2026-00036, -00072, -00074).
 
-**Gate B — where does the cash come from?** An operator picks the cash account
-and approves; only then does money leave the tin and the wallet rise. This is
-the pre-existing operator/threshold machinery, unchanged.
+**Gate B — where does the cash come from?** The cashbook manager — an operator
+with `canApprove` on a cash account (or a SuperAdmin) — picks the account and
+approves; only then does money leave the tin and the wallet rise. This is the
+pre-existing operator/threshold machinery, unchanged.
 
 The two queues are deliberately separate endpoints with separate audiences.
 `GET /pending` never shows an executive's queue to an operator who cannot act on
@@ -279,7 +347,31 @@ read-only CEO/MD account act there and nowhere else.
 else a CEO/MD is view-only unless a SuperAdmin has switched them into edit mode;
 this decision is the reason the approval step exists, so gating it behind a
 second unrelated grant would mean the person the request is addressed to could
-not answer it.
+not answer it. Both clients' read-only backstops (`EXEC_WRITE_PATHS` in
+`frontend/src/api/client.js` and `mobile/src/api/client.js`) list
+`/entries/:id/exec-decision` and `/advance-approvals/decide` — until 2026-09-26
+they did not, and a read-only CEO/MD's Approve was refused in the browser one
+step before the server would have allowed it.
+
+## Deciding several at once
+
+The Approvals and Sanctions tabs (web and app) tick rows — one by one or
+**Select all** — and decide them together:
+
+| Route | Who | Does |
+|---|---|---|
+| `POST /entries/bulk` `{ action, ids, note \| reason, cashAccount }` | `khata.manage` | `confirm` / `reverse` (expenses and refunds to confirm; `reverse` needs a `reason`, book movements only) · `approve` (one `cashAccount` for the lot, else each row's own) / `reject` (the pay-out queue) |
+| `POST /advance-approvals/decide` `{ ids, approve, note }` | SuperAdmin / CEO / MD | sanction or decline advance requests; `note` required to decline |
+
+A bulk decision is a convenience, **never a new permission**: `decideEach()`
+loads, walls and checks every row exactly as its one-row route does (the gates
+are shared helpers — `assertMayApprove`, `assertMayDecline`,
+`assertMayReverse`), in the order picked, one at a time. A refused row does not
+stop the rest; the reply is `{ done: [ids], failed: [{ id, code, message }],
+message }`. Each row runs against a stand-in response, because `bad()` sets the
+status before it throws and would otherwise leave the batch's reply carrying one
+row's 400. At most 100 ids. Each employee gets **one** notification per batch,
+not one per row.
 
 ---
 
@@ -562,14 +654,16 @@ Mounted at `/api/khata`. All routes authenticated.
 | `GET /me` | My wallet, my books (owned **and** shared with me, each with its `spent`, owner and member count), the invitations waiting on me, the totals (including `claimable`), one statement, and whether a request will need a CEO/MD sanction |
 | `GET /me/books/:id` | One book opened — its members, the filtered entry feed (**every** contributor's rows, not just mine), the summary card's totals over the whole filtered set, and `canPost`. `:id` may be the literal `wallet`, meaning every row on my wallet, filed or not |
 | `POST /me/request` | Ask for an advance into my wallet — no `khata`, there is one pot |
-| `POST /me/expense` | Log what I spent it on — `khata` **required**, receipt **required**. Posts immediately |
+| `POST /me/expense` | Log what I spent it on — `khata` **required**, receipt **required**, and a `category` from the Cash Out list once one exists. Posts immediately |
 | `POST /me/refund` | Money that came **back** into a book — `khata` **required**, receipt **required**. The mirror of `/me/expense` and posts the same way |
 | `PUT /me/expenses/:id` | Correct one of mine the company has not confirmed yet — amount, purpose, book, date, mode, and optionally a replacement bill. Refused once it is confirmed or its book is closed |
 | `POST /me/settle` | Declare unspent cash returned — no `khata`, optional receipt |
-| `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable` |
+| `POST /me/reimbursement` | Claim back what the company owes, when the wallet has gone negative. Amount defaults to everything outstanding and is capped at `totals.claimable`; both clients send exactly that figure |
+| `GET /categories` | The Cash Out category list in dropdown order, `canEdit`, who last saved it, and the save's limits. Any signed-in account (`GET /me` and `GET /me/books/:id` carry the list too, as `categories`) |
+| `PUT /categories` | `{ categories: [...] }` — replace the list; its order is the dropdown's. SuperAdmin/CEO/MD/cashbook managers (`requireCashOutCategoryEditor`), above the `khata.manage` gate |
 | `POST /me/khatas` | Open an expense book on my own account |
 | `PUT /me/khatas/:id` | Rename or re-note a book I own. **Not** `isActive` — closing stays the company's act |
-| `GET /me/statement.pdf` | A printable report of my cashbook — `?report=entries\|daywise\|category`, `?bills=1`, and every filter in **Reports** below (`?khata=` narrows it to one book). The employee id comes from the token, never the URL |
+| `GET /me/statement.pdf` | A printable report of my cashbook — `?report=entries\|daywise\|daywise_category\|category`, `?bills=1`, and every filter in **Reports** below (`?khata=` narrows it to one book). The employee id comes from the token, never the URL |
 | `GET /me/report.xlsx` | The same filtered rows as a spreadsheet. **No** `khataExportAccess` — it is the caller's own book, not the company's ledger |
 
 **Book sharing** — owner or member of the book in question; **no permission of
@@ -589,6 +683,7 @@ any kind**, see *Sharing a book with a colleague* above
 |---|---|
 | `GET /advance-approvals` | Requests awaiting a decision, each with what the asker is already holding |
 | `PATCH /entries/:id/exec-decision` | `{ approve, note }` — moves no money either way |
+| `POST /advance-approvals/decide` | `{ ids, approve, note }` — several at once; see *Deciding several at once* |
 
 **Operators** — all require `khata.manage`
 
@@ -620,19 +715,38 @@ backup).
 
 ---
 
-## Reports — three documents, one filter
+## Reports — four documents, one filter
 
 The `.xlsx` export answers *"give me the data"*; the PDFs answer *"show this to
 the person who paid for it"* — laid out to be read, so the document still works
 once it has been emailed, printed, or opened next year.
 
-There are three of them, chosen with `?report=`:
+There are four of them, chosen with `?report=`, all drawn by one renderer —
+`renderReport(input, kind)` in `services/cashbookEntriesPdf.js`, whose `LAYOUTS`
+say which tables each is made of:
 
-| `?report=` | The document | Renderer |
+| `?report=` | The document | Tables, in order |
 |---|---|---|
-| `entries` (default) | **All entries** — one row per entry, oldest first, with the running balance and the bill thumbnails inline | `services/cashbookEntriesPdf.js` |
-| `daywise` | **Day-wise summary** — one row per IST calendar day: how many entries, cash in, cash out, closing balance | `services/cashbookEntriesPdf.js` |
-| `category` | **Category-wise summary** — what each heading cost | `services/cashbookSummaryPdf.js` |
+| `entries` (default) | **All entries** — one row per entry, oldest first, with the running balance | entries |
+| `daywise` | **Day-wise summary** — one row per IST calendar day: how many entries, cash in, cash out, closing balance | days → entries |
+| `daywise_category` | **Day-wise with category summary** — each day's line with what that day went on, category by category; then the category summary | days by category → categories → entries |
+| `category` | **Category-wise summary** — what each heading cost | categories → entries |
+
+**Every report ends with its entries** (2026-09-26, user request): a summary is
+read first and then checked against the rows behind it, so each one carries the
+all-entries table after its own — bill links always, bill photos with
+`?bills=1` on any type. With more than one table, each gets a title. The
+category table counts money that moved only (`summariseByCategory`, which stays
+in `cashbookSummaryPdf.js` with `movement`; that file no longer draws a page)
+and opens on an *Opening balance* line when there is one, so every table closes
+on the Final Balance. The day tables' Entries column counts every row, so it
+visibly adds up. `groupByDay` carries each day's `categories`. The controller
+keeps its own `REPORT_KINDS` in step with `LAYOUTS` (it must not load pdfkit on
+every filtered read) and `scripts/testKhataLedger.js` checks the two agree.
+
+All four fetch the same rows — the category report used to default to posted
+rows only; it now lists what the feed shows, and still adds up only money that
+moved.
 
 `GET /me/report.xlsx` is the same filtered rows as a spreadsheet: one sheet named
 `Cashbook`, a header block repeating the employee, the book, the duration and
@@ -645,7 +759,7 @@ whose figures cannot be added up is a screenshot with extra steps.
 Every filter — `khata`, `from`, `to`, `q`, `status`, `movement`, `direction`,
 `category`, `paymentMode`, `sort` — is read by **one** exported helper,
 `parseEntryFilters(query)` in the controller, and that one helper sits behind the
-on-screen feed, the summary card, all three PDFs and the spreadsheet. Add a
+on-screen feed, the summary card, every PDF and the spreadsheet. Add a
 filter there and nowhere else. The moment two layers parse the same query string
 separately, a downloaded report starts quietly disagreeing with the screen it was
 downloaded from, and there is no worse bug to have on a document about money.
@@ -654,9 +768,11 @@ Which filters were applied is **printed on the document**, under the duration
 box, for the same reason: two downloads of one book must never look identical
 and carry different figures.
 
-Only `status === 'Approved'` counts toward any total, on every one of them.
-Rejected and Reversed rows are still *listed* — financial history is never
-hidden — struck through, and counted nowhere.
+Only POSTED rows (`Approved` and `Reversed`) count toward any total, on every
+one of them. Rejected rows are still *listed* — financial history is never
+hidden — struck through, and counted nowhere. A Reversed row is listed with a
+*Reversed* chip and counted, beside the reversal that cancels it, so the pair
+nets to nothing.
 
 Reachable from the web and the mobile app alike:
 
@@ -668,9 +784,14 @@ Reachable from the web and the mobile app alike:
   books, no extra permission. The employee id comes from the token, so there is
   nothing in the URL to tamper with.
 * **Mobile, same two places** — the *Statement PDF* button on a person and on
-  each book card in the admin screen, and *View Reports* on a book in My
-  Cashbook. The file goes straight to the OS share sheet, so it can be
-  WhatsApped or emailed from the site without a laptop.
+  each book card in the admin screen (it now asks for the report type too,
+  defaulting to the category summary it always printed), and *View Reports* on
+  a book in My Cashbook. The PDF opens in the phone's viewer, whose share button
+  sends it on.
+* **The PDF button at the top of every book** (2026-09-26) — the header of a
+  book in the app, and each book's card on the web. Pick a type and it builds at
+  once for what the book is showing; *More options* goes to Generate Report for
+  the filters and the spreadsheet.
 
 ### Two scopes, one renderer, and why the arithmetic differs
 
@@ -716,9 +837,10 @@ rather than at zero, so consecutive statements join up.
   the on-screen feed. Each carries the date and 12-hour time, the remark, and a
   small second line with the book, the reference code and *Added by* whoever
   filed it. That last part is what makes a shared book's report readable.
-* **Rejected and Reversed** rows still print, greyed with the figure struck
-  through — financial history is never hidden — but they count for nothing; on a
-  reversal it is the mirror row that moves the money.
+* **Rejected** rows still print, greyed with the figure struck through —
+  financial history is never hidden — but they count for nothing. A **Reversed**
+  row prints normally with a grey *Reversed* chip and counts, as does the
+  reversal row that undoes it: the pair nets to nothing (POSTED_STATUSES).
 * **Bill thumbnails** inline in the row, on `?bills=1` and on the *All entries*
   report only. Only JPEG and PNG can be drawn into a PDF, so the bytes are
   sniffed rather than the stored mime trusted; a PDF bill prints as a
@@ -780,11 +902,14 @@ as though the employee *owed* what they were just paid back.
 npm run test:khata
 ```
 
-56 checks over the pure money rules — sign convention, ledger replay (including
-back-dated inserts and paise drift), operator authorization, the auto-approve
-threshold, credit limits, rounding, and the statement's own arithmetic (per-scope
-signs, IST day grouping, reversed rows counting for nothing, and the statement
-landing on the same figure `replayBalance` does). No database, about a second.
+101 checks over the pure money rules — sign convention, ledger replay (including
+back-dated inserts and paise drift), reversals (both halves counted, including a
+reversal of a reversal, and each landing on the right "How this adds up" line),
+operator authorization, the auto-approve threshold, credit limits, rounding, the
+statement's own arithmetic (per-scope signs, a reversed pair netting to nothing,
+and the statement landing on the same figure `replayBalance` does), the expense
+editing window, and the Cash Out category rules (list tidying, the filing and
+correction checks, and who may edit the list). No database, about a second.
 
 ```bash
 KHATA_TEST_MONGO_URI="mongodb://127.0.0.1:27017/hrms_khata_test" npm run test:khata:db
@@ -806,7 +931,7 @@ reversals, back-dated re-stamping, and the executive sanction gate.
 |---|---|
 | Models | `backend/models/EmployeeWallet.js` (the pot), `EmployeeKhata.js` (the books, and `members[]` — who else may keep one), `KhataEntry.js`; `operators[]` on `CashAccount.js`; `sourceKhataEntry` and `MOVEMENTS` on `CashbookEntry.js`; `khataAdvanceApprovalRequired` and `documentFooter` on `Setting.js` |
 | Money rules | `backend/services/khataLedger.js` — the only place balance arithmetic happens, and the home of `BOOK_MOVEMENTS` |
-| Report PDFs | `backend/services/cashbookEntriesPdf.js` (all-entries and day-wise layouts + the pure `groupByDay`), `cashbookSummaryPdf.js` (category-wise summary + `summariseByCategory`), `streamStatement` in the controller (choosing the renderer, gathering the rows and reading the bills) |
+| Report PDFs | `backend/services/cashbookEntriesPdf.js` (every report type — `renderReport`, `LAYOUTS`, the pure `groupByDay`), `cashbookSummaryPdf.js` (the category arithmetic only — `summariseByCategory`, `movement`), `streamStatement` in the controller (gathering the rows and reading the bills). The type lists on the clients: `mobile/src/utils/cashbookReports.js`, `REPORT_KINDS` in EmployeeKhata.jsx, `REPORT_TYPES` in AdminKhata.jsx |
 | Integrations | `backend/services/khataSync.js` |
 | API | `backend/controllers/khataController.js`, `backend/routes/khataRoutes.js` |
 | Permissions | `khata.manage` in `backend/config/permissions.js`; `khataAccess` and `khataExportAccess` on `User`; `canExportKhata` + `requireKhataExport` + `canApproveAdvances` + `requireAdvanceApprover` in `backend/middleware/authMiddleware.js`; mirrors in `frontend/src/config/permissions.js` and `mobile/src/utils/roles.js` |

@@ -42,6 +42,7 @@ const ctrl = require('../controllers/khataController');
 const {
   protect, protectMedia, restrictTo, requirePermission, requireKhataExport, requireAdvanceApprover,
 } = require('../middleware/authMiddleware');
+const { requireCashOutCategoryEditor } = require('../services/cashOutCategories');
 
 const router = express.Router();
 
@@ -124,10 +125,33 @@ router.post('/me/khatas/:id/members', ctrl.addKhataMembers);
 router.patch('/me/khatas/:id/members/:userId', ctrl.setKhataMemberRole);
 // DELETE /me/khatas/:id/members/:userId — take somebody off a book, or leave one myself; protected, owner or self.
 router.delete('/me/khatas/:id/members/:userId', ctrl.removeKhataMember);
-// PUT /me/khatas/:id — rename or re-note a book I opened (closing stays the company's act); protected, owner only.
+// POST /me/khatas/:id/close — close a book I opened (not my default one). Re-opening is NOT
+// self-service: only the Admin, CEO, MD or a cashbook manager (PATCH /khatas/:khataId/reopen); protected, owner only.
+router.post('/me/khatas/:id/close', ctrl.closeMyKhata);
+// PUT /me/khatas/:id — rename or re-note a book I opened (close it with the route above); protected, owner only.
 router.put('/me/khatas/:id', ctrl.updateMyKhata);
 // PATCH /me/book-invites/:khataId — accept or decline an invitation to somebody else's book; protected.
 router.patch('/me/book-invites/:khataId', ctrl.respondToBookInvite);
+
+// ----- Cash Out categories — the Category dropdown on an expense -----
+// Above the khata.manage gate on purpose, for both halves. READING is every
+// employee's business: it is the list their own expense form offers. WRITING
+// belongs to the Backend, the CEO, the MD and whoever manages the cashbook
+// (services/cashOutCategories.js) — a set the capability gate below does not
+// describe: a read-only CEO/MD would be refused there, and a Company Accounts
+// grant holder never reaches it at all.
+// GET /categories — the list in dropdown order, and whether I may change it; protected.
+router.get('/categories', ctrl.getCategories);
+// PUT /categories — replace the list (its order is the dropdown's); SuperAdmin/CEO/MD/cashbook managers.
+router.put('/categories', requireCashOutCategoryEditor, ctrl.updateCategories);
+
+// ----- Re-opening a closed book — the Admin, CEO, MD and cashbook managers only -----
+// An employee may close their own book (POST /me/khatas/:id/close); opening it
+// again is not theirs to do. Above the khata.manage gate for the same reason as
+// the categories: a read-only CEO/MD is refused there, and an HR Manager who
+// holds the module by default is let through — neither is the rule here.
+// PATCH /khatas/:khataId/reopen — re-open a closed book; isCashbookAuthority (company wall applies).
+router.patch('/khatas/:khataId/reopen', ctrl.requireBookReopener, ctrl.reopenKhata);
 
 // ----- Executive sanction — SuperAdmin / CEO / MD only -----
 // Mounted ABOVE the khata.manage gate on purpose: an executive holds no khata
@@ -137,6 +161,8 @@ router.patch('/me/book-invites/:khataId', ctrl.respondToBookInvite);
 router.get('/advance-approvals', requireAdvanceApprover, ctrl.listAdvanceApprovals);
 // PATCH /entries/:id/exec-decision — sanction or decline one; moves no money.
 router.patch('/entries/:id/exec-decision', requireAdvanceApprover, ctrl.decideAdvanceApproval);
+// POST /advance-approvals/decide — sanction or decline several at once ({ ids, approve, note }); same checks per row.
+router.post('/advance-approvals/decide', requireAdvanceApprover, ctrl.bulkDecideAdvances);
 
 // ----- Khata operators — everything below requires 'khata.manage' -----
 router.use(requirePermission('khata.manage'));
@@ -187,6 +213,9 @@ router.put('/entries/:id', receiptUpload.single('receipt'), ctrl.updateEntry);
 router.patch('/entries/:id/confirm', ctrl.confirmEntry);
 // POST /entries/:id/reverse — cancel a posted entry with a mirror row (never a delete); requires 'khata.manage' + canApprove.
 router.post('/entries/:id/reverse', ctrl.reverseEntry);
+// POST /entries/bulk — confirm/reject (reverse) several expenses, or approve/decline several parked
+// entries, at once ({ action, ids, note|reason, cashAccount }); every row gets its one-row checks; requires 'khata.manage'.
+router.post('/entries/bulk', ctrl.bulkDecide);
 
 // ----- Reports -----
 // GET /reports/outstanding — who is holding company cash, with ageing bands; requires 'khata.manage'.

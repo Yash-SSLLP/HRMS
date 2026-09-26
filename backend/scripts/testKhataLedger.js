@@ -58,6 +58,85 @@ check('paise do not drift over many rows',
   L.replayBalance(0, Array.from({ length: 30 }, () => to(0.1))).closing, 3);
 check('mixed paise settle exactly', L.replayBalance(0, [to(1234.56), from(1234.56)]).closing, 0);
 
+// WHAT COUNTS. recomputeWalletBalance replays only the rows L.isPosted passes,
+// so these replay exactly that selection. The cases are the live ledgers that
+// exposed the double credit (2026-09-26).
+console.log('\n--- reversals: both halves count, so the pair nets to nothing ---');
+const posted = (rows) => L.replayBalance(0, rows.filter(L.isPosted)).closing;
+const st = (status, row) => ({ ...row, status });
+check('Approved and Reversed rows are posted money',
+  [L.isPosted({ status: 'Approved' }), L.isPosted({ status: 'Reversed' })], [true, true]);
+check('Rejected, Pending and AwaitingApproval rows are not',
+  ['Rejected', 'Pending', 'AwaitingApproval'].map((status) => L.isPosted({ status })), [false, false, false]);
+// A ₹1 expense, reversed. The old Approved-only rule kept the reversal and dropped
+// the expense, and left the person "holding" ₹1 they were never given.
+const oneRupee = [st('Reversed', from(1)), st('Approved', to(1))];
+check('a reversed expense leaves the wallet where it started', posted(oneRupee), 0);
+check('(the old Approved-only rule credited it twice)',
+  L.replayBalance(0, oneRupee.filter((e) => e.status === 'Approved')).closing, 1);
+// Two expenses reversed, two that stand: the company owes the two that stand.
+check('reversed expenses drop out, the ones that stand remain owed', posted([
+  st('Reversed', from(500)), st('Reversed', from(200)), st('Approved', to(200)), st('Approved', to(500)),
+  st('Approved', from(500)), st('Approved', from(500)),
+]), -1000);
+// A reversal reversed, and so on: every row posted, the parity decides the net.
+// Four reversals back to back reinstate the expense.
+check('a chain of reversals nets by its parity (expense reinstated)', posted([
+  st('Reversed', from(2000)), st('Reversed', to(2000)), st('Reversed', from(2000)), st('Reversed', to(2000)),
+  st('Approved', from(2000)),
+]), -2000);
+check('two reversals reinstate it', posted([
+  st('Reversed', from(2000)), st('Reversed', to(2000)), st('Approved', from(2000)),
+]), -2000);
+check('three cancel it again', posted([
+  st('Reversed', from(2000)), st('Reversed', to(2000)), st('Reversed', from(2000)), st('Approved', to(2000)),
+]), 0);
+check('rejected and waiting rows still move nothing', posted([
+  st('Rejected', to(9000)), st('Pending', to(700)), st('AwaitingApproval', to(300)), st('Approved', to(100)),
+]), 100);
+
+// "How this adds up": a reversal comes back off the line of whatever it
+// reversed — never a line of its own. It used to land in "Advanced to you".
+const { summariseEntries } = require('../controllers/khataController');
+let rid = 0;
+const row = (status, movement, entry, over = {}) => ({ _id: `r${rid += 1}`, status, movement, ...entry, ...over });
+const sumOf = (rows) => { const s = summariseEntries(rows); return [s.advanced, s.spent, s.returned]; };
+const e15 = row('Reversed', 'expense', from(500), { expenseBook: 'b1' });
+const e16 = row('Reversed', 'expense', from(200), { expenseBook: 'b2' });
+check('reversed expenses come off Spent, not onto Advanced', sumOf([
+  e15, e16,
+  row('Approved', 'reversal', to(200), { reversalOf: e16._id, expenseBook: 'b2' }),
+  row('Approved', 'reversal', to(500), { reversalOf: e15._id, expenseBook: 'b1' }),
+  row('Approved', 'expense', from(500), { expenseBook: 'b1' }),
+  row('Approved', 'expense', from(500), { expenseBook: 'b3' }),
+]), [0, 1000, 0]);
+// The book the reversal was filed under can be gone (deleted); the chain still
+// places it, because it follows reversalOf to the expense itself.
+check('a reversal is placed by what it reversed even without its book', sumOf([
+  e15, row('Approved', 'reversal', to(500), { reversalOf: e15._id, expenseBook: null }),
+]), [0, 0, 0]);
+const adv = row('Reversed', 'advance', to(5000));
+check('a reversed advance comes off Advanced', sumOf([
+  adv, row('Approved', 'reversal', from(5000), { reversalOf: adv._id }), row('Approved', 'advance', to(3000)),
+]), [3000, 0, 0]);
+const settle = row('Reversed', 'settlement', from(800));
+check('a reversed return comes off Returned', sumOf([
+  row('Approved', 'advance', to(1000)), settle, row('Approved', 'reversal', to(800), { reversalOf: settle._id }),
+]), [1000, 0, 0]);
+const c1 = row('Reversed', 'expense', from(2000), { expenseBook: 'b9' });
+const c2 = row('Reversed', 'reversal', to(2000), { reversalOf: c1._id, expenseBook: 'b9' });
+const c3 = row('Reversed', 'reversal', from(2000), { reversalOf: c2._id, expenseBook: 'b9' });
+const c4 = row('Reversed', 'reversal', to(2000), { reversalOf: c3._id, expenseBook: 'b9' });
+check('a chain stays on the line it started on', sumOf([
+  c1, c2, c3, c4, row('Approved', 'reversal', from(2000), { reversalOf: c4._id, expenseBook: 'b9' }),
+]), [0, 2000, 0]);
+check('the lines always add up to the replayed wallet', (() => {
+  const rows = [e15, e16, row('Approved', 'reversal', to(200), { reversalOf: e16._id, expenseBook: 'b2' }),
+    row('Approved', 'advance', to(700)), row('Approved', 'expense', from(900), { expenseBook: 'b1' })];
+  const [a, s, r] = sumOf(rows);
+  return L.round2(a - s - r) === posted(rows);
+})(), true);
+
 console.log('\n--- who may pay, out of which account ---');
 const account = {
   _id: 'acct-petty',
@@ -145,13 +224,18 @@ check('a blank category is gathered under one heading', blank.rows.length, 1);
 check('and keeps its money', blank.rows[0].out, 500);
 check('"No Category" is what it is called', blank.rows[0].category, 'No Category');
 
-// A reversed row was cancelled by its mirror; counting either would double it.
+// A reversed row counts BESIDE the reversal that cancels it (which carries the
+// same category), so the pair nets to nothing under that heading. The old rule
+// skipped the Reversed row and kept the reversal, printing every cancelled
+// expense as money coming back.
 const reversed = S.summariseByCategory([
   cat('Food', from(1000)),
   { ...cat('Food', from(500)), status: 'Reversed' },
+  cat('Food', to(500)), // the reversal: same heading, the other way, Approved
 ]);
-check('a reversed row counts for nothing', reversed.rows[0].out, 1000);
-check('and is not counted as an entry', reversed.counted, 1);
+check('a reversed expense and its reversal net to nothing', reversed.rows[0].balance, -1000);
+check('both halves stay on the record', [reversed.rows[0].out, reversed.rows[0].in], [1500, 500]);
+check('and both are counted as entries', reversed.counted, 3);
 
 // A statement is money that MOVED. A declined advance was never paid, and one
 // still queued has not been paid yet — printing either as Cash In inflated the
@@ -174,6 +258,42 @@ const walletRows = [{ ...to(25000), status: 'Approved' }, { ...from(5424), statu
 check('the summary agrees with replayBalance',
   S.summariseByCategory(walletRows).totals.balance,
   L.replayBalance(0, walletRows).closing);
+check('each category line says how many rows it holds', catRow('Travel').count, 3);
+
+console.log('\n--- report layouts (services/cashbookEntriesPdf.js) ---');
+// Every report type ends with the full entries list (2026-09-26), and the day
+// tables carry what each day went on. Both are decided by pure code here, so
+// they are pinned without drawing a page.
+const P = require('../services/cashbookEntriesPdf');
+check('four report types, one of them the new day-wise with categories',
+  P.REPORT_KINDS, ['entries', 'daywise', 'daywise_category', 'category']);
+// The controller validates ?report= against its own copy of the list (it must
+// not load pdfkit on every filtered read), so the two are checked against each
+// other here rather than trusted to stay in step.
+const ctrlSource = require('fs').readFileSync(require.resolve('../controllers/khataController'), 'utf8');
+const ctrlKinds = (ctrlSource.match(/const REPORT_KINDS = \[([^\]]*)\]/) || [])[1] || '';
+check('the controller accepts exactly the renderer\'s report types',
+  ctrlKinds.split(',').map((k) => k.trim().replace(/'/g, '')).filter(Boolean), P.REPORT_KINDS);
+
+// Two days in IST. 23:30 on the 14th in India is 18:00 UTC — it must land on the
+// 14th, not be pushed to the 15th or pulled back by a UTC server clock.
+const at = (iso) => new Date(iso);
+const dayRows = [
+  { ...cat('Food', from(200)), date: at('2026-09-14T03:30:00Z') },
+  { ...cat('Travel', from(500)), date: at('2026-09-14T06:00:00Z') },
+  { ...cat('Food', from(100)), date: at('2026-09-14T18:00:00Z') },
+  { ...cat('Hotel', from(900)), status: 'Rejected', date: at('2026-09-15T04:00:00Z') },
+  { ...cat('Food', from(50)), date: at('2026-09-15T05:00:00Z') },
+];
+const days = P.groupByDay(dayRows, 1000);
+check('rows fold into IST calendar days', days.map((d) => d.key), ['2026-09-14', '2026-09-15']);
+check('a day lists what it went on, in first-seen order',
+  days[0].categories.map((c) => [c.category, c.count, c.out]), [['Food', 2, 300], ['Travel', 1, 500]]);
+check('the category lines under a day add up to the day',
+  days.map((d) => d.categories.reduce((n, c) => n + c.count, 0)), days.map((d) => d.count));
+check('a rejected row is listed under its category but moves no money',
+  days[1].categories.map((c) => [c.category, c.count, c.out]), [['Hotel', 1, 0], ['Food', 1, 50]]);
+check('each day closes on the running balance', days.map((d) => d.closing), [200, 150]);
 
 
 // Who may still correct a posted expense, and when the window shuts. Pure, and
@@ -207,6 +327,65 @@ check('an advance is never edited in place', rights(expense({ movement: 'advance
 check('nor is a settlement', rights(expense({ movement: 'settlement' }), null), [false, false]);
 check('a missing book reads as open rather than blocking the fix',
   rights(expense(), undefined), [true, true]);
+
+// The Category dropdown on an expense. Not money arithmetic, but it decides
+// whether somebody can record money they have already spent, so it is pinned
+// here with the rest of the rules an expense has to pass.
+console.log('\n--- Cash Out categories (services/cashOutCategories.js) ---');
+const C = require('../services/cashOutCategories');
+
+check('a saved list is tidied: trimmed, blanks and repeats gone, first spelling kept',
+  C.cleanCategoryList(['  Fuel ', 'fuel', '', 'Site   materials', null, 'Travel', 'FUEL']),
+  ['Fuel', 'Site materials', 'Travel']);
+check('its order is kept exactly — that order IS the priority',
+  C.cleanCategoryList(['Travel', 'Fuel', 'Food']), ['Travel', 'Fuel', 'Food']);
+check('an empty list is a legitimate save', C.cleanCategoryList([]), []);
+check('something that is not a list is refused', outcome(() => C.cleanCategoryList('Fuel')), 'blocked');
+check('an over-long category is refused',
+  outcome(() => C.cleanCategoryList(['x'.repeat(C.MAX_CATEGORY_LENGTH + 1)])), 'blocked');
+check('the most the dropdown takes is allowed',
+  outcome(() => C.cleanCategoryList(Array.from({ length: C.MAX_CATEGORIES }, (_, i) => `C${i}`))), 'allowed');
+check('one more is refused',
+  outcome(() => C.cleanCategoryList(Array.from({ length: C.MAX_CATEGORIES + 1 }, (_, i) => `C${i}`))), 'blocked');
+
+const LIST = ['Fuel', 'Site materials', 'Travel'];
+const fileAs = (list, value) => {
+  try { return C.resolveExpenseCategory(list, value); } catch (_) { return 'blocked'; }
+};
+const correctTo = (list, value, current) => {
+  try { return C.resolveExpenseCategory(list, value, { current }); } catch (_) { return 'blocked'; }
+};
+// No list set up: exactly the behaviour before the dropdown existed.
+check('no list: an expense with no category files as Expense', fileAs([], undefined), 'Expense');
+check('no list: whatever was sent is kept', fileAs([], 'Food'), 'Food');
+// A list in force: a new expense must name one of its entries.
+check('with a list, a category is required', fileAs(LIST, ''), 'blocked');
+check('with a list, an off-list category is refused', fileAs(LIST, 'Materials'), 'blocked');
+check('and a listed one is stored in the list\'s own spelling', fileAs(LIST, '  site MATERIALS '), 'Site materials');
+// A correction is only held to the list when it CHANGES the category.
+check('a correction that leaves a retired category alone is not forced off it',
+  correctTo(LIST, 'Expense', 'Expense'), undefined);
+check('nor is a change of case alone a change', correctTo(LIST, 'fuel', 'Fuel'), undefined);
+check('a blank category on a correction means "leave it"', correctTo(LIST, '', 'Expense'), undefined);
+check('moving it to a listed category is allowed', correctTo(LIST, 'travel', 'Expense'), 'Travel');
+check('moving it off the list is refused', correctTo(LIST, 'Snacks', 'Expense'), 'blocked');
+
+// Who writes the list: Admin, CEO, MD and whoever manages the cashbook.
+const may = (user) => C.canManageCashOutCategories(user);
+check('the Backend, the CEO and the MD may — the executives even in read-only mode',
+  [may({ role: 'SuperAdmin' }), may({ role: 'CEO' }), may({ role: 'MD', execEditAccess: false })], [true, true, true]);
+check('so may the Accounts Manager role', may({ role: 'AccountsManager' }), true);
+check('and anybody holding either cash module\'s switch',
+  [may({ role: 'Employee', khataAccess: true }), may({ role: 'Manager', permissions: [], cashbookAccess: true })],
+  [true, true]);
+check('and an HR Manager or Manager explicitly ticked for one',
+  [may({ role: 'HRManager', permissions: ['khata.manage'] }), may({ role: 'Manager', permissions: ['cashbook.manage'] })],
+  [true, true]);
+// The trap this rule is written around: hasPermission reads an unconfigured HR
+// Manager as holding every capability, and HR is not on the list.
+check('an HR Manager with no permissions list is NOT swept in', may({ role: 'HRManager' }), false);
+check('nor an ordinary employee, a bare Manager or the audit login',
+  [may({ role: 'Employee' }), may({ role: 'Manager', permissions: [] }), may({ role: 'God' })], [false, false, false]);
 
 console.log('\n--- rounding ---');
 check('classic float error is rounded away', L.round2(0.1 + 0.2), 0.3);

@@ -109,7 +109,19 @@ const employeeKhataSchema = new mongoose.Schema(
     // longer accept new expenses and drop out of the pickers. Unlike the old
     // balance-carrying khata, a book with spend on it CAN be closed — the spend
     // is history, not an outstanding amount.
+    //
+    // WHO MAY DO WHICH (user decision 2026-09-26): the owner may close their own
+    // book, and so may the company; RE-OPENING is only for the Admin, the CEO,
+    // the MD and a cashbook manager (isCashbookAuthority). Closing is a person
+    // saying a job is done; opening it again is a decision about the company's
+    // figures, so it is not self-service.
     isActive: { type: Boolean, default: true },
+    // When the book was last closed, by whom, and whether that was its owner
+    // (who may then read "closed by you") or somebody on the company side.
+    // Cleared when it is re-opened.
+    closedAt: { type: Date, default: null },
+    closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    closedByOwner: { type: Boolean, default: false },
 
     note: { type: String, trim: true, maxlength: 300 },
 

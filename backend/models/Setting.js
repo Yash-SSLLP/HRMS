@@ -29,18 +29,11 @@ const settingSchema = new mongoose.Schema(
     // "select an employee" pickers that opt in (?excludeExecutives=true). A
     // SuperAdmin can flip this on to make them selectable everywhere.
     includeExecutivesInLists: { type: Boolean, default: false },
-    // Does an employee's cash-advance request need an executive sanction before
-    // it reaches the people who handle cash?
-    //
-    // On (the default) a request parks as 'AwaitingApproval' and only a CEO, MD
-    // or SuperAdmin can release it into the operators' queue. Off, it goes
-    // straight to the operators exactly as it used to. A SuperAdmin flips this
-    // from Admin -> Permissions.
-    //
-    // The flag is read when a request is RAISED and stamped onto the entry
-    // (KhataEntry.execApprovalRequired), so turning it off does not silently
-    // strand requests already sitting with an executive, and turning it on does
-    // not retroactively invalidate ones raised while it was off.
+    // RETIRED 2026-09-26 — nothing reads it. It used to switch the CEO/MD
+    // sanction on an employee's cash-advance request on and off; the sanction
+    // is now always required (khataController.requestAdvance), so the switch
+    // is gone from Permissions and the org-settings route. Kept in the schema
+    // only so stored documents still describe themselves.
     khataAdvanceApprovalRequired: { type: Boolean, default: true },
 
     // Org-wide switch for the chat module. Off by default: the launcher, dock
@@ -310,6 +303,24 @@ const settingSchema = new mongoose.Schema(
       terms: { type: [String], default: [] },
       termsCustom: { type: Boolean, default: false },
       // Who last saved either list, and when — shown beside the editor.
+      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      updatedByName: { type: String, trim: true, default: '' },
+      updatedAt: { type: Date },
+    },
+
+    // ===== Cash Out categories =====
+    // The Category dropdown an employee picks from when they record an expense
+    // in My Cashbook, IN THE ORDER IT IS SHOWN — position 1 is the top of the
+    // dropdown, which is what "priority" means on the editor. Edited from
+    // Permissions → Cash Out categories by a SuperAdmin, the CEO, the MD, or
+    // whoever manages the cashbook (services/cashOutCategories.js).
+    //
+    // Empty until somebody fills it, and empty means "no list": an expense then
+    // files without a category choice, as 'Expense', exactly as it did before
+    // the list existed. An entry stores the words it was filed under, so editing
+    // or removing a category never rewrites an old row.
+    cashOutCategories: {
+      list: { type: [String], default: [] },
       updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       updatedByName: { type: String, trim: true, default: '' },
       updatedAt: { type: Date },

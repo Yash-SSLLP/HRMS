@@ -162,6 +162,45 @@ check('no history → no flag', R.summarizePriorRejections([]), null);
   check('...and is not urgent', flag.withinHold, false);
 }
 
+console.log('\n--- the consultancy HR records on a candidate it entered ---');
+{
+  const known = ['Krisave HR'];
+  check('a new candidate with a consultancy is filed under it',
+    R.recordedConsultancy(null, 'ABC Placements', known), { source: 'Consultancy', name: 'ABC Placements' });
+  check('a new candidate with the box left blank stays Portal',
+    R.recordedConsultancy(null, '   ', known), { source: 'Portal' });
+  check('a form that never sends the field changes nothing (the app)',
+    R.recordedConsultancy({ source: 'Consultancy', consultancy: { name: 'Krisave HR' } }, undefined, known), null);
+  check("typed in another case, it files under the recorded spelling",
+    R.recordedConsultancy({ source: 'Portal' }, '  krisave   hr ', known), { source: 'Consultancy', name: 'Krisave HR' });
+  check('clearing it puts an HR-entered candidate back to Portal',
+    R.recordedConsultancy({ source: 'Consultancy', consultancy: { name: 'Krisave HR' } }, '', known), { source: 'Portal' });
+  check('a row saved before `source` existed counts as Portal',
+    R.recordedConsultancy({}, 'Krisave HR', known), { source: 'Consultancy', name: 'Krisave HR' });
+  check('an online application keeps its source when one is recorded',
+    R.recordedConsultancy({ source: 'Application' }, 'Krisave HR', known), { source: 'Application', name: 'Krisave HR' });
+  check('...and when it is cleared again',
+    R.recordedConsultancy({ source: 'Application', consultancy: { name: 'Krisave HR' } }, '', known), { source: 'Application' });
+  const agencyRow = { source: 'Consultancy', consultancy: { user: 'agency-id', name: 'Krisave HR' } };
+  check("an agency's own candidate is never renamed", R.recordedConsultancy(agencyRow, 'Someone Else', known), null);
+  check("...nor unlinked by a blank box", R.recordedConsultancy(agencyRow, '', known), null);
+  check('a name is capped at MAX_CONSULTANCY_CHARS',
+    R.recordedConsultancy(null, 'x'.repeat(500)).name.length, R.MAX_CONSULTANCY_CHARS);
+}
+
+console.log('\n--- the consultancy dropdown ---');
+{
+  const scope = { ids: ['A'] };
+  check('an agency serving the viewer’s company is listed', R.agencyServes(['A', 'B'], scope), true);
+  check('...one serving only another company is not', R.agencyServes(['B'], scope), false);
+  check('...one with no companies ticked serves every company', R.agencyServes([], scope), true);
+  check('...and an unrestricted viewer sees them all', R.agencyServes(['B'], null), true);
+  check('accounts and recorded names merge once each, whatever the case — the account spelling wins',
+    R.consultancyChoices(['Krisave HR', 'zeta Staffing'], ['krisave hr', ' ABC  Placements ', '', null]),
+    ['ABC Placements', 'Krisave HR', 'zeta Staffing']);
+  check('nothing on record → an empty list (the form still offers Myself)', R.consultancyChoices([], []), []);
+}
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length) {
   console.log('\nFailures:');

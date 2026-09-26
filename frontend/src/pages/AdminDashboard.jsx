@@ -2,6 +2,8 @@
  * AdminDashboard — user account management (admin portal, "User Accounts" page).
  * Lists login accounts from GET /admin/users and creates/edits them via
  * POST/PUT /admin/users, activates/deactivates and deletes (SuperAdmin only).
+ * A SuperAdmin may also change any account's email here (confirmed first; the
+ * server refuses an address a live account holds and mails the new one).
  * SuperAdmin can also edit each HR Manager's granular admin permissions via a
  * modal backed by GET /admin/permissions/catalog + PATCH /admin/users/:id/permissions.
  */
@@ -59,6 +61,9 @@ export default function AdminDashboard() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
+  // The address the account had when the form opened, so a changed one can be
+  // confirmed before it is saved.
+  const [emailAtOpen, setEmailAtOpen] = useState('');
 
   const isSuperAdmin = me?.role === 'SuperAdmin';
 
@@ -165,6 +170,7 @@ export default function AdminDashboard() {
     setShowPassword(false);
     setShowConfirm(false);
     setConfirmPassword('');
+    setEmailAtOpen(u.email || '');
     setForm({
       email: u.email,
       password: '',
@@ -197,12 +203,32 @@ export default function AdminDashboard() {
       setError('Passwords do not match');
       return;
     }
+    // A Super Admin may change anybody's email (the server checks no other live
+    // account holds it, and mails the new address). It is also a way they sign
+    // in, so the change is confirmed before a request goes out — the same step
+    // the Employees page asks for.
+    const nextEmail = form.email.trim().toLowerCase();
+    const emailChanged = !!editingId && isSuperAdmin && nextEmail !== emailAtOpen.trim().toLowerCase();
+    if (emailChanged) {
+      const ok = await confirmDialog({
+        title: 'Change sign-in email?',
+        message: `${form.firstName} ${form.lastName}'s email is ${emailAtOpen || '(none)'}.\n\n`
+          + `After saving it will be ${nextEmail}, and the old address will no longer sign them in. `
+          + 'A notice is sent to the new address.',
+        confirmText: 'Change email',
+        tone: 'danger',
+      });
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       if (editingId) {
         const payload = { ...form };
         if (!payload.password) delete payload.password;
-        delete payload.email;
+        // Only a Super Admin changes an email here, and only a changed one is
+        // sent — an unchanged address is no edit at all.
+        if (!emailChanged) delete payload.email;
+        else payload.email = nextEmail;
         await api.put(`/admin/users/${editingId}`, payload);
       } else {
         await api.post('/admin/users', form);
@@ -341,7 +367,11 @@ This cannot be undone.`,
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right space-x-2">
+                {/* One line, always — as inline buttons the cell wrapped its last
+                    button onto a line of its own. The 20rem cell cap is lifted so
+                    the column takes the room four buttons need. */}
+                <td className="px-4 py-3 !max-w-none">
+                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                   {canManage(me?.role, u.role) ? (
                     <>
                       <button onClick={() => openEdit(u)} className="text-blue-600 hover:underline">Edit</button>
@@ -362,6 +392,7 @@ This cannot be undone.`,
                   {isSuperAdmin && (
                     <button onClick={() => onDelete(u)} className="text-red-600 hover:underline">Delete</button>
                   )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -403,9 +434,18 @@ This cannot be undone.`,
 
               <div>
                 <label className="block text-sm text-gray-700">Email</label>
-                <input type="email" required disabled={!!editingId} value={form.email}
+                {/* On an existing account only a Super Admin may change it —
+                    for any user, their own included. */}
+                <input type="email" required disabled={!!editingId && !isSuperAdmin} value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100" />
+                {editingId && (
+                  <p className={`text-xs mt-1 ${isSuperAdmin ? 'text-amber-700' : 'text-gray-500'}`}>
+                    {isSuperAdmin
+                      ? 'Changing this changes the address they sign in with. A notice goes to the new address.'
+                      : 'Only a Super Admin can change an email.'}
+                  </p>
+                )}
               </div>
 
               <div>

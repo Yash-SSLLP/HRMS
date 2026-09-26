@@ -18,6 +18,7 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import { DecidedBy, DecisionHistory } from '../components/RestDayDecisionLog';
+import { QueueSwitch, useRestDayQueue } from '../components/RestDayQueue';
 import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
@@ -229,7 +230,8 @@ export default function AdminAttendance() {
   // until HR (or the reporting manager) approves or rejects it.
   const [duty, setDuty] = useState({ claims: [], counts: { pending: 0, approved: 0, rejected: 0 } });
   const [dutyBusy, setDutyBusy] = useState('');   // id being decided
-  const [dutyOpen, setDutyOpen] = useState(true);
+  // Open only while a claim awaits a decision, listing just those until "See all".
+  const dutyQueue = useRestDayQueue(duty.claims, `${filter.year}-${filter.month}-${filter.employee}`);
   // Claims whose decision history is unfolded (ids). A Set, so several can be
   // open at once while comparing.
   const [dutyLogOpen, setDutyLogOpen] = useState(() => new Set());
@@ -593,25 +595,39 @@ export default function AdminAttendance() {
           quietly turns into money. */}
       {duty.claims.length > 0 && (
         <div className="bg-white shadow rounded-lg mb-4 overflow-hidden">
-          <button type="button" onClick={() => setDutyOpen((o) => !o)}
-            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-gray-50">
-            <span className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+          {/* The title opens and closes the list; "See all" sits between it and
+              the arrow, so the arrow is a toggle of its own — for the mouse only,
+              since the title already is one for the keyboard. */}
+          <div className="flex items-center gap-2 hover:bg-gray-50">
+            <button type="button" onClick={dutyQueue.toggle} aria-expanded={dutyQueue.isOpen}
+              className="flex-1 min-w-0 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-4 py-3 text-left">
               <span className="font-semibold text-gray-800">Sunday &amp; comp-off duty</span>
-              {duty.counts.pending > 0 && (
+              {duty.counts.pending > 0 ? (
                 <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
                   {duty.counts.pending} awaiting approval
                 </span>
+              ) : (
+                <span className="text-xs text-gray-500 whitespace-nowrap">Nothing to approve</span>
               )}
               {duty.counts.approved > 0 && (
                 <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-medium">
                   {duty.counts.approved} approved
                 </span>
               )}
-            </span>
-            <span className="text-gray-400 text-sm">{dutyOpen ? '▲' : '▼'}</span>
-          </button>
+              {duty.counts.rejected > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs font-medium">
+                  {duty.counts.rejected} rejected
+                </span>
+              )}
+            </button>
+            <QueueSwitch queue={dutyQueue} />
+            <button type="button" onClick={dutyQueue.toggle} tabIndex={-1} aria-hidden="true"
+              className="shrink-0 pl-1 pr-4 py-3 text-gray-400 text-sm">
+              {dutyQueue.isOpen ? '▲' : '▼'}
+            </button>
+          </div>
 
-          {dutyOpen && (
+          {dutyQueue.isOpen && (
             <div className="border-t border-gray-100">
               <p className="px-4 py-2 text-xs text-gray-500">
                 Days off that were worked. Approving one pays that day at <strong>2×</strong> (one extra day&apos;s
@@ -629,7 +645,7 @@ export default function AdminAttendance() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {duty.claims.map((c) => (
+                  {dutyQueue.rows.map((c) => (
                     <Fragment key={c._id}>
                     <tr className={c.state === 'Pending' ? 'bg-amber-50/40' : ''}>
                       <td className="px-4 py-2 whitespace-nowrap">{fmtDate(c.date)}</td>

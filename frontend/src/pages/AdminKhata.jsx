@@ -79,7 +79,7 @@ import CameraCapture from '../components/CameraCapture';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { toYMD } from '../utils/time';
 import { useAuthStore } from '../store/authStore';
-import { canExportKhata, isExecViewer } from '../config/permissions';
+import { canExportKhata, isExecViewer, canReopenBook } from '../config/permissions';
 import { saveBlobResponse } from '../utils/download';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
@@ -152,14 +152,14 @@ const MOVEMENT_FILTERS = [
   ['other', 'Other'],
 ];
 
-// The three shapes the statement PDF comes in, and what each is for. The server
-// picks its renderer off `?report=`. Until it learned to, the only document it
-// could produce was the category summary — a useful sheet, but not the one
-// somebody asking "show me every entry" is after, and there was no way to say so.
+// The shapes the statement PDF comes in, and what each is for — the server's
+// REPORT_KINDS, picked off `?report=`. Every one of them ends with the full
+// list of entries (2026-09-26), so a summary can be checked against its rows.
 const REPORT_TYPES = [
   ['entries', 'All entries', 'Every row in date order, with the running balance and the bills.'],
-  ['daywise', 'Day-wise summary', 'One line per day — what went in, what went out, where it closed.'],
-  ['category', 'Category-wise summary', 'What was spent under each heading, with no individual rows.'],
+  ['daywise', 'Day-wise summary', 'One line per day — what went in, what went out, where it closed. Then every entry.'],
+  ['daywise_category', 'Day-wise with category summary', 'Each day and what it went on, category by category, then a category-wise summary. Then every entry.'],
+  ['category', 'Category-wise summary', 'What was spent under each heading, totalled. Then every entry.'],
 ];
 
 const blankEntry = {
@@ -301,6 +301,65 @@ function BalanceChip({ display }) {
   );
 }
 
+/**
+ * The ticked rows of one approval list (2026-09-26 — approve or reject several
+ * at once).
+ *
+ * Only ids still IN the list count as ticked: after a refresh a decided row is
+ * gone, and a tick left behind on it would otherwise be sent again with the
+ * next batch.
+ * @param {Array<{_id: string}>} rows - The list as it stands.
+ */
+function useSelection(rows) {
+  const [picked, setPicked] = useState(() => new Set());
+  const live = useMemo(() => new Set(rows.map((r) => String(r._id))), [rows]);
+  const selected = useMemo(() => rows.filter((r) => picked.has(String(r._id))), [rows, picked]);
+  const allOn = rows.length > 0 && selected.length === rows.length;
+  return {
+    selected,
+    allOn,
+    isOn: (id) => picked.has(String(id)) && live.has(String(id)),
+    toggle: (id) => setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(String(id))) next.delete(String(id)); else next.add(String(id));
+      return next;
+    }),
+    toggleAll: () => setPicked(allOn ? new Set() : new Set(live)),
+    clear: () => setPicked(new Set()),
+  };
+}
+
+/** Rupees across a set of rows. */
+const sumOf = (rows) => rows.reduce((total, e) => total + (Number(e.amount) || 0), 0);
+
+/**
+ * The strip over a list that ticks everything and holds what to do with the
+ * ticked rows. The buttons appear only once something is ticked — a row of
+ * disabled bulk actions over a list is noise until it is not.
+ */
+function SelectionBar({ sel, total, children }) {
+  const n = sel.selected.length;
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-gray-100 bg-gray-50">
+      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+        <input type="checkbox" checked={sel.allOn} onChange={sel.toggleAll} />
+        {n ? `${n} of ${total} selected · ${money(sumOf(sel.selected))}` : 'Select all'}
+      </label>
+      {n > 0 && <div className="ml-auto flex flex-wrap justify-end gap-2">{children}</div>}
+    </div>
+  );
+}
+
+/** A row's tick box, with a hit area bigger than the box itself. */
+function PickBox({ sel, entry }) {
+  return (
+    <label className="shrink-0 -m-2 p-2 cursor-pointer" title="Select">
+      <input type="checkbox" checked={sel.isOn(entry._id)} onChange={() => sel.toggle(entry._id)}
+        aria-label={`Select ${entry.code || 'this entry'}`} />
+    </label>
+  );
+}
+
 export default function AdminKhata() {
   // A view-only account reads who is holding company cash and moves none of it.
   // Export to Excel stays — it is a read, and it is gated separately by the
@@ -317,6 +376,10 @@ export default function AdminKhata() {
   // page — a SuperAdmin ticks it per person on the Permissions page. Hiding the
   // button when it is missing keeps the UI honest; the server refuses anyway.
   const mayExport = canExportKhata(user);
+  // Re-opening a closed book is narrower than this page: the Admin, CEO, MD or a
+  // cashbook manager only — a read-only CEO/MD included, since it has its own
+  // route above the module gate (PATCH /khata/khatas/:id/reopen).
+  const mayReopen = canReopenBook(user);
 
   const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
   const [ov, setOv] = useState(null);
@@ -327,6 +390,10 @@ export default function AdminKhata() {
   const [pending, setPending] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [expenses, setExpenses] = useState([]);   // auto-approved, awaiting review
+  // What is ticked on each approval list: several at once, 2026-09-26.
+  const expensePick = useSelection(expenses);
+  const pendingPick = useSelection(pending);
+  const sanctionPick = useSelection(sanctions);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -351,10 +418,12 @@ export default function AdminKhata() {
 
   const [detail, setDetail] = useState(null);   // one employee's khata + statement
   const [entryModal, setEntryModal] = useState(null); // { data, file }
-  const [approveModal, setApproveModal] = useState(null); // { entry, cashAccount, note }
+  // { entry, cashAccount, note } — or { entries, … } for several ticked at once.
+  const [approveModal, setApproveModal] = useState(null);
   const [settingsModal, setSettingsModal] = useState(null); // one khata's settings
   const [walletModal, setWalletModal] = useState(null);     // one employee's wallet settings
-  const [sanctionModal, setSanctionModal] = useState(null); // { entry, approve, note }
+  // { entry, approve, note } — or { entries, … } for several ticked at once.
+  const [sanctionModal, setSanctionModal] = useState(null);
   const [khataModal, setKhataModal] = useState(null);       // { employee, name, note }
   // Correcting an expense that has posted but nobody has confirmed yet:
   // { entry, data, khatas, file }. See the review queue below for why the
@@ -563,8 +632,40 @@ export default function AdminKhata() {
 
   // ---------- approvals ----------
 
+  /**
+   * Send one decision over several ticked rows and report it the way the server
+   * words it: how many went through, and which could not and why. The ticks
+   * clear either way — what is left in the list after the refresh is exactly
+   * what still needs doing.
+   * @returns {Promise<boolean>} whether the request itself went through
+   */
+  const runBulk = async (url, body, sel) => {
+    setSaving(true);
+    try {
+      const res = await api.post(url, body);
+      const { failed = [], message } = res.data || {};
+      if (failed.length) toast.warning(message); else toast.success(message);
+      sel.clear();
+      await refresh();
+      return true;
+    } catch (err) {
+      errToast(err, 'Could not do that');
+      return false;
+    } finally { setSaving(false); }
+  };
+
   const submitApproval = async (e) => {
     e.preventDefault();
+    if (approveModal.entries) {
+      const done = await runBulk('/khata/entries/bulk', {
+        action: 'approve',
+        ids: approveModal.entries.map((x) => x._id),
+        cashAccount: approveModal.cashAccount || undefined,
+        note: approveModal.note || undefined,
+      }, pendingPick);
+      if (done) setApproveModal(null);
+      return;
+    }
     setSaving(true);
     try {
       await api.patch(`/khata/entries/${approveModal.entry._id}/approve`, {
@@ -575,6 +676,49 @@ export default function AdminKhata() {
       setApproveModal(null);
       await refresh();
     } catch (err) { errToast(err, 'Could not approve'); } finally { setSaving(false); }
+  };
+
+  /** Decline every ticked row of the pay-out queue. Nothing moves. */
+  const declineTicked = async () => {
+    const rows = pendingPick.selected;
+    const note = await promptDialog({
+      title: `Decline ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}?`,
+      message: `${money(sumOf(rows))} in all. Nothing will move. A note for the employees, if you want to add one:`,
+      confirmText: 'Decline all',
+    });
+    if (note === null) return;
+    await runBulk('/khata/entries/bulk', {
+      action: 'reject', ids: rows.map((x) => x._id), note: note.trim() || undefined,
+    }, pendingPick);
+  };
+
+  /** Confirm every ticked expense or refund — each is then locked. */
+  const confirmTicked = async () => {
+    const rows = expensePick.selected;
+    const ok = await confirmDialog({
+      title: `Confirm ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}?`,
+      message: `${money(sumOf(rows))} in all. Each has already moved its employee's advance; confirming says you `
+        + 'have checked it. After this nobody can edit them — a mistake would have to be reversed.',
+      confirmText: 'Confirm all',
+    });
+    if (!ok) return;
+    await runBulk('/khata/entries/bulk', { action: 'confirm', ids: rows.map((x) => x._id) }, expensePick);
+  };
+
+  /** Reject every ticked expense or refund, with one reason for the lot. */
+  const rejectTicked = async () => {
+    const rows = expensePick.selected;
+    const reason = await promptDialog({
+      title: `Reject ${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}?`,
+      message: `${money(sumOf(rows))} in all. Rejecting puts each one back as it was on its employee's advance and `
+        + 'tells them why. Both rows of each stay on the record. Why are they being rejected?',
+      confirmText: 'Reject all',
+    });
+    if (reason === null) return;
+    if (!reason.trim()) { toast.error('A reason is required — it goes on the permanent record.'); return; }
+    await runBulk('/khata/entries/bulk', {
+      action: 'reverse', ids: rows.map((x) => x._id), reason: reason.trim(),
+    }, expensePick);
   };
 
   const reject = async (entry) => {
@@ -706,8 +850,15 @@ export default function AdminKhata() {
 
   const submitSanction = async (e) => {
     e.preventDefault();
-    const { entry, approve, note } = sanctionModal;
+    const { entry, entries: several, approve, note } = sanctionModal;
     if (!approve && !note.trim()) { toast.error('Give a reason — the employee sees it.'); return; }
+    if (several) {
+      const done = await runBulk('/khata/advance-approvals/decide', {
+        ids: several.map((x) => x._id), approve, note: note.trim() || undefined,
+      }, sanctionPick);
+      if (done) setSanctionModal(null);
+      return;
+    }
     setSaving(true);
     try {
       const res = await api.patch(`/khata/entries/${entry._id}/exec-decision`, {
@@ -771,10 +922,8 @@ export default function AdminKhata() {
    * person's book laid out to be read (and to be handed to whoever funded it),
    * with the bills bound in behind it.
    *
-   * `report` picks which of the three documents the server renders, and `bills`
-   * is only ever sent for the one that has rows to hang a thumbnail on — asking
-   * for them on a day-wise summary would be a burst of image downloads for a
-   * page that draws none of them.
+   * `report` picks which of the documents the server renders. Every one of them
+   * ends with the rows, so `bills` goes with any of them.
    */
   const downloadStatement = async (e) => {
     e?.preventDefault?.();
@@ -782,7 +931,7 @@ export default function AdminKhata() {
     setSaving(true);
     try {
       const res = await api.get(`/khata/employees/${employee}/statement.pdf`, {
-        params: clean({ khata, from, to, report, bills: report === 'entries' && bills ? '1' : '' }),
+        params: clean({ khata, from, to, report, bills: bills ? '1' : '' }),
         responseType: 'blob',
       });
       saveBlobResponse(res, 'cashbook-statement.pdf');
@@ -813,17 +962,37 @@ export default function AdminKhata() {
     e.preventDefault();
     setSaving(true);
     try {
-      const body = { name: settingsModal.name, note: settingsModal.note };
-      // Only send the switches the user actually touched, so saving a rename
-      // never silently closes or re-opens a book.
-      if (settingsModal.makeDefault) body.isDefault = true;
-      if (settingsModal.close) body.isActive = false;
-      if (settingsModal.reopen) body.isActive = true;
-      await api.put(`/khata/khatas/${settingsModal.khataId}`, body);
+      // Re-opening goes through its own route, the one a read-only CEO/MD can
+      // reach; the rest of the settings through the module's.
+      if (settingsModal.reopen) await api.patch(`/khata/khatas/${settingsModal.khataId}/reopen`, {});
+      if (!viewOnly) {
+        const body = { name: settingsModal.name, note: settingsModal.note };
+        // Only send the switches the user actually touched, so saving a rename
+        // never silently closes a book.
+        if (settingsModal.makeDefault) body.isDefault = true;
+        if (settingsModal.close) body.isActive = false;
+        await api.put(`/khata/khatas/${settingsModal.khataId}`, body);
+      }
       toast.success('Saved');
       setSettingsModal(null);
       await refresh();
     } catch (err) { errToast(err, 'Could not save'); } finally { setSaving(false); }
+  };
+
+  /** Re-open a closed book straight from its card — see mayReopen. */
+  const reopenBook = async (k) => {
+    const ok = await confirmDialog({
+      title: `Re-open "${k.name}"?`,
+      message: 'Expenses can be filed under it again, and the ones already in it that the company has not '
+        + 'confirmed become correctable by their filers again. The owner is told.',
+      confirmText: 'Re-open',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.patch(`/khata/khatas/${k._id}/reopen`, {});
+      toast.success(res.data.message || 'Re-opened');
+      await refresh();
+    } catch (err) { errToast(err, 'Could not re-open the book'); }
   };
 
   /** The advance limit and opening balance now live on the PERSON's wallet. */
@@ -938,9 +1107,7 @@ export default function AdminKhata() {
                   tiles — one number covering both would be actionable by nobody. */}
               <Stat label="Waiting" tone={(ov?.pendingCount || ov?.awaitingApprovalCount) ? 'amber' : 'gray'}
                 value={`${ov?.awaitingApprovalCount || 0} + ${ov?.pendingCount || 0}`}
-                hint={ov?.approvalRequired
-                  ? 'With the CEO/MD + with accounts. No cash has moved for either.'
-                  : 'With accounts. CEO/MD approval is currently switched off.'} />
+                hint="With the CEO/MD + with accounts. No cash has moved for either." />
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -1192,7 +1359,8 @@ export default function AdminKhata() {
                     <div className="min-w-0">
                       <p className="font-medium text-gray-900 truncate">{k.name}</p>
                       <p className="text-xs text-gray-500">
-                        {k.isDefault ? 'Default · ' : ''}{k.isActive ? 'Open' : 'Closed'}
+                        {k.isDefault ? 'Default · ' : ''}
+                        {k.isActive ? 'Open' : (k.closedByOwner ? 'Closed by the employee' : 'Closed')}
                       </p>
                       {/* Shared books total every contributor's spending, so the
                           figure to the right is not this person's alone. */}
@@ -1229,6 +1397,14 @@ export default function AdminKhata() {
                       className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
                       Settings
                     </button>
+                    {/* Straight from the card, for the people who may — an
+                        employee can close their own book but never re-open it. */}
+                    {!k.isActive && mayReopen && (
+                      <button onClick={() => reopenBook(k)}
+                        className="text-xs text-emerald-700 hover:text-emerald-900 hover:underline">
+                        Re-open
+                      </button>
+                    )}
                     <button onClick={() => setStatementModal({
                       employee: detail.employee._id,
                       employeeName: detail.employee.name,
@@ -1367,13 +1543,6 @@ export default function AdminKhata() {
           team's queue below, where the account it comes out of is chosen. */}
       {tab === 'sanctions' && isApprover && (
         <div>
-          {ov && !ov.approvalRequired && (
-            <div className="mb-3 text-sm bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg">
-              CEO/MD approval is currently switched <strong>off</strong>, so new advance requests go straight to the
-              accounts team. A Super Admin can turn it back on from Permissions. Anything already listed here still
-              needs deciding.
-            </div>
-          )}
           <div className="bg-white shadow rounded-lg overflow-hidden">
             {sanctions.length === 0 ? (
               <div className="px-4 py-10 text-center">
@@ -1383,6 +1552,19 @@ export default function AdminKhata() {
                 </p>
               </div>
             ) : (
+              <>
+              <SelectionBar sel={sanctionPick} total={sanctions.length}>
+                <button type="button" disabled={saving}
+                  onClick={() => setSanctionModal({ entries: sanctionPick.selected, approve: true, note: '' })}
+                  className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                  Approve {sanctionPick.selected.length}
+                </button>
+                <button type="button" disabled={saving}
+                  onClick={() => setSanctionModal({ entries: sanctionPick.selected, approve: false, note: '' })}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
+                  Decline {sanctionPick.selected.length}
+                </button>
+              </SelectionBar>
               <ul className="divide-y divide-gray-100">
                 {sanctions.map((e) => (
                   <li key={e._id} className="px-4 py-3">
@@ -1390,6 +1572,7 @@ export default function AdminKhata() {
                         purpose used to push them onto a line of their own at the
                         left. Below 16rem of text they wrap, still to the right. */}
                     <div className="flex flex-wrap justify-between items-start gap-3">
+                      <PickBox sel={sanctionPick} entry={e} />
                       <div className="min-w-0 grow basis-64">
                         <p className="font-medium text-gray-900">
                           {e.employee?.name || 'Employee'} · {money(e.amount)}
@@ -1417,6 +1600,7 @@ export default function AdminKhata() {
                   </li>
                 ))}
               </ul>
+              </>
             )}
           </div>
         </div>
@@ -1434,10 +1618,30 @@ export default function AdminKhata() {
               </p>
             </div>
           ) : (
+            <>
+            {!viewOnly && (
+              <SelectionBar sel={pendingPick} total={pending.length}>
+                <button type="button" disabled={saving}
+                  onClick={() => setApproveModal({
+                    entries: pendingPick.selected,
+                    cashAccount: accounts.filter((a) => a.canApprove).length === 1
+                      ? accounts.find((a) => a.canApprove)._id : '',
+                    note: '',
+                  })}
+                  className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                  Approve {pendingPick.selected.length}
+                </button>
+                <button type="button" onClick={declineTicked} disabled={saving}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
+                  Decline {pendingPick.selected.length}
+                </button>
+              </SelectionBar>
+            )}
             <ul className="divide-y divide-gray-100">
               {pending.map((e) => (
                 <li key={e._id} className="px-4 py-3">
                   <div className="flex flex-wrap justify-between items-start gap-3">
+                    {!viewOnly && <PickBox sel={pendingPick} entry={e} />}
                     <div className="min-w-0 grow basis-64">
                       <p className="font-medium text-gray-900">
                         {e.employee?.name || 'Employee'} · {money(e.amount)}
@@ -1477,6 +1681,7 @@ export default function AdminKhata() {
                 </li>
               ))}
             </ul>
+            </>
           )}
         </div>
       )}
@@ -1499,9 +1704,23 @@ export default function AdminKhata() {
                 Nothing waiting — every recorded expense has been confirmed.
               </div>
             ) : (
+              <>
+              {!viewOnly && (
+                <SelectionBar sel={expensePick} total={expenses.length}>
+                  <button type="button" onClick={confirmTicked} disabled={saving}
+                    className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                    Confirm {expensePick.selected.length}
+                  </button>
+                  <button type="button" onClick={rejectTicked} disabled={saving}
+                    className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50 disabled:opacity-50">
+                    Reject {expensePick.selected.length}
+                  </button>
+                </SelectionBar>
+              )}
               <ul className="divide-y divide-gray-100">
                 {expenses.map((e) => (
                   <li key={e._id} className="px-4 py-3 flex flex-wrap justify-between items-start gap-3">
+                    {!viewOnly && <PickBox sel={expensePick} entry={e} />}
                     <div className="min-w-0 grow basis-64">
                       <p className="font-medium text-gray-900">
                         {e.employee?.name || 'Employee'} · {money(e.amount)}
@@ -1553,6 +1772,7 @@ export default function AdminKhata() {
                   </li>
                 ))}
               </ul>
+              </>
             )}
           </div>
         </div>
@@ -1807,12 +2027,21 @@ export default function AdminKhata() {
       {approveModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submitApproval} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Approve this entry</h3>
+            <h3 className="text-lg font-semibold text-gray-900">
+              {approveModal.entries ? `Approve ${approveModal.entries.length} entries` : 'Approve this entry'}
+            </h3>
             <p className="text-sm text-gray-600 mt-1 mb-4">
-              {money(approveModal.entry.amount)} — {approveModal.entry.employee?.name}. The cash moves as soon as you approve.
+              {approveModal.entries
+                ? `${money(sumOf(approveModal.entries))} in all, for ${
+                  [...new Set(approveModal.entries.map((x) => x.employee?.name).filter(Boolean))].join(', ')
+                }. Each is checked on its own — anything that cannot go through is listed afterwards and stays here.`
+                : `${money(approveModal.entry.amount)} — ${approveModal.entry.employee?.name}.`}
+              {' '}The cash moves as soon as you approve.
             </p>
 
-            {approveModal.entry.affectsCompanyCash && (
+            {(approveModal.entries
+              ? approveModal.entries.some((x) => x.affectsCompanyCash)
+              : approveModal.entry.affectsCompanyCash) && (
               <>
                 <label className="block text-sm text-gray-700 mb-1">Pay from<Req /></label>
                 <select value={approveModal.cashAccount} required
@@ -1841,7 +2070,7 @@ export default function AdminKhata() {
                 className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                {saving ? 'Approving…' : 'Approve & pay'}
+                {saving ? 'Approving…' : approveModal.entries ? 'Approve & pay all' : 'Approve & pay'}
               </button>
             </div>
           </form>
@@ -1938,23 +2167,20 @@ export default function AdminKhata() {
               </div>
             </fieldset>
 
-            {/* Bills are drawn into the rows themselves, so they only mean
-                anything on the document that HAS rows. Asking for them on a
-                summary would fetch every image for a page that draws none. */}
-            {statementModal.report === 'entries' && (
-              <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
-                <input type="checkbox" className="mt-1"
-                  checked={statementModal.bills !== false}
-                  onChange={(e) => setStatementModal({ ...statementModal, bills: e.target.checked })} />
-                <span>
-                  Include the bills
-                  <span className="block text-xs text-gray-500">
-                    Every photo bill in the period is embedded, so the document stands on its own once it leaves
-                    here. It takes longer to build and the file is much larger.
-                  </span>
+            {/* Bills are drawn into the rows themselves, and every report ends
+                with its rows, so this is offered whichever one is picked. */}
+            <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
+              <input type="checkbox" className="mt-1"
+                checked={statementModal.bills !== false}
+                onChange={(e) => setStatementModal({ ...statementModal, bills: e.target.checked })} />
+              <span>
+                Include the bills
+                <span className="block text-xs text-gray-500">
+                  Every photo bill in the period is embedded beside its row, so the document stands on its own
+                  once it leaves here. It takes longer to build and the file is much larger.
                 </span>
-              </label>
-            )}
+              </span>
+            </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -2137,13 +2363,19 @@ export default function AdminKhata() {
                   </span>
                 </span>
               </label>
-            ) : (
+            ) : mayReopen ? (
               <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
                 <input type="checkbox" className="mt-1"
                   checked={settingsModal.reopen === true}
                   onChange={(e) => setSettingsModal({ ...settingsModal, reopen: e.target.checked })} />
                 <span>Re-open this book</span>
               </label>
+            ) : (
+              // Said rather than hidden: somebody who can close a book here would
+              // otherwise go looking for the way to open it again.
+              <p className="text-xs text-gray-500 mb-3">
+                This book is closed. Only the CEO, MD, an Admin or a cashbook manager can re-open it.
+              </p>
             )}
 
             <label className="block text-sm text-gray-700 mb-1">Note</label>
@@ -2215,18 +2447,30 @@ export default function AdminKhata() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submitSanction} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">
-              {sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
+              {sanctionModal.entries
+                ? `${sanctionModal.approve ? 'Approve' : 'Decline'} ${sanctionModal.entries.length} advance requests?`
+                : sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
             </h3>
             <p className="text-sm text-gray-600 mt-1 mb-4">
-              {money(sanctionModal.entry.amount)} for {sanctionModal.entry.employee?.name}
-              {sanctionModal.entry.purpose ? ` — ${sanctionModal.entry.purpose}` : ''}.
+              {sanctionModal.entries
+                ? `${money(sumOf(sanctionModal.entries))} in all, for ${
+                  [...new Set(sanctionModal.entries.map((x) => x.employee?.name).filter(Boolean))].join(', ')}.`
+                : <>
+                  {money(sanctionModal.entry.amount)} for {sanctionModal.entry.employee?.name}
+                  {sanctionModal.entry.purpose ? ` — ${sanctionModal.entry.purpose}` : ''}.
+                </>}
             </p>
 
             <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4">
-              {sanctionModal.approve
-                ? 'No money moves yet. Approving passes it to the accounts team, who choose which account to pay '
-                  + 'it out of — the cash leaves only when they do.'
-                : 'Nothing moves. The request is closed and the employee is told why.'}
+              {sanctionModal.entries
+                ? (sanctionModal.approve
+                  ? 'No money moves yet. Approving passes them to the cashbook manager, who chooses the account '
+                    + 'each is paid from — the cash leaves only when they do.'
+                  : 'Nothing moves. Each request is closed and its employee is told why.')
+                : (sanctionModal.approve
+                  ? 'No money moves yet. Approving passes it to the accounts team, who choose which account to pay '
+                    + 'it out of — the cash leaves only when they do.'
+                  : 'Nothing moves. The request is closed and the employee is told why.')}
             </p>
 
             <label className="block text-sm text-gray-700 mb-1">
@@ -2236,7 +2480,9 @@ export default function AdminKhata() {
               onChange={(e) => setSanctionModal({ ...sanctionModal, note: e.target.value })}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
               placeholder={sanctionModal.approve ? 'Anything the employee should know' : 'e.g. settle the last advance first'} />
-            <p className="text-xs text-gray-500 mb-4">The employee sees this.</p>
+            <p className="text-xs text-gray-500 mb-4">
+              {sanctionModal.entries ? 'Every one of them sees this.' : 'The employee sees this.'}
+            </p>
 
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setSanctionModal(null)}
@@ -2244,7 +2490,7 @@ export default function AdminKhata() {
               <button type="submit" disabled={saving}
                 className={`px-4 py-2 rounded-lg text-sm text-white disabled:opacity-50 ${
                   sanctionModal.approve ? 'bg-gray-900 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                {saving ? 'Saving…' : sanctionModal.approve ? 'Approve' : 'Decline'}
+                {saving ? 'Saving…' : `${sanctionModal.approve ? 'Approve' : 'Decline'}${sanctionModal.entries ? ' all' : ''}`}
               </button>
             </div>
           </form>
@@ -2410,11 +2656,14 @@ function EntryTable({
                 No entries
               </td></tr>
             ) : entries.map((e) => (
+              /* A reversed row is faded, not struck out: it did post, and it
+                 counts beside the reversal row that undoes it — the pair adds up
+                 to nothing (models/CashbookEntry.js POSTED_STATUSES). */
               <tr key={e._id} className={e.status === 'Reversed' ? 'opacity-60' : ''}>
                 <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtDate(e.date)}</td>
                 {showEmployee && <td className="px-4 py-3 text-gray-800">{e.employee?.name || '—'}</td>}
                 <td className="px-4 py-3">
-                  <p className={`text-gray-800 ${e.status === 'Reversed' ? 'line-through' : ''}`}>
+                  <p className="text-gray-800">
                     {e.purpose || e.category}
                   </p>
                   <p className="text-xs text-gray-400">
@@ -2436,7 +2685,7 @@ function EntryTable({
                   {e.direction === 'from_employee' ? money(e.amount) : ''}
                 </td>
                 <td className="px-4 py-3 text-right text-gray-700">
-                  {e.status === 'Approved' ? money(e.balanceAfter) : '—'}
+                  {e.status === 'Approved' || e.status === 'Reversed' ? money(e.balanceAfter) : '—'}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
