@@ -369,7 +369,7 @@ Each person has one **wallet** (the company cash they hold) and as many named **
 Some teams are paid for what they produce rather than only for being here, and what they produce is counted in **points**. It has its own **Incentive** menu rather than a row under Payroll, because the work is recorded by whoever supervised it — a grant an ordinary supervisor can hold — and nothing in it touches the payroll module.
 
 - **Point Rate** — what one point is worth. A single company-wide figure, because every incentive is earned in points and converted here.
-- **Boys Incentive** — the daily rolling teams: who was on one, how many sheets they rolled, and the deduction taken off the top before the team is credited.
+- **Boys Incentive** — the daily rolling teams: who was on one, how many sheets they rolled, and the deduction taken off the top before the team is credited. Its **QC** tab is the day's quality check, run the same way: a manager (Admin, the tab's manager, HR, CEO or MD) sets who is on QC each morning — one person or several — and fills in the sheet count that evening. QC has its own points a sheet (4 to start with) and its own deduction (30%), both set on the Points per sheet tab, and what is left is split equally between everyone on QC that day. Those points join the same pool as the teams'.
 - **Billing Incentive** — the billing team's invoicing, read live from the billing system. Described below.
 - **Points Dashboard** — every employee and the points they hold, across every incentive. This is where extra points are credited by hand with a reason, and where people are paid, in full or in part.
 - **Leaderboard** — the standing, described below.

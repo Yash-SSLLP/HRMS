@@ -187,6 +187,22 @@ const GRANTABLE_ROLES = ['HRManager', 'Manager'];
  */
 const HIDDEN_FROM_CATALOG = new Set(['expenses.manage', 'travel.manage']);
 
+/**
+ * Keys that WERE capabilities and were retired with what they gated — see the
+ * notes on tasks.workflow and audit.view above. Nobody cleaned them out of the
+ * User.permissions arrays that already held them, so an account's list can still
+ * carry one, and the Permissions dialog used to send that list straight back:
+ * the save was then refused as "Unknown permission key(s): tasks.workflow", and
+ * the dialog's counter read "37 of 36 granted" (2026-09-26, user report).
+ *
+ * updateUserPermissions DROPS these rather than refusing them — they grant
+ * nothing either way (hasPermission only answers catalogued keys), so the
+ * account's next save simply cleans them out. Anything else it has never heard
+ * of is still refused: that is a typo, or a client out of step, and storing it
+ * would be worse than saying so. Add a key here when it leaves PERMISSIONS.
+ */
+const RETIRED_PERMISSIONS = new Set(['tasks.workflow', 'audit.view']);
+
 const PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
 /**
@@ -195,4 +211,7 @@ const PERMISSION_KEY_SET = new Set(PERMISSION_KEYS);
  */
 const isValidPermission = (key) => PERMISSION_KEY_SET.has(key);
 
-module.exports = { PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG };
+module.exports = {
+  PERMISSIONS, PERMISSION_KEYS, PERMISSION_KEY_SET, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG,
+  RETIRED_PERMISSIONS,
+};

@@ -81,7 +81,12 @@ export default function AdminDashboard() {
 
   const openPerms = (u) => {
     // A missing/undefined permissions array means ALL capabilities are granted.
-    setPermSel(u.permissions == null ? new Set(allKeys) : new Set(u.permissions));
+    // Only the keys this dialog offers: a stored list can still carry a retired
+    // key, which used to be counted ("37 of 36") and sent back to be refused —
+    // see openPerms on the Permissions page.
+    setPermSel(u.permissions == null
+      ? new Set(allKeys)
+      : new Set(u.permissions.filter((k) => allKeys.includes(k))));
     setPermUser(u);
   };
   const togglePerm = (key) => setPermSel((s) => {

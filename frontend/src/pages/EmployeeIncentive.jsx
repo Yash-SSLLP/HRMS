@@ -74,10 +74,13 @@ const KIND = {
   rolling: { label: 'Rolled', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
   credit: { label: 'Credited', cls: 'bg-green-50 text-green-700 border-green-200' },
   billing: { label: 'Billing', cls: 'bg-teal-50 text-teal-700 border-teal-200' },
+  // A day on QC (2026-09-26): QC's own points a sheet, less QC's deduction,
+  // split between everyone on QC that day.
+  qc: { label: 'QC', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
 };
 
-/** A day's work, as opposed to a credit or a whole month of billing. */
-const isTeamDay = (kind) => kind === 'rolling';
+/** A day's work — rolling or QC — as opposed to a credit or a month of billing. */
+const isTeamDay = (kind) => kind === 'rolling' || kind === 'qc';
 
 /** Gold, silver, bronze — everybody else gets the plain chip. */
 const RANK_CLS = {
@@ -293,6 +296,7 @@ export default function EmployeeIncentive() {
                               r.teamName || (r.pickerName ? `${r.pickerName}'s team` : 'Team'),
                               r.sheets == null ? 'sheets not filled in yet' : `${r.sheets} sheet${r.sheets === 1 ? '' : 's'}`,
                               r.kind === 'rolling' && r.headCount ? `${r.headCount} on the team` : null,
+                              r.kind === 'qc' && r.headCount > 1 ? `shared by ${r.headCount} on QC` : null,
                             ].filter(Boolean).join(' · ')}
                           </td>
                           {/* A pending day has earned nothing YET, which is a

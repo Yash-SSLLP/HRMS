@@ -27,9 +27,16 @@
  * an input — closing off the day is one number and one click, not a trip through
  * the whole form.
  *
- * Three tabs: the day-by-day record, the per-person roll-up finance pays from,
- * and what a sheet is worth in points — which is this module's own figure, unlike
- * the rupee value of a point.
+ * Four tabs: the day-by-day record, the day's QC, the per-person roll-up finance
+ * pays from, and what a sheet is worth in points — which is this module's own
+ * figure, unlike the rupee value of a point.
+ *
+ * QC (2026-09-26) is run the way a team is: a MANAGER sets who is doing QC in
+ * the morning — one person or several — and fills in the sheet count that
+ * evening; QC's own points a sheet, less QC's own deduction (4 and 30% to start
+ * with), split equally between them. Those points join the same pool as the
+ * teams', so they show up in Per employee, My Incentive, the leaderboard and the
+ * payments. A picker can read the QC tab and change nothing on it.
  *
  * A FIXED PERCENTAGE COMES OFF EVERY TEAM before it is credited — the gross is
  * what the sheets came to, the deduction comes off it, and what is left is split
@@ -50,6 +57,7 @@
  * would 403 a supervisor holding only the standalone incentive grant.
  *
  * Backend: GET/POST /incentives, PUT/DELETE /incentives/:id,
+ *          GET/POST /incentives/qc, PUT/DELETE /incentives/qc/:id,
  *          GET /incentives/people|summary|settings,
  *          PUT /incentives/settings,
  *          GET /incentives/template.xlsx|export.xlsx, POST /incentives/import.
@@ -80,6 +88,7 @@ const dateInput = (d) => {
 
 const TABS = [
   ['entries', 'Daily teams'],
+  ['qc', 'QC'],
   ['summary', 'Per employee'],
   ['points', 'Points per sheet'],
 ];
@@ -95,6 +104,34 @@ const blankForm = () => ({
   sheets: '',
   note: '',
 });
+
+const blankQcForm = () => ({
+  _id: null,
+  date: todayStr(),
+  members: [],
+  sheets: '',
+  note: '',
+});
+
+/** Somebody whose designation is QC — offered first, and pre-filled on a new QC day. */
+const isQcStaff = (p) => /^\s*q\.?\s*c\b/i.test(String(p.designation || ''));
+
+/** The QC day's arithmetic, exactly as the server's recalc does it. */
+function qcSum(sheetsRaw, heads, perSheetRaw, pctRaw) {
+  const pending = sheetsRaw === '' || sheetsRaw == null;
+  const sheets = Math.max(0, Number(sheetsRaw) || 0);
+  const perSheet = Math.max(0, Number(perSheetRaw) || 0);
+  const pct = Math.max(0, Number(pctRaw) || 0);
+  const gross = Math.round(sheets * perSheet * 100) / 100;
+  const cut = Math.round(gross * (pct / 100) * 100) / 100;
+  // Subtraction, not a second multiplication — gross less the deduction has to
+  // equal what is credited, exactly.
+  const credited = Math.round((gross - cut) * 100) / 100;
+  return {
+    pending, gross, pct, cut, credited, heads,
+    each: heads ? Math.round((credited / heads) * 100) / 100 : 0,
+  };
+}
 
 /** Points read better without trailing zeros: 4, not 4.00. */
 const points = (n) => `${Math.round((Number(n) || 0) * 100) / 100}`;
@@ -130,10 +167,27 @@ export default function AdminBoysIncentive() {
   // Which department the picker lists first. Comes from the server so the client
   // groups by the spelling the server actually matched; it is never chosen here.
   const [department, setDepartment] = useState('Boys');
-  const [settings, setSettings] = useState({ pointsPerSheet: 4, rupeePerPoint: 1, deductionPct: 30 });
+  const [settings, setSettings] = useState({
+    pointsPerSheet: 4, rupeePerPoint: 1, deductionPct: 30, qcPointsPerSheet: 4, qcDeductionPct: 30,
+  });
 
   const [entries, setEntries] = useState([]);
   const [entryTotals, setEntryTotals] = useState(null);
+  // The day's QC for the month on screen, and its totals.
+  const [qcDays, setQcDays] = useState([]);
+  const [qcTotals, setQcTotals] = useState(null);
+  // The QC form (a QC day being set or corrected), or null.
+  const [qcForm, setQcForm] = useState(null);
+  const [savingQc, setSavingQc] = useState(false);
+  // A pending QC row's typed count, keyed by id, and which row is mid-save.
+  const [qcFillDraft, setQcFillDraft] = useState({});
+  const [qcFilling, setQcFilling] = useState('');
+  // Everybody already on another QC day on the QC form's date — the QC twin of
+  // takenOnDay below, fetched for that day for the same reason.
+  const [qcTakenOnDay, setQcTakenOnDay] = useState(new Set());
+  // Which QC figure is being edited on the rate tab ({key, value}), or null.
+  const [qcSettingForm, setQcSettingForm] = useState(null);
+  const [savingQcSetting, setSavingQcSetting] = useState(false);
   const [summary, setSummary] = useState({ people: [], totals: null });
   // `loading` paints the skeleton on a cold open; `refreshing` covers a reload
   // with rows already on screen, so the table never collapses under the user
@@ -194,6 +248,8 @@ export default function AdminBoysIncentive() {
           pointsPerSheet: data.pointsPerSheet ?? s.pointsPerSheet,
           rupeePerPoint: data.rupeePerPoint ?? s.rupeePerPoint,
           deductionPct: data.deductionPct ?? s.deductionPct,
+          qcPointsPerSheet: data.qcPointsPerSheet ?? s.qcPointsPerSheet,
+          qcDeductionPct: data.qcDeductionPct ?? s.qcDeductionPct,
         }));
       })
       .catch((err) => setError(err.response?.data?.message || 'Could not load the employee list'));
@@ -221,6 +277,26 @@ export default function AdminBoysIncentive() {
     return () => { cancelled = true; };
   }, [form?.date, form?._id]);
 
+  // The same, for the QC form: somebody already doing QC that day is not
+  // offered again. Doing QC and rolling with a team on the same day is fine —
+  // they are two jobs — so only QC days are read here.
+  useEffect(() => {
+    if (!qcForm?.date) { setQcTakenOnDay(new Set()); return undefined; }
+    let cancelled = false;
+    api.get('/incentives/qc', { params: { from: qcForm.date, to: qcForm.date } })
+      .then(({ data }) => {
+        if (cancelled) return;
+        const taken = new Set();
+        for (const d of data.days || []) {
+          if (qcForm._id && String(d._id) === String(qcForm._id)) continue;
+          (d.members || []).forEach((m) => taken.add(String(m.employee)));
+        }
+        setQcTakenOnDay(taken);
+      })
+      .catch(() => { if (!cancelled) setQcTakenOnDay(new Set()); });
+    return () => { cancelled = true; };
+  }, [qcForm?.date, qcForm?._id]);
+
   const params = useMemo(() => {
     const p = {};
     if (month) p.month = month;
@@ -232,13 +308,16 @@ export default function AdminBoysIncentive() {
     if (quiet) setRefreshing(true); else setLoading(true);
     setError('');
     try {
-      const [list, sum] = await Promise.all([
+      const [list, sum, qc] = await Promise.all([
         api.get('/incentives', { params }),
         api.get('/incentives/summary', { params }),
+        api.get('/incentives/qc', { params }),
       ]);
       setEntries(list.data.entries || []);
       setEntryTotals(list.data.totals || null);
       setSummary({ people: sum.data.people || [], totals: sum.data.totals || null });
+      setQcDays(qc.data.days || []);
+      setQcTotals(qc.data.totals || null);
     } catch (err) {
       setError(err.response?.data?.message || 'Could not load the incentive record');
     } finally {
@@ -284,6 +363,28 @@ export default function AdminBoysIncentive() {
   );
 
   const peopleById = useMemo(() => new Map(people.map((p) => [String(p._id), p])), [people]);
+
+  // The QC picker: whoever is designated QC first — they are who it usually is,
+  // wherever their department — then the Boys department, then everybody else
+  // behind a search. Somebody already doing QC that day is not offered.
+  const qcOptions = useMemo(() => {
+    const free = people.filter((p) => !qcTakenOnDay.has(String(p._id)));
+    const rows = [];
+    for (const p of free) {
+      if (isQcStaff(p)) rows.push({ value: String(p._id), label: personLabel(p), group: 'QC' });
+    }
+    for (const p of free) {
+      if (!isQcStaff(p) && p.department === department) {
+        rows.push({ value: String(p._id), label: personLabel(p), group: department });
+      }
+    }
+    for (const p of free) {
+      if (!isQcStaff(p) && p.department !== department) {
+        rows.push({ value: String(p._id), label: personLabel(p), group: 'Other departments', searchOnly: true });
+      }
+    }
+    return rows;
+  }, [people, department, qcTakenOnDay]);
 
   // --- writes ----------------------------------------------------------------
 
@@ -464,6 +565,131 @@ export default function AdminBoysIncentive() {
     }
   };
 
+  // --- QC ---------------------------------------------------------------------
+
+  /**
+   * Set who is doing QC on a day. A new day opens with the QC-designated staff
+   * already in it — they are who it usually is — less anyone already on a QC
+   * day today, which the month on screen can tell us.
+   */
+  const openQcCreate = () => {
+    const date = todayStr();
+    const busy = new Set(qcDays
+      .filter((d) => dateInput(d.date) === date)
+      .flatMap((d) => (d.members || []).map((m) => String(m.employee))));
+    setQcForm({
+      ...blankQcForm(),
+      date,
+      members: people.filter((p) => isQcStaff(p) && !busy.has(String(p._id))).map((p) => String(p._id)),
+    });
+  };
+  const openQcEdit = (d) => setQcForm({
+    _id: d._id,
+    date: dateInput(d.date),
+    members: (d.members || []).map((m) => String(m.employee)),
+    sheets: d.sheets ?? '',
+    note: d.note || '',
+    // The figures the day was recorded with — an edit is valued on those, not
+    // on whatever the settings say today. Read by the preview only.
+    pointsPerSheet: d.pointsPerSheet,
+    deductionPct: d.deductionPct,
+  });
+
+  const saveQc = async (ev, allowDuplicates = false) => {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (!qcForm.members.length) { toast.error('Choose who is doing QC'); return; }
+    setSavingQc(true);
+    const wasEdit = !!qcForm._id;
+    try {
+      const payload = {
+        date: qcForm.date,
+        members: qcForm.members,
+        // Blank is a real answer: QC is set in the morning and counted in the
+        // evening. `null`, never 0.
+        sheets: qcForm.sheets === '' || qcForm.sheets == null ? null : Number(qcForm.sheets),
+        note: qcForm.note,
+      };
+      if (allowDuplicates) payload.allowDuplicates = true;
+      if (wasEdit) await api.put(`/incentives/qc/${qcForm._id}`, payload);
+      else await api.post('/incentives/qc', payload);
+      setQcForm(null);
+      await load({ quiet: true });
+      toast.success(wasEdit ? 'QC updated' : 'QC set for the day');
+    } catch (err) {
+      const data = err.response?.data;
+      // Somebody here is already on another QC that day, and would be paid
+      // twice. Warn, then proceed only if the user says it is genuine.
+      if (err.response?.status === 409 && data?.code === 'DUPLICATE_PEOPLE') {
+        const shown = (data.people || []).map((x) => `${x.employeeCode ? `${x.employeeCode} · ` : ''}${x.name}`);
+        if (data.count > shown.length) shown.push(`…and ${data.count - shown.length} more`);
+        const proceed = await confirmDialog({
+          tone: 'warning',
+          title: 'Already doing QC that day',
+          message: `${data.count} of these people are already on another QC for the same day and would earn twice. Save it anyway?`,
+          details: shown,
+          confirmText: 'Save anyway',
+        });
+        if (proceed) await saveQc(null, true);
+        return;
+      }
+      toast.error(data?.message || 'Could not save');
+    } finally {
+      setSavingQc(false);
+    }
+  };
+
+  /** The evening job for QC — one number in the row, as for a team. */
+  const fillQcSheets = async (d) => {
+    const raw = qcFillDraft[d._id];
+    if (raw === undefined || raw === '') { toast.error('Enter how many sheets QC is credited with'); return; }
+    setQcFilling(d._id);
+    try {
+      await api.put(`/incentives/qc/${d._id}`, { sheets: Number(raw) });
+      setQcFillDraft((x) => { const next = { ...x }; delete next[d._id]; return next; });
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save the sheets');
+    } finally {
+      setQcFilling('');
+    }
+  };
+
+  const removeQc = async (d) => {
+    const names = (d.members || []).map((m) => m.name).filter(Boolean).join(', ');
+    const ok = await confirmDialog({
+      tone: 'danger',
+      title: 'Delete this QC day?',
+      message: `${fmtDate(d.date)} — QC by ${names || `${d.headCount} people`} (${d.sheets == null ? 'sheet count not filled in yet' : `${points(d.teamPoints)} points`}). This cannot be undone.`,
+      confirmText: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/incentives/qc/${d._id}`);
+      await load({ quiet: true });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not delete');
+    }
+  };
+
+  /**
+   * Change one of QC's two figures. Like the teams' pair, it fills in a NEW QC
+   * day and never restates one already recorded — each froze its own copy.
+   */
+  const saveQcSetting = async (ev) => {
+    ev.preventDefault();
+    setSavingQcSetting(true);
+    try {
+      const { data } = await api.put('/incentives/settings', { [qcSettingForm.key]: qcSettingForm.value });
+      setSettings((st) => ({ ...st, ...data.settings }));
+      setQcSettingForm(null);
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not save');
+    } finally {
+      setSavingQcSetting(false);
+    }
+  };
+
   const runImport = async (ev) => {
     ev.preventDefault();
     const file = importFileRef.current?.files?.[0];
@@ -517,6 +743,9 @@ export default function AdminBoysIncentive() {
     [month],
   );
 
+  // The Per employee tab's QC column, shown only when somebody did QC in range.
+  const showQcColumn = (summary.totals?.qcDays || 0) > 0 || summary.people.some((p) => p.qcDays > 0);
+
   const exportQuery = useMemo(() => {
     const p = new URLSearchParams();
     if (month) p.set('month', month);
@@ -560,15 +789,30 @@ export default function AdminBoysIncentive() {
     };
   }, [form, settings.pointsPerSheet, settings.rupeePerPoint, settings.deductionPct]);
 
+  // The QC form's live arithmetic — the same sum the server does.
+  const qcPreview = useMemo(() => {
+    if (!qcForm) return null;
+    return qcSum(
+      qcForm.sheets,
+      qcForm.members?.length || 0,
+      qcForm.pointsPerSheet ?? settings.qcPointsPerSheet,
+      qcForm.deductionPct ?? settings.qcDeductionPct,
+    );
+  }, [qcForm, settings.qcPointsPerSheet, settings.qcDeductionPct]);
+
   return (
     <div>
       <PageHeader
         title="Boys Incentive"
-        subtitle={`One team a day. Sheets × points a sheet, less the deduction, is what the team is credited with — split equally between everyone on it, the picker included.${
-          // A picker's one restriction, said once and in the open. The row only
-          // has room for "Saved", and a tooltip is invisible on a touch screen.
-          isManager ? '' : ' Pick your team each morning — once it is saved, the manager of this incentive makes any correction.'
-        }`}
+        subtitle={tab === 'qc'
+          ? `Who is doing QC each day — set in the morning, sheet count filled in the evening. Sheets × ${points(settings.qcPointsPerSheet)} points, less ${points(settings.qcDeductionPct)}%, split equally between everyone on QC that day.${
+            isManager ? '' : ' The manager of this incentive sets it.'
+          }`
+          : `One team a day. Sheets × points a sheet, less the deduction, is what the team is credited with — split equally between everyone on it, the picker included.${
+            // A picker's one restriction, said once and in the open. The row only
+            // has room for "Saved", and a tooltip is invisible on a touch screen.
+            isManager ? '' : ' Pick your team each morning — once it is saved, the manager of this incentive makes any correction.'
+          }`}
       >
         {tab !== 'points' && (
           <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
@@ -576,15 +820,27 @@ export default function AdminBoysIncentive() {
         )}
         <button onClick={() => downloadFile(`/incentives/export.xlsx${exportQuery}`, 'incentive.xlsx')}
           className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Export</button>
-        {!viewOnly && isManager && (
-          <button onClick={() => setShowImport(true)}
-            className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Import Excel</button>
-        )}
-        {!viewOnly && (
-          <button onClick={openCreate}
-            className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-            {isManager ? '+ Record a day' : "+ Pick today's team"}
-          </button>
+        {tab === 'qc' ? (
+          // QC is the manager's to set — a picker gets no button here at all.
+          !viewOnly && isManager && (
+            <button onClick={openQcCreate}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+              + Set QC for a day
+            </button>
+          )
+        ) : (
+          <>
+            {!viewOnly && isManager && (
+              <button onClick={() => setShowImport(true)}
+                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Import Excel</button>
+            )}
+            {!viewOnly && (
+              <button onClick={openCreate}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
+                {isManager ? '+ Record a day' : "+ Pick today's team"}
+              </button>
+            )}
+          </>
         )}
       </PageHeader>
 
@@ -599,10 +855,11 @@ export default function AdminBoysIncentive() {
         ))}
       </div>
 
-      {tab === 'entries' && (
+      {(tab === 'entries' || tab === 'qc') && (
         <>
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search team, person or note…"
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder={tab === 'qc' ? 'Search person or note…' : 'Search team, person or note…'}
               className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
             {refreshing && <span className="text-xs text-gray-400">Refreshing…</span>}
           </div>
@@ -742,6 +999,117 @@ export default function AdminBoysIncentive() {
         )
       )}
 
+      {/* --------------------------------------------------------------- QC -- */}
+      {tab === 'qc' && (
+        loading ? (
+          <p className="text-sm text-gray-500">Loading…</p>
+        ) : (
+          <>
+            {qcTotals && qcDays.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                {[
+                  ['Days', qcTotals.days, ''],
+                  ['People on QC', qcTotals.people, ''],
+                  ['Sheets', qcTotals.sheets,
+                    qcTotals.pending ? `${qcTotals.pending} day${qcTotals.pending === 1 ? '' : 's'} not filled in` : ''],
+                  ['QC points', points(qcTotals.points), qcTotals.pending ? 'so far' : ''],
+                ].map(([label, value, hint]) => (
+                  <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
+                    <div className="text-xs text-gray-500">{label}</div>
+                    <div className="text-xl font-semibold text-gray-900 mt-0.5">{value}</div>
+                    {hint ? <div className="text-[11px] text-amber-600 mt-0.5">{hint}</div> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {qcDays.length === 0 ? (
+              <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
+                No QC set for this month yet.
+                {!viewOnly && isManager && <> Set who is doing QC each morning, and fill in the sheets that evening.</>}
+              </div>
+            ) : (
+              <div className="bg-white shadow rounded-xl overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-medium">Date</th>
+                      <th className="text-left px-4 py-3 font-medium">QC</th>
+                      <th className="text-right px-4 py-3 font-medium">Sheets</th>
+                      <th className="text-right px-4 py-3 font-medium">QC points</th>
+                      <th className="text-right px-4 py-3 font-medium">Points each</th>
+                      {!viewOnly && isManager && <th className="px-4 py-3" />}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {qcDays.map((d) => (
+                      <tr key={d._id} className="align-top">
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="text-gray-900">{fmtDate(d.date)}</div>
+                          {d.sheets == null && (
+                            <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800">
+                              Awaiting sheet count
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 min-w-[220px]">
+                          <ul className="space-y-0.5">
+                            {(d.members || []).map((m) => (
+                              <li key={String(m.employee)} className="text-gray-900">
+                                {m.name}
+                                {m.employeeCode && <span className="text-xs text-gray-400"> · {m.employeeCode}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                          {d.note && <div className="text-xs text-gray-400 mt-1">{d.note}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {d.sheets != null ? d.sheets : (viewOnly || !isManager ? '—' : (
+                            /* The evening job, in the row it belongs to — as for a team. */
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              <input type="number" min="0" step="1" inputMode="numeric"
+                                aria-label="Sheets QC is credited with"
+                                value={qcFillDraft[d._id] ?? ''}
+                                onChange={(ev) => setQcFillDraft({ ...qcFillDraft, [d._id]: ev.target.value })}
+                                onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fillQcSheets(d); } }}
+                                className="w-20 border rounded-lg px-2 py-1 text-right" />
+                              <button type="button" onClick={() => fillQcSheets(d)} disabled={qcFilling === d._id}
+                                className="text-blue-600 hover:underline text-xs">
+                                {qcFilling === d._id ? '…' : 'Save'}
+                              </button>
+                            </span>
+                          ))}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {d.sheets == null ? '—' : points(d.teamPoints)}
+                          <div className="text-[11px] text-gray-400">{points(d.pointsPerSheet)}/sheet</div>
+                          {/* The working, so the credited figure reconciles
+                              against the sheets. */}
+                          {d.sheets != null && d.deductionPoints > 0 && (
+                            <div className="text-[11px] text-gray-400">
+                              {points(d.grossPoints)} less {points(d.deductionPoints)} ({points(d.deductionPct)}%)
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
+                          {d.sheets == null ? '—' : points(d.perPersonPoints)}
+                        </td>
+                        {!viewOnly && isManager && (
+                          <td className="px-4 py-3 whitespace-nowrap text-right">
+                            <button onClick={() => openQcEdit(d)} className="text-blue-600 hover:underline">Edit</button>
+                            <button onClick={() => removeQc(d)} className="text-red-600 hover:underline ml-3">Delete</button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )
+      )}
+
       {/* ---------------------------------------------------------- summary -- */}
       {tab === 'summary' && (
         loading ? (
@@ -767,8 +1135,10 @@ export default function AdminBoysIncentive() {
                   ['Teams', summary.totals.teams, ''],
                   ['Sheet Rolled', summary.totals.sheets, ''],
                   ['Points earned', points(summary.totals.points),
+                    // `pending` counts QC days waiting on a count as well as
+                    // teams, so the wording names neither.
                     summary.totals.pending
-                      ? `not final — ${summary.totals.pending} team${summary.totals.pending === 1 ? '' : 's'} still to fill in`
+                      ? `not final — ${summary.totals.pending} sheet count${summary.totals.pending === 1 ? '' : 's'} still to fill in`
                       : ''],
                   ['Still owed', points(summary.totals.unpaidPoints),
                     summary.totals.unpaidPoints ? 'not marked paid' : 'all settled'],
@@ -790,6 +1160,9 @@ export default function AdminBoysIncentive() {
                     <th className="text-right px-4 py-3 font-medium">Days</th>
                     <th className="text-right px-4 py-3 font-medium">Days as picker</th>
                     <th className="text-right px-4 py-3 font-medium">Sheet Rolled</th>
+                    {/* Only when somebody did QC in the range — a column of
+                        dashes on every month before QC existed says nothing. */}
+                    {showQcColumn && <th className="text-right px-4 py-3 font-medium">QC points</th>}
                     <th className="text-right px-4 py-3 font-medium">Points earned</th>
                     <th className="text-right px-4 py-3 font-medium">Paid</th>
                     <th className="text-right px-4 py-3 font-medium">Still owed</th>
@@ -807,6 +1180,12 @@ export default function AdminBoysIncentive() {
                       <td className="px-4 py-3 text-right tabular-nums">{p.days}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{p.pickerDays}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{p.sheets}</td>
+                      {showQcColumn && (
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {p.qcPoints ? points(p.qcPoints) : '—'}
+                          {p.qcDays ? <div className="text-[11px] text-gray-400">{p.qcDays} day{p.qcDays === 1 ? '' : 's'}</div> : null}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">{points(p.points)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-green-700">{points(p.paidPoints)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">{points(p.unpaidPoints)}</td>
@@ -993,6 +1372,73 @@ export default function AdminBoysIncentive() {
             </form>
           )}
         </div>
+
+        {/* QC's own pair — separate figures that start at the teams' numbers
+            (4 a sheet, 30% off) and can move on their own. */}
+        {[
+          {
+            key: 'qcPointsPerSheet',
+            title: 'QC — points per sheet',
+            text: 'What one sheet is worth to the day\'s QC. It fills in a new QC day; a day already recorded keeps the figure it was saved with.',
+            value: settings.qcPointsPerSheet,
+            suffix: '',
+            unit: 'points per sheet',
+            label: 'QC points per sheet *',
+            max: undefined,
+          },
+          {
+            key: 'qcDeductionPct',
+            title: 'QC — deduction',
+            text: 'How much comes off QC\'s points before they are credited, the same way it comes off a team\'s. Settled outside the portal.',
+            value: settings.qcDeductionPct,
+            suffix: '%',
+            unit: 'off QC\'s points',
+            label: 'QC deduction (%) *',
+            max: '100',
+          },
+        ].map((c) => {
+          const ex = qcSum(100, 2, settings.qcPointsPerSheet, settings.qcDeductionPct);
+          return (
+            <div key={c.key} className="bg-white shadow rounded-xl p-6">
+              <h2 className="card-title mb-1">{c.title}</h2>
+              <p className="text-sm text-gray-500 mb-4">{c.text}</p>
+              {qcSettingForm?.key !== c.key ? (
+                <>
+                  <div className="text-3xl font-semibold text-gray-900">{points(c.value)}{c.suffix}</div>
+                  <div className="text-xs text-gray-500 mt-1">{c.unit}</div>
+                  <p className="text-xs text-gray-400 mt-4">
+                    Two people on QC for 100 sheets: {points(ex.gross)} points, {points(ex.cut)} comes off, QC is
+                    credited with {points(ex.credited)} — {points(ex.each)} each.
+                  </p>
+                  {!viewOnly && (
+                    <button onClick={() => setQcSettingForm({ key: c.key, value: String(c.value) })}
+                      className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
+                  )}
+                </>
+              ) : (
+                <form onSubmit={saveQcSetting} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{c.label}</label>
+                    <input autoFocus required type="number" min="0" max={c.max} step="0.01" value={qcSettingForm.value}
+                      onChange={(e) => setQcSettingForm({ ...qcSettingForm, value: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2" />
+                    <p className="text-xs text-gray-400 mt-1">
+                      A QC day already recorded keeps the figure it was saved with.
+                    </p>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button type="button" onClick={() => setQcSettingForm(null)}
+                      className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                    <button type="submit" disabled={savingQcSetting}
+                      className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                      {savingQcSetting ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          );
+        })}
         </div>
       )}
 
@@ -1136,6 +1582,99 @@ export default function AdminBoysIncentive() {
                 <button type="submit" disabled={saving}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
                   {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------------- set QC -- */}
+      {qcForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
+            <h2 className="card-title mb-4">{qcForm._id ? 'Edit the QC day' : 'Set QC for a day'}</h2>
+            <form onSubmit={saveQc} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                  <input required type="date" value={qcForm.date}
+                    onChange={(e) => setQcForm({ ...qcForm, date: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Sheets</label>
+                  <input type="number" min="0" step="1" value={qcForm.sheets} placeholder="Fill in this evening"
+                    onChange={(e) => setQcForm({ ...qcForm, sheets: e.target.value })}
+                    className="block w-full border rounded-lg px-3 py-2" />
+                  <p className="text-xs text-gray-400 mt-1">Leave it blank to set who is on QC now.</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Who is doing QC *</label>
+                <SearchableSelect
+                  multiple
+                  value={qcForm.members}
+                  onChange={(e) => setQcForm({ ...qcForm, members: e.target.value })}
+                  options={qcOptions}
+                  placeholder="Pick the QC people"
+                  searchPlaceholder="Search by code or name…"
+                  className="block w-full border rounded-lg px-3 py-2 text-left"
+                />
+                {qcForm.members.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {qcForm.members.map((mid) => {
+                      const p = peopleById.get(String(mid));
+                      return (
+                        <span key={mid} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 rounded-lg px-2 py-1">
+                          {p ? (p.employeeCode || p.name) : mid}
+                          <button type="button" aria-label="Remove"
+                            onClick={() => setQcForm({ ...qcForm, members: qcForm.members.filter((m) => m !== mid) })}
+                            className="text-gray-400 hover:text-red-600">×</button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1">
+                  Staff designated QC are listed first. Everybody on QC takes an equal share.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Note</label>
+                <input value={qcForm.note} onChange={(e) => setQcForm({ ...qcForm, note: e.target.value })}
+                  className="block w-full border rounded-lg px-3 py-2" />
+              </div>
+
+              {qcPreview && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                  <strong>{qcPreview.heads}</strong> {qcPreview.heads === 1 ? 'person' : 'people'} on QC
+                  {qcPreview.pending ? (
+                    <>{' '}· sheet count not filled in — save now and fill it this evening</>
+                  ) : (
+                    <>
+                      {qcPreview.cut > 0 ? (
+                        <>
+                          {' '}· {points(qcPreview.gross)} points less {points(qcPreview.cut)} ({points(qcPreview.pct)}%) ={' '}
+                          <strong>{points(qcPreview.credited)} points</strong>
+                        </>
+                      ) : (
+                        <>{' '}· QC earns <strong>{points(qcPreview.credited)} points</strong></>
+                      )}
+                      {' '}· <strong>{points(qcPreview.each)} points</strong> each
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setQcForm(null)}
+                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="submit" disabled={savingQc}
+                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  {savingQc ? 'Saving…' : 'Save'}
                 </button>
               </div>
             </form>

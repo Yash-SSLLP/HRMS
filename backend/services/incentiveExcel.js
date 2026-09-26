@@ -300,12 +300,13 @@ async function parseWorkbook(buffer) {
 // ----- export -----
 
 /**
- * Write the incentive export: the day-by-day teams, and what each person earned.
+ * Write the incentive export: the day-by-day teams, the day's QC, and what each
+ * person earned.
  *
- * Three sheets in one file on purpose — "who was on which team", "how many
- * points does each person have this month" and "where did the points that were
- * not rolled come from" are the questions this module exists to answer, and a
- * finance team asked one is about to ask the next.
+ * Four sheets in one file on purpose — "who was on which team", "who did QC",
+ * "how many points does each person have this month" and "where did the points
+ * that were not rolled come from" are the questions this module exists to
+ * answer, and a finance team asked one is about to ask the next.
  *
  * IN POINTS, NOT RUPEES (user decision 2026-09-10). The whole module counts in
  * points; what a point is worth is one number, set on Incentive > Point Rate,
@@ -313,12 +314,16 @@ async function parseWorkbook(buffer) {
  * @param {import('http').ServerResponse} res - Express response
  * @param {object} data
  * @param {Object[]} data.entries - IncentiveEntry lean docs, newest first
- * @param {Object[]} data.people - summary rows: {name, employeeCode, department, days, pickerDays, sheets, teamPoints, creditPoints, points, paidPoints, unpaidPoints}
+ * @param {Object[]} [data.qcDays] - IncentiveQcDay lean docs, newest first: the day's QC
+ * @param {Object[]} data.people - summary rows: {name, employeeCode, department, days, pickerDays, sheets, qcDays, teamPoints, qcPoints, creditPoints, points, paidPoints, unpaidPoints}
+ *   — `teamPoints` is every day's points, QC included; this sheet splits it
  * @param {Object[]} [data.credits] - IncentiveCredit lean docs: points handed over outside any team-day
  * @param {string} [data.rangeLabel] - human range, written into the sheet title cell note
  * @returns {Promise<void>}
  */
-async function writeExport(res, { entries = [], people = [], credits = [], rangeLabel = '' } = {}) {
+async function writeExport(res, {
+  entries = [], qcDays = [], people = [], credits = [], rangeLabel = '',
+} = {}) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Sequence Surface';
   wb.created = new Date();
@@ -381,7 +386,62 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
     totalRow.font = { bold: true };
   }
 
-  // Sheet 2 — per person, which is what actually gets paid out.
+  // Sheet 2 — the day's QC: who did it, the sheets it was credited with, and the
+  // same gross / deduction / credited working as a team, at QC's own figures.
+  const qs = wb.addWorksheet('QC');
+  qs.columns = [
+    { header: 'Date', key: 'date', width: 14 },
+    { header: 'QC', key: 'people', width: 60 },
+    { header: 'People', key: 'heads', width: 10 },
+    { header: 'Sheets', key: 'sheets', width: 10 },
+    { header: 'Points/sheet', key: 'perSheet', width: 12 },
+    { header: 'Gross points', key: 'grossPoints', width: 13 },
+    { header: 'Deduction %', key: 'deductionPct', width: 12 },
+    { header: 'Deducted', key: 'deductionPoints', width: 11 },
+    { header: 'QC points', key: 'teamPoints', width: 12 },
+    { header: 'Points each', key: 'pointsEach', width: 12 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Note', key: 'note', width: 28 },
+    { header: 'Recorded by', key: 'by', width: 22 },
+  ];
+  styleHeader(qs, rangeLabel ? `QC — ${rangeLabel}` : '');
+  for (const d of qcDays) {
+    const pending = d.sheets == null;
+    qs.addRow({
+      date: fmtDate(d.date),
+      people: (d.members || []).map(nameOf).join(', '),
+      heads: d.headCount || 0,
+      sheets: pending ? '' : d.sheets,
+      perSheet: d.pointsPerSheet || 0,
+      grossPoints: pending ? '' : (d.grossPoints || 0),
+      deductionPct: d.deductionPct == null ? '' : d.deductionPct,
+      deductionPoints: pending ? '' : (d.deductionPoints || 0),
+      teamPoints: pending ? '' : (d.teamPoints || 0),
+      pointsEach: pending ? '' : (d.perPersonPoints || 0),
+      status: pending ? 'Pending' : 'Recorded',
+      note: d.note || '',
+      by: d.updatedByName || d.createdByName || '',
+    });
+  }
+  ['grossPoints', 'deductionPoints', 'teamPoints', 'pointsEach']
+    .forEach((k) => { qs.getColumn(k).numFmt = '#,##0.##'; });
+  if (qcDays.length) {
+    const totalRow = qs.addRow({
+      date: 'TOTAL',
+      sheets: qcDays.reduce((s, d) => s + (d.sheets || 0), 0),
+      grossPoints: Math.round(qcDays.reduce((s, d) => s + (d.grossPoints || 0), 0) * 100) / 100,
+      deductionPoints: Math.round(qcDays.reduce((s, d) => s + (d.deductionPoints || 0), 0) * 100) / 100,
+      teamPoints: Math.round(qcDays.reduce((s, d) => s + (d.teamPoints || 0), 0) * 100) / 100,
+    });
+    totalRow.font = { bold: true };
+  }
+
+  // Sheet 3 — per person, which is what actually gets paid out.
+  //
+  // Team points and QC points are SPLIT here, although the roll-up carries QC
+  // inside `teamPoints` (so every screen's three sources still add up): in a
+  // payout sheet the columns have to add across to Points, and a QC column
+  // sitting beside a team column that already contains it would count it twice.
   const ps = wb.addWorksheet('Per employee');
   ps.columns = [
     { header: 'Employee Code', key: 'code', width: 16 },
@@ -390,13 +450,16 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
     { header: 'Days', key: 'days', width: 10 },
     { header: 'Days as picker', key: 'pickerDays', width: 14 },
     { header: 'Sheet Rolled', key: 'sheets', width: 12 },
+    { header: 'QC days', key: 'qcDays', width: 10 },
     { header: 'Team points', key: 'teamPoints', width: 13 },
+    { header: 'QC points', key: 'qcPoints', width: 12 },
     { header: 'Credited points', key: 'creditPoints', width: 15 },
     { header: 'Points', key: 'points', width: 12 },
     { header: 'Paid', key: 'paidPoints', width: 12 },
     { header: 'Unpaid', key: 'unpaidPoints', width: 12 },
   ];
   styleHeader(ps, rangeLabel ? `Per-employee incentive — ${rangeLabel}` : '');
+  const rolled = (p) => Math.round(((p.teamPoints || 0) - (p.qcPoints || 0)) * 100) / 100;
   for (const p of people) {
     ps.addRow({
       code: p.employeeCode || '',
@@ -405,21 +468,25 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
       days: p.days || 0,
       pickerDays: p.pickerDays || 0,
       sheets: p.sheets || 0,
-      teamPoints: p.teamPoints || 0,
+      qcDays: p.qcDays || 0,
+      teamPoints: rolled(p),
+      qcPoints: p.qcPoints || 0,
       creditPoints: p.creditPoints || 0,
       points: p.points || 0,
       paidPoints: p.paidPoints || 0,
       unpaidPoints: p.unpaidPoints || 0,
     });
   }
-  ['teamPoints', 'creditPoints', 'points', 'paidPoints', 'unpaidPoints'].forEach((k) => { ps.getColumn(k).numFmt = '#,##0.##'; });
+  ['teamPoints', 'qcPoints', 'creditPoints', 'points', 'paidPoints', 'unpaidPoints'].forEach((k) => { ps.getColumn(k).numFmt = '#,##0.##'; });
   if (people.length) {
     const totalRow = ps.addRow({
       code: 'TOTAL',
       days: people.reduce((s, p) => s + (p.days || 0), 0),
       pickerDays: people.reduce((s, p) => s + (p.pickerDays || 0), 0),
       sheets: people.reduce((s, p) => s + (p.sheets || 0), 0),
-      teamPoints: Math.round(people.reduce((s, p) => s + (p.teamPoints || 0), 0) * 100) / 100,
+      qcDays: people.reduce((s, p) => s + (p.qcDays || 0), 0),
+      teamPoints: Math.round(people.reduce((s, p) => s + rolled(p), 0) * 100) / 100,
+      qcPoints: Math.round(people.reduce((s, p) => s + (p.qcPoints || 0), 0) * 100) / 100,
       creditPoints: Math.round(people.reduce((s, p) => s + (p.creditPoints || 0), 0) * 100) / 100,
       points: Math.round(people.reduce((s, p) => s + (p.points || 0), 0) * 100) / 100,
       paidPoints: Math.round(people.reduce((s, p) => s + (p.paidPoints || 0), 0) * 100) / 100,
@@ -428,7 +495,7 @@ async function writeExport(res, { entries = [], people = [], credits = [], range
     totalRow.font = { bold: true };
   }
 
-  // Sheet 3 — the credits, which is the only place the REASON for a bonus is
+  // Sheet 4 — the credits, which is the only place the REASON for a bonus is
   // written down. Without it, a payout larger than the day-by-day record can
   // account for has no explanation anywhere in the file.
   const cs = wb.addWorksheet('Credits');

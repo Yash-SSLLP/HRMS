@@ -175,7 +175,37 @@ const FakeCredit = {
   },
 };
 
+// The day's QC — a fourth in-memory collection, and one every roll-up has to
+// read (controllers/incentiveController qcDaysIn). Unstubbed, the real model
+// would wait on a database that is not there and hang the whole run. Same
+// save-time arithmetic as a team-day: the real recalc.
+const qcStore = [];
+let nextQcId = 1;
+function FakeQc(fields) {
+  Object.assign(this, fields);
+}
+FakeQc.prototype.save = async function save() {
+  if (this.date) {
+    const d = new Date(this.date);
+    this.date = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+  }
+  RealEntry.recalc(this);
+  if (!this._id) {
+    this._id = `64b00000000000000000000${nextQcId++}`;
+    qcStore.push(this);
+  }
+  return this;
+};
+FakeQc.prototype.deleteOne = async function deleteOne() {
+  const i = qcStore.indexOf(this);
+  if (i >= 0) qcStore.splice(i, 1);
+};
+FakeQc.find = (filter) => query(qcStore.filter((d) => matches(d, filter)));
+FakeQc.findOne = (filter) => query(qcStore.find((d) => matches(d, filter)) || null);
+FakeQc.create = async (fields) => new FakeQc(fields).save();
+
 stub('../models/IncentiveEntry', FakeEntry);
+stub('../models/IncentiveQcDay', FakeQc);
 stub('../models/IncentivePayment', FakePayment);
 stub('../models/IncentiveCredit', FakeCredit);
 stub('../models/Setting', { getSettings: async () => settingsDoc });
@@ -782,20 +812,27 @@ const DAY2 = '2026-09-11';
     assert.ok(res.payload.people.some((x) => x.department === 'Packing'));
   });
 
-  await check('three settings, all validated, and nothing else', async () => {
+  await check('five settings — the teams\' pair, QC\'s pair and the point value — all validated, and nothing else', async () => {
     const read = await call(ctrl.getSettings);
     assert.deepStrictEqual(
       Object.keys(read.payload.settings).sort(),
-      ['deductionPct', 'pointsPerSheet', 'rupeePerPoint'],
+      ['deductionPct', 'pointsPerSheet', 'qcDeductionPct', 'qcPointsPerSheet', 'rupeePerPoint'],
     );
+    assert.strictEqual(read.payload.settings.qcPointsPerSheet, 4, 'QC starts at 4 a sheet');
+    assert.strictEqual(read.payload.settings.qcDeductionPct, 30, 'and 30% off');
 
-    for (const body of [{ rupeePerPoint: -1 }, { pointsPerSheet: -5 }, { deductionPct: -1 }]) {
+    for (const body of [
+      { rupeePerPoint: -1 }, { pointsPerSheet: -5 }, { deductionPct: -1 },
+      { qcPointsPerSheet: -1 }, { qcDeductionPct: -1 },
+    ]) {
       const bad = await call(ctrl.updateSettings, { body });
       assert.strictEqual(bad.statusCode, 400, `a negative ${Object.keys(body)[0]} is refused`);
     }
-    // More than everything is refused too — a team cannot give away 120%.
+    // More than everything is refused too — a team cannot give away 120%, nor QC.
     const tooMuch = await call(ctrl.updateSettings, { body: { deductionPct: 120 } });
     assert.strictEqual(tooMuch.statusCode, 400);
+    const qcTooMuch = await call(ctrl.updateSettings, { body: { qcDeductionPct: 120 } });
+    assert.strictEqual(qcTooMuch.statusCode, 400);
 
     const ok = await call(ctrl.updateSettings, {
       body: { rupeePerPoint: 0.5, pointsPerSheet: 6, defaultDepartment: 'Packing' },
@@ -1403,6 +1440,238 @@ const DAY2 = '2026-09-11';
     assert.strictEqual(off.payload.leaderboard.enabled, false);
     assert.strictEqual(off.payload.leaderboard.visibility.length, 1, 'the rule is still there');
     resetBoard();
+  });
+
+  // ------------------------------------------------------------------ QC ---
+  // The day's QC (user decision 2026-09-26): a MANAGER sets who is doing QC in
+  // the morning — one or several — and fills the count in the evening; QC's own
+  // 4 points a sheet less QC's own 30%, split equally. Dated into January 2027
+  // and run LAST, because the leaderboard is lifetime: a QC day recorded any
+  // earlier would move totals the checks above pin.
+  console.log('\nQC');
+  const QC_MONTH = '2027-01';
+  const QC1 = '2027-01-05';
+  const QC2 = '2027-01-06';
+  const round = (n) => Math.round(n * 100) / 100;
+  resetBoard();
+  // Everybody's lifetime total BEFORE any QC exists, to measure what QC adds.
+  const boardBefore = await call(ctrl.leaderboard, { query: { month: QC_MONTH } });
+  const totalOf = (res, n) => res.payload.people.find((r) => r.employeeCode === `SSL10${n}`).totalPoints;
+  // Person 4's share of the rolling team that also works on QC1 (see below).
+  let teamShare = 0;
+
+  await check('QC is set in the morning with no count, and earns nothing until the evening', async () => {
+    const res = await call(ctrl.createQc, { body: { date: QC1, members: [id(4), id(5)] } });
+    assert.strictEqual(res.statusCode, 201, res.error || JSON.stringify(res.payload));
+    const day = res.payload.day;
+    assert.strictEqual(day.sheets, null, 'blank, never 0');
+    assert.strictEqual(day.headCount, 2);
+    assert.strictEqual(day.teamPoints, 0);
+    assert.strictEqual(day.pointsPerSheet, 4, "QC's own figure, frozen on the day");
+    assert.strictEqual(day.deductionPct, 30);
+    assert.strictEqual(String(day.company), COMPANY, 'the first QC person\'s company');
+    assert.strictEqual(ymd(day.date), QC1);
+    assert.ok(!day.picker, 'nobody leads a QC day');
+
+    const list = await call(ctrl.listQc, { query: { month: QC_MONTH } });
+    assert.strictEqual(list.payload.count, 1);
+    assert.strictEqual(list.payload.totals.pending, 1);
+    assert.strictEqual(list.payload.totals.points, 0);
+    assert.strictEqual(list.payload.totals.people, 2);
+  });
+
+  await check("the evening's count pays QC 4 a sheet, less 30%, split equally", async () => {
+    const day = qcStore.find((d) => ymd(d.date) === QC1);
+    const res = await call(ctrl.updateQc, { params: { id: day._id }, body: { sheets: 100 } });
+    assert.strictEqual(res.statusCode, 200, res.error);
+    const d = res.payload.day;
+    assert.strictEqual(d.grossPoints, 400, '100 sheets x 4');
+    assert.strictEqual(d.deductionPoints, 120, '30% of it');
+    assert.strictEqual(d.teamPoints, 280, 'what QC is credited with');
+    assert.strictEqual(d.perPersonPoints, 140, 'split between the two');
+    assert.strictEqual(d.sheetsFilledByName, 'The Backend', 'who closed the day off');
+  });
+
+  await check('somebody already doing QC that day is warned about, not paid twice', async () => {
+    const clash = await call(ctrl.createQc, { body: { date: QC1, members: [id(4)] } });
+    assert.strictEqual(clash.statusCode, 409);
+    assert.strictEqual(clash.payload.code, 'DUPLICATE_PEOPLE');
+    assert.strictEqual(clash.payload.count, 1);
+    const anyway = await call(ctrl.createQc, { body: { date: QC1, members: [id(4)], allowDuplicates: true } });
+    assert.strictEqual(anyway.statusCode, 201, 'recorded once acknowledged');
+    // Filling a count changes nobody, so it never re-raises the warning.
+    const refill = await call(ctrl.updateQc, { params: { id: anyway.payload.day._id }, body: { sheets: 3 } });
+    assert.strictEqual(refill.statusCode, 200, refill.error);
+    const gone = await call(ctrl.deleteQc, { params: { id: anyway.payload.day._id } });
+    assert.strictEqual(gone.statusCode, 200);
+    assert.strictEqual(qcStore.length, 1, 'deleted');
+  });
+
+  await check('QC is a separate job: rolling with a team the same day is no clash', async () => {
+    const team = await call(ctrl.createEntry, { body: { date: QC1, picker: id(1), members: [id(4)], sheets: 10 } });
+    assert.strictEqual(team.statusCode, 201, team.error || JSON.stringify(team.payload));
+    teamShare = team.payload.entry.perPersonPoints;
+    assert.ok(teamShare > 0);
+  });
+
+  await check('QC needs somebody on it, somebody who can be picked, and a date', async () => {
+    const none = await call(ctrl.createQc, { body: { date: QC2, members: [] } });
+    assert.strictEqual(none.statusCode, 400);
+    const stranger = await call(ctrl.createQc, { body: { date: QC2, members: ['64e000000000000000000099'] } });
+    assert.strictEqual(stranger.statusCode, 400);
+    const noDate = await call(ctrl.createQc, { body: { date: 'someday', members: [id(2)] } });
+    assert.strictEqual(noDate.statusCode, 400);
+    assert.strictEqual(qcStore.length, 1, 'nothing was written');
+  });
+
+  await check("QC's figures are its own settings, and a day keeps the ones it was recorded with", async () => {
+    const ok = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 5, qcDeductionPct: 20 } });
+    assert.strictEqual(ok.statusCode, 200, ok.error);
+    assert.strictEqual(ok.payload.settings.qcPointsPerSheet, 5);
+    assert.strictEqual(ok.payload.settings.qcDeductionPct, 20);
+    assert.strictEqual(ok.payload.settings.pointsPerSheet, 4, 'the rolling teams keep theirs');
+    assert.strictEqual(ok.payload.settings.deductionPct, 30);
+
+    const later = await call(ctrl.createQc, { body: { date: QC2, members: [id(2)], sheets: 10 } });
+    assert.strictEqual(later.statusCode, 201, later.error);
+    assert.strictEqual(later.payload.day.pointsPerSheet, 5);
+    assert.strictEqual(later.payload.day.deductionPct, 20);
+    assert.strictEqual(later.payload.day.teamPoints, 40, '10 sheets x 5 = 50, less 20%');
+    assert.strictEqual(later.payload.day.sheetsFilledByName, 'The Backend', 'a count given up front is stamped');
+    const first = qcStore.find((d) => ymd(d.date) === QC1);
+    assert.strictEqual(first.pointsPerSheet, 4, 'the earlier day is not restated');
+    assert.strictEqual(first.deductionPct, 30);
+
+    // The form's live preview reads them off the people payload.
+    const people = await call(ctrl.listPeople);
+    assert.strictEqual(people.payload.qcPointsPerSheet, 5);
+    assert.strictEqual(people.payload.qcDeductionPct, 20);
+
+    settingsDoc.incentive.qcPointsPerSheet = 4; // put the fixture back
+    settingsDoc.incentive.qcDeductionPct = 30;
+  });
+
+  await check('QC points join the ONE pool: per employee, the dashboard, my points and my history', async () => {
+    const sum = await call(ctrl.summary, { query: { month: QC_MONTH } });
+    const row = (n) => sum.payload.people.find((r) => r.employeeCode === `SSL10${n}`);
+    assert.strictEqual(row(4).qcPoints, 140);
+    assert.strictEqual(row(4).qcDays, 1);
+    assert.strictEqual(row(4).days, 2, 'a QC day and a team day');
+    assert.strictEqual(row(4).sheets, 10, 'Sheet Rolled counts the team, never QC');
+    assert.strictEqual(row(4).points, round(140 + teamShare));
+    assert.strictEqual(row(4).teamPoints, row(4).points, 'day points hold QC, so the sources still add up');
+    assert.strictEqual(row(5).points, 140, 'somebody who only did QC is on the roll-up');
+    assert.strictEqual(row(5).sheets, 0);
+    assert.strictEqual(row(5).pickerDays, 0);
+    assert.strictEqual(row(2).points, 40);
+    const t = sum.payload.totals;
+    assert.strictEqual(t.teams, 1, 'QC is not a rolling team');
+    assert.strictEqual(t.sheets, 10, 'sheets ROLLED — QC is not in it');
+    assert.strictEqual(t.qcDays, 2);
+    assert.strictEqual(t.qcSheets, 110);
+    assert.strictEqual(t.qcPoints, 320);
+    assert.strictEqual(t.pending, 0);
+
+    const dash = await call(ctrl.pointsDashboard, { query: { month: QC_MONTH } });
+    const d5 = dash.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.strictEqual(d5.points, 140);
+    assert.strictEqual(d5.qcPoints, 140);
+    assert.strictEqual(d5.teamPoints, 140, 'inside the day points, which the dashboard columns add');
+    assert.strictEqual(dash.payload.totals.qcPoints, 320);
+
+    FakeProfile.findOne = () => query({ _id: id(4), employeeCode: 'SSL104' });
+    const mine = await call(ctrl.myPoints, { query: { month: QC_MONTH }, user: { _id: 'u4', role: 'Employee' } });
+    const hist = await call(ctrl.myHistory, { query: { month: QC_MONTH }, user: { _id: 'u4', role: 'Employee' } });
+    FakeProfile.findOne = noProfile;
+    assert.strictEqual(mine.payload.points, row(4).points, 'the home chip agrees with the roll-up');
+    assert.strictEqual(mine.payload.qcPoints, 140);
+    assert.strictEqual(mine.payload.days, 2);
+    const qcRow = hist.payload.rows.find((r) => r.kind === 'qc');
+    assert.ok(qcRow, 'a QC day is its own kind of row');
+    assert.strictEqual(qcRow.points, 140);
+    assert.strictEqual(qcRow.sheets, 100);
+    assert.strictEqual(qcRow.role, 'QC');
+    assert.strictEqual(qcRow.teamName, 'QC', 'readable by a client that predates the kind');
+    assert.strictEqual(hist.payload.totals.days, 2, 'a QC day is a day worked');
+    assert.strictEqual(hist.payload.totals.sheets, 10, 'sheets rolled only');
+    assert.strictEqual(hist.payload.totals.qcPoints, 140);
+    assert.strictEqual(hist.payload.totals.points, row(4).points);
+  });
+
+  await check('the leaderboard counts QC in the lifetime total it ranks on', async () => {
+    resetBoard();
+    const after = await call(ctrl.leaderboard, { query: { month: QC_MONTH } });
+    assert.strictEqual(after.statusCode, 200, after.error);
+    assert.strictEqual(round(totalOf(after, 5) - totalOf(boardBefore, 5)), 140);
+    assert.strictEqual(round(totalOf(after, 4) - totalOf(boardBefore, 4)), round(140 + teamShare));
+    assert.strictEqual(round(totalOf(after, 2) - totalOf(boardBefore, 2)), 40);
+  });
+
+  await check('somebody who only did QC can be paid for it, and not a point more', async () => {
+    const pay = await call(ctrl.payPoints, { body: { month: QC_MONTH, payments: [{ employee: id(5), points: 140 }] } });
+    assert.strictEqual(pay.statusCode, 201, pay.error || JSON.stringify(pay.payload));
+    const over = await call(ctrl.payPoints, { body: { month: QC_MONTH, payments: [{ employee: id(5), points: 1 }] } });
+    assert.strictEqual(over.statusCode, 400);
+    assert.strictEqual(over.payload.code, 'OVERPAID');
+  });
+
+  await check('taking a credit back counts the QC points still held', async () => {
+    // Person 5 has been paid 140 for the month, all of it QC. A credit on top
+    // can be taken back because the QC points still cover what was paid — a
+    // check that forgot QC would read them as holding 0 and refuse.
+    const cr = await call(ctrl.createCredit, {
+      body: { employees: [id(5)], points: 10, reason: 'Stayed for the late QC', date: '2027-01-07' },
+    });
+    assert.strictEqual(cr.statusCode, 201, cr.error);
+    const back = await call(ctrl.deleteCredit, { params: { id: cr.payload.credits[0]._id } });
+    assert.strictEqual(back.statusCode, 200, back.error);
+  });
+
+  await check('the export carries a QC sheet, and splits team points from QC points', async () => {
+    const { PassThrough } = require('stream');
+    const out = new PassThrough();
+    out.setHeader = () => {};
+    const chunks = [];
+    out.on('data', (c) => chunks.push(c));
+    const ended = new Promise((resolve) => { out.on('end', resolve); });
+    await ctrl.exportXlsx({ user: REQ_USER, query: { month: QC_MONTH }, body: {}, params: {} }, out, (e) => { if (e) throw e; });
+    await ended;
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(Buffer.concat(chunks));
+
+    const qc = wb.getWorksheet('QC');
+    assert.ok(qc, 'a QC sheet');
+    const qcRows = [];
+    qc.eachRow((r) => qcRows.push(r.values));
+    assert.ok(qcRows.some((v) => v.includes(280) && v.includes('Recorded')), 'the QC1 day, credited 280');
+
+    const per = wb.getWorksheet('Per employee');
+    const header = per.getRow(1).values;
+    const col = (name) => header.indexOf(name);
+    let four = null;
+    per.eachRow((r) => { if (r.values[col('Employee Code')] === 'SSL104') four = r.values; });
+    assert.ok(four, 'person 4 is on the sheet');
+    assert.strictEqual(four[col('QC points')], 140);
+    assert.strictEqual(four[col('Team points')], teamShare, 'team points WITHOUT the QC inside them');
+    assert.strictEqual(four[col('Points')], round(140 + teamShare), 'so the columns add across');
+  });
+
+  await check('only a manager may set or correct QC; the tab may read it', async () => {
+    const router = require('../routes/incentiveRoutes');
+    const layer = (method, path) => router.stack.find((l) => l.route && l.route.path === path && l.route.methods[method]);
+    for (const [method, path] of [['post', '/qc'], ['put', '/qc/:id'], ['delete', '/qc/:id']]) {
+      const l = layer(method, path);
+      assert.ok(l, `${method.toUpperCase()} ${path} is routed`);
+      const gate = l.route.stack[0].handle;
+      let refused = null;
+      const res = { statusCode: 200, status(c) { this.statusCode = c; return this; } };
+      gate({ user: PICKER }, res, (e) => { refused = e || null; });
+      assert.ok(refused && res.statusCode === 403, `a picker is refused ${method.toUpperCase()} ${path}`);
+      let through = false;
+      gate({ user: REQ_USER }, { status() { return this; } }, (e) => { through = !e; });
+      assert.ok(through, `a manager passes ${method.toUpperCase()} ${path}`);
+    }
+    assert.strictEqual(layer('get', '/qc').route.stack.length, 1, 'GET /qc has no gate beyond the tab\'s');
   });
 
   console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures above)' : ''}\n`);

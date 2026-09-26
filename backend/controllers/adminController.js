@@ -17,7 +17,9 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const Company = require('../models/Company');
 const { ensureEmployeeProfile } = require('../services/ensureProfile');
 const { purgePerson } = require('../services/purgePerson');
-const { PERMISSIONS, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG } = require('../config/permissions');
+const {
+  PERMISSIONS, GRANTABLE_ROLES, isValidPermission, HIDDEN_FROM_CATALOG, RETIRED_PERMISSIONS,
+} = require('../config/permissions');
 const { EXECUTIVE_ROLES, COMPANY_SCOPED_ROLES, HIDDEN_ROLES, EXTERNAL_ROLES, shouldExcludeExecutives } = require('../utils/visibility');
 const { scopeUserFilter } = require('../utils/employeeScope');
 const { isEditingExec, canEditManagerProfiles, isManagerProfileRole } = require('../middleware/authMiddleware');
@@ -513,11 +515,14 @@ const getPermissionCatalog = asyncHandler(async (req, res) => {
 // Body: { permissions: [key,...] }. Meaningful for HR Manager and Manager
 // accounts (see GRANTABLE_ROLES); other roles are gated by role alone.
 const updateUserPermissions = asyncHandler(async (req, res) => {
-  const { permissions } = req.body;
-  if (!Array.isArray(permissions)) {
+  if (!Array.isArray(req.body.permissions)) {
     res.status(400);
     throw new Error('permissions must be an array of capability keys');
   }
+  // A RETIRED key is dropped, not refused: an account that has held its list
+  // since before the key was retired still carries it, and the dialog sends
+  // the list back — see RETIRED_PERMISSIONS. The account's save cleans it out.
+  const permissions = req.body.permissions.filter((p) => !RETIRED_PERMISSIONS.has(p));
   const invalid = permissions.filter((p) => !isValidPermission(p));
   if (invalid.length) {
     res.status(400);

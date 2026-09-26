@@ -27,6 +27,9 @@
  */
 const asyncHandler = require('express-async-handler');
 const IncentiveEntry = require('../models/IncentiveEntry');
+// The day's QC, in the same points pool as the teams — see qcDaysIn below for
+// the one way every roll-up fetches it.
+const IncentiveQcDay = require('../models/IncentiveQcDay');
 const IncentivePayment = require('../models/IncentivePayment');
 const IncentiveCredit = require('../models/IncentiveCredit');
 const EmployeeProfile = require('../models/EmployeeProfile');
@@ -106,8 +109,39 @@ async function incentiveSettings() {
     // gets renegotiated, and a day freezes its own copy. Where the deduction
     // goes is settled outside the portal — see models/IncentiveEntry.
     deductionPct: cfg.deductionPct == null ? 30 : Number(cfg.deductionPct),
+    // QC's own pair (models/IncentiveQcDay): 4 a sheet and 30% off to start
+    // with (user decision 2026-09-26), and separate settings because they are
+    // separate decisions that merely start at the rolling teams' numbers.
+    qcPointsPerSheet: cfg.qcPointsPerSheet == null ? 4 : Number(cfg.qcPointsPerSheet),
+    qcDeductionPct: cfg.qcDeductionPct == null ? 30 : Number(cfg.qcDeductionPct),
   };
 }
+
+/**
+ * QC days (models/IncentiveQcDay) matching the same filter fragments a roll-up
+ * built for its team-days, each marked `kind: 'qc'`.
+ *
+ * THE ONE WAY A ROLL-UP FETCHES QC. A QC day is shaped like a team-day — its
+ * people in `members`, its credited points in `teamPoints` — so
+ * IncentiveEntry.payees() reads it unchanged and every roll-up adds it with the
+ * loop it already has. What a roll-up CAN do is forget to fetch it, and then the
+ * QC people are quietly under-paid; so each one merges `[...entries,
+ * ...await qcDaysIn(and)]` and nothing else. The mark is for the few figures
+ * that are about ROLLING — Sheet Rolled, Teams, Days as picker — which leave a
+ * QC day out.
+ *
+ * A filter naming `picker.employee` still works here: a QC day has no picker,
+ * so that half of an `$or` simply never matches it.
+ * @param {Object[]} and - filter fragments, as passed to IncentiveEntry.find
+ * @returns {Promise<Object[]>} lean QC days, each with `kind: 'qc'`
+ */
+async function qcDaysIn(and) {
+  const rows = await IncentiveQcDay.find(and.length ? { $and: and } : {}).lean();
+  return rows.map((d) => ({ ...d, kind: 'qc' }));
+}
+
+/** Is this row a QC day rather than a rolling team's? */
+const isQc = (e) => !!e && e.kind === 'qc';
 
 /**
  * Company wall for IncentiveEntry rows. An entry is tagged with the company its
@@ -494,6 +528,76 @@ function buildTeam(people, pickerId, memberIds) {
   };
 }
 
+/**
+ * Build a QC day's people from submitted ids — buildTeam without the picker.
+ * Everyone listed takes an equal share; nobody leads a QC day.
+ * @param {Object[]} people - the caller's pickable people (plus, on an edit,
+ *   anyone already on the day who has since left)
+ * @param {string[]} memberIds - EmployeeProfile ids
+ * @returns {{members: Object[], company: any}}
+ * @throws {Error} with `.status` set when nobody, or somebody unselectable, is named
+ */
+function buildQc(people, memberIds) {
+  const byId = new Map(people.map((p) => [String(p._id), p]));
+  const seen = new Set();
+  const members = [];
+  let company = null;
+  for (const id of Array.isArray(memberIds) ? memberIds : []) {
+    const key = String(id || '');
+    if (!key || seen.has(key)) continue;
+    const p = byId.get(key);
+    if (!p) {
+      const err = new Error('One of the QC people is not selectable — they may have left or belong to another company');
+      err.status = 400;
+      throw err;
+    }
+    seen.add(key);
+    members.push(snapshot(p));
+    // The day belongs to the first QC person's company, the way a team-day
+    // belongs to its picker's.
+    if (company == null) company = p.company || null;
+  }
+  if (!members.length) {
+    const err = new Error('Choose who is doing QC that day');
+    err.status = 400;
+    throw err;
+  }
+  return { members, company };
+}
+
+/**
+ * Which of these people are already on ANOTHER QC day for the same date.
+ *
+ * Doing QC twice in one day pays somebody twice, and is nearly always the same
+ * QC entered twice — the teams' rule (clashingPeople), for QC. A QC person who
+ * also rolled with a team that day is NOT a clash: QC is a separate job with its
+ * own count, so the two collections are never checked against each other.
+ * @param {Date} date - the day, at local noon
+ * @param {string[]} employeeIds
+ * @param {string|null} exceptId - the QC day being edited
+ * @returns {Promise<Array<{name: string, employeeCode: string, teamName: string}>>}
+ */
+async function qcClashes(date, employeeIds, exceptId) {
+  if (!employeeIds.length) return [];
+  const [dayStart, dayEnd] = dayBounds(date);
+  const filter = {
+    date: { $gte: dayStart, $lte: dayEnd },
+    'members.employee': { $in: employeeIds },
+  };
+  if (exceptId) filter._id = { $ne: exceptId };
+  const others = await IncentiveQcDay.find(filter).select('members').lean();
+  const wanted = new Set(employeeIds.map(String));
+  const out = [];
+  for (const d of others) {
+    for (const p of d.members || []) {
+      if (p && wanted.has(String(p.employee))) {
+        out.push({ name: p.name || '', employeeCode: p.employeeCode || '', teamName: 'QC' });
+      }
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------- read routes ---
 
 /**
@@ -534,6 +638,9 @@ const listPeople = asyncHandler(async (req, res) => {
     // form can show the net before anything is saved, the same way
     // pointsPerSheet drives the live preview.
     deductionPct: settings.deductionPct,
+    // QC's own figures, for the QC form's preview in the same way.
+    qcPointsPerSheet: settings.qcPointsPerSheet,
+    qcDeductionPct: settings.qcDeductionPct,
     // WHICH ROLE the caller holds here, and which employee they are. The clients
     // draw from this rather than deciding for themselves, so what is on screen
     // cannot drift from what the server will accept — a picker gets no manager
@@ -610,13 +717,17 @@ const listEntries = asyncHandler(async (req, res) => {
 const summary = asyncHandler(async (req, res) => {
   const { filter: dateFilter, from, to } = dateRange(req.query);
   const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
-  const [entries, credits] = await Promise.all([
+  const [entries, qcDays, credits] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
+    qcDaysIn(and),
     creditsInRange(req, from, to),
   ]);
 
   const byPerson = new Map();
-  for (const e of entries) {
+  // Team-days and QC days in one pass: a QC day's people are paid out of the
+  // same pool, so their share lands in `teamPoints` (the day points) exactly as
+  // a roller's does — `qcPoints` says how much of it was QC.
+  for (const e of [...entries, ...qcDays]) {
     for (const p of IncentiveEntry.payees(e)) {
       const key = String(p.employee);
       if (!byPerson.has(key)) {
@@ -632,7 +743,9 @@ const summary = asyncHandler(async (req, res) => {
           days: 0,
           pickerDays: 0,
           sheets: 0,
+          qcDays: 0,
           teamPoints: 0,
+          qcPoints: 0,
           creditPoints: 0,
           points: 0,
           paidPoints: 0,
@@ -647,8 +760,15 @@ const summary = asyncHandler(async (req, res) => {
         row._at = e.date;
       }
       row.days += 1;
-      if (p.isPicker) row.pickerDays += 1;
-      row.sheets += e.sheets || 0;
+      if (isQc(e)) {
+        // QC checked these sheets; it did not roll them. Counting them into
+        // Sheet Rolled would credit the day's sheets twice.
+        row.qcDays += 1;
+        row.qcPoints = Math.round((row.qcPoints + (p.sharePoints || 0)) * 100) / 100;
+      } else {
+        if (p.isPicker) row.pickerDays += 1;
+        row.sheets += e.sheets || 0;
+      }
       // The share comes off the payee rather than the entry — see payees() on
       // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
@@ -670,7 +790,9 @@ const summary = asyncHandler(async (req, res) => {
         days: 0,
         pickerDays: 0,
         sheets: 0,
+        qcDays: 0,
         teamPoints: 0,
+        qcPoints: 0,
         creditPoints: 0,
         points: 0,
         paidPoints: 0,
@@ -706,17 +828,22 @@ const summary = asyncHandler(async (req, res) => {
     people,
     totals: {
       people: people.length,
+      // Rolling teams only — QC is not a team that rolled anything.
       teams: entries.length,
       sheets: entries.reduce((s, e) => s + (e.sheets || 0), 0),
+      qcDays: qcDays.length,
+      qcSheets: qcDays.reduce((s, d) => s + (d.sheets || 0), 0),
       points: Math.round(people.reduce((s, p) => s + p.points, 0) * 100) / 100,
       teamPoints: Math.round(people.reduce((s, p) => s + p.teamPoints, 0) * 100) / 100,
+      qcPoints: Math.round(people.reduce((s, p) => s + p.qcPoints, 0) * 100) / 100,
       creditPoints: Math.round(people.reduce((s, p) => s + p.creditPoints, 0) * 100) / 100,
       paidPoints: Math.round(people.reduce((s, p) => s + p.paidPoints, 0) * 100) / 100,
       unpaidPoints: Math.round(people.reduce((s, p) => s + p.unpaidPoints, 0) * 100) / 100,
-      // How much of this range has not been closed off yet. A payout read off a
-      // figure with pending days behind it is short, and nothing else on this
-      // response would say so.
-      pending: entries.filter((e) => IncentiveEntry.isPending(e)).length,
+      // How much of this range has not been closed off yet — teams AND QC days
+      // waiting on their count. A payout read off a figure with pending days
+      // behind it is short, and nothing else on this response would say so.
+      pending: [...entries, ...qcDays].filter((e) => IncentiveEntry.isPending(e)).length,
+      qcPending: qcDays.filter((d) => IncentiveEntry.isPending(d)).length,
     },
   });
 });
@@ -966,6 +1093,205 @@ const deleteEntry = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// ------------------------------------------------------------------- QC -----
+//
+// The day's QC (models/IncentiveQcDay), run the way a team is (user decision
+// 2026-09-26): a MANAGER sets who is doing QC in the morning — one person or
+// several — and fills in the sheet count that evening; QC's own points per
+// sheet, less QC's own deduction, split equally between them. Manager only
+// (the router says so): a picker puts together their own rolling team and
+// nothing else.
+
+/**
+ * The QC days in a range, newest first.
+ * @route GET /api/incentives/qc?month=&from=&to=&q=
+ * @returns {{count: number, days: Object[], totals: Object}}
+ */
+const listQc = asyncHandler(async (req, res) => {
+  const { filter: dateFilter } = dateRange(req.query);
+  const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
+  if (req.query.q) {
+    const re = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    and.push({ $or: [{ note: re }, { 'members.name': re }, { 'members.employeeCode': re }] });
+  }
+  const days = await IncentiveQcDay.find(and.length ? { $and: and } : {})
+    .sort({ date: -1, createdAt: -1 })
+    .limit(Math.min(Number(req.query.limit) || LIST_LIMIT, LIST_LIMIT))
+    .lean();
+  res.json({
+    count: days.length,
+    days,
+    totals: {
+      days: new Set(days.map((d) => new Date(d.date).toDateString())).size,
+      people: new Set(days.flatMap((d) => (d.members || []).map((m) => String(m.employee)))).size,
+      sheets: days.reduce((s, d) => s + (d.sheets || 0), 0),
+      points: Math.round(days.reduce((s, d) => s + (d.teamPoints || 0), 0) * 100) / 100,
+      // Days still waiting on their count, so the points are never read as final.
+      pending: days.filter((d) => IncentiveEntry.isPending(d)).length,
+    },
+  });
+});
+
+/**
+ * Set who is doing QC on a day. The sheet count is OPTIONAL — QC is set in the
+ * morning and closed off in the evening, like a team.
+ * @route POST /api/incentives/qc  (manager)
+ * @param {string} req.body.date - yyyy-mm-dd
+ * @param {string[]} req.body.members - EmployeeProfile ids; at least one
+ * @param {number} [req.body.sheets] - leave blank to fill in later
+ * @param {string} [req.body.note]
+ * @param {boolean} [req.body.allowDuplicates] - proceed although somebody is on another QC that day
+ * @returns {{day: Object}} 201; 409 with a code on a clash
+ */
+const createQc = asyncHandler(async (req, res) => {
+  const date = dayAt(req.body.date);
+  if (!date) {
+    res.status(400);
+    throw new Error('Pick the date of the QC');
+  }
+  const people = await pickablePeople(req);
+  const { members, company } = buildQc(people, req.body.members);
+
+  const ids = members.map((m) => String(m.employee));
+  if (req.body.allowDuplicates !== true) {
+    const clashes = await qcClashes(date, ids, null);
+    if (clashes.length) {
+      res.status(409);
+      return res.json({
+        code: 'DUPLICATE_PEOPLE',
+        count: clashes.length,
+        message: `${clashes.length} of these people are already doing QC on that day, and would be paid twice.`,
+        people: clashes.slice(0, 20),
+      });
+    }
+  }
+
+  const settings = await incentiveSettings();
+  const sheets = readSheets(req.body.sheets);
+  const actorName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+  const day = await IncentiveQcDay.create({
+    date,
+    company,
+    members,
+    sheets: sheets === undefined ? null : sheets,
+    // QC's own figures, frozen on the day — changing the settings later never
+    // restates it. The rupee value is the company-wide one, as on a team-day.
+    pointsPerSheet: settings.qcPointsPerSheet,
+    deductionPct: settings.qcDeductionPct,
+    rupeePerPoint: settings.rupeePerPoint,
+    note: String(req.body.note || '').trim(),
+    createdBy: req.user._id,
+    createdByName: actorName,
+    ...(sheets == null ? {} : { sheetsFilledAt: new Date(), sheetsFilledByName: actorName }),
+  });
+  res.status(201).json({ day });
+});
+
+/**
+ * Correct a QC day — the people, the date, the sheets or the note. Sending only
+ * `sheets` is the evening's fill, and never re-raises a clash already answered.
+ * @route PUT /api/incentives/qc/:id  (manager)
+ * @returns {{day: Object}}; 409 with a code on a clash
+ */
+const updateQc = asyncHandler(async (req, res) => {
+  const day = await IncentiveQcDay.findOne({ _id: req.params.id, ...entryScopeFilter(req) });
+  if (!day) {
+    res.status(404);
+    throw new Error('QC day not found');
+  }
+
+  // Only a change of date or of people can create a double-pay.
+  let peopleOrDayChanged = false;
+  if (req.body.date !== undefined) {
+    const d = dayAt(req.body.date);
+    if (!d) {
+      res.status(400);
+      throw new Error('That date could not be read');
+    }
+    if (d.getTime() !== new Date(day.date).getTime()) peopleOrDayChanged = true;
+    day.date = d;
+  }
+  if (req.body.note !== undefined) day.note = String(req.body.note || '').trim();
+
+  const actorName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+  const sheets = readSheets(req.body.sheets);
+  if (sheets !== undefined) {
+    // Stamp the fill the first time a figure lands, and clear the stamp if the
+    // figure is taken away again — exactly as a team-day does.
+    const wasPending = day.sheets == null;
+    day.sheets = sheets;
+    if (wasPending && sheets != null) {
+      day.sheetsFilledAt = new Date();
+      day.sheetsFilledByName = actorName;
+    }
+    if (sheets == null) {
+      day.sheetsFilledAt = undefined;
+      day.sheetsFilledByName = undefined;
+    }
+  }
+  if (req.body.pointsPerSheet !== undefined && req.body.pointsPerSheet !== '') {
+    day.pointsPerSheet = Math.max(0, Number(req.body.pointsPerSheet) || 0);
+  }
+
+  if (req.body.members !== undefined) {
+    const people = await pickablePeople(req);
+    // Whoever is already on the day stays selectable even if they have since
+    // left: correcting yesterday's count must not drop somebody from it.
+    const byId = new Map(people.map((p) => [String(p._id), p]));
+    for (const p of day.members || []) {
+      if (!byId.has(String(p.employee))) {
+        people.push({
+          _id: p.employee,
+          employeeCode: p.employeeCode,
+          department: p.department,
+          company: day.company,
+          user: { firstName: p.name, lastName: '', isActive: true },
+        });
+      }
+    }
+    const built = buildQc(people, req.body.members);
+    const before = (day.members || []).map((m) => String(m.employee)).sort().join(',');
+    const after = built.members.map((m) => String(m.employee)).sort().join(',');
+    if (before !== after) peopleOrDayChanged = true;
+    day.members = built.members;
+    if (built.company) day.company = built.company;
+  }
+
+  if (peopleOrDayChanged && req.body.allowDuplicates !== true) {
+    const ids = (day.members || []).map((m) => String(m.employee));
+    const clashes = await qcClashes(day.date, ids, day._id);
+    if (clashes.length) {
+      res.status(409);
+      return res.json({
+        code: 'DUPLICATE_PEOPLE',
+        count: clashes.length,
+        message: `${clashes.length} of these people are already doing QC on that day, and would be paid twice.`,
+        people: clashes.slice(0, 20),
+      });
+    }
+  }
+
+  day.updatedBy = req.user._id;
+  day.updatedByName = actorName;
+  await day.save();
+  res.json({ day });
+});
+
+/**
+ * Delete a QC day.
+ * @route DELETE /api/incentives/qc/:id  (manager)
+ * @returns {{id: string, deleted: boolean}}
+ */
+const deleteQc = asyncHandler(async (req, res) => {
+  const day = await IncentiveQcDay.findOne({ _id: req.params.id, ...entryScopeFilter(req) });
+  if (!day) {
+    res.status(404);
+    throw new Error('QC day not found');
+  }
+  await day.deleteOne();
+  res.json({ id: req.params.id, deleted: true });
+});
+
 // ------------------------------------------------------------ settings ------
 
 /**
@@ -1013,6 +1339,18 @@ const updateSettings = asyncHandler(async (req, res) => {
     }
     doc.incentive.deductionPct = pct;
   }
+  // QC's own pair — same rules as the teams' two above.
+  if (req.body.qcPointsPerSheet !== undefined && req.body.qcPointsPerSheet !== '') {
+    doc.incentive.qcPointsPerSheet = num(req.body.qcPointsPerSheet, 'QC points per sheet');
+  }
+  if (req.body.qcDeductionPct !== undefined && req.body.qcDeductionPct !== '') {
+    const pct = num(req.body.qcDeductionPct, 'QC deduction');
+    if (pct > 100) {
+      res.status(400);
+      throw new Error('The QC deduction cannot be more than 100% — QC would be left with less than nothing.');
+    }
+    doc.incentive.qcDeductionPct = pct;
+  }
   await doc.save();
   res.json({ settings: await incentiveSettings() });
 });
@@ -1044,28 +1382,38 @@ const downloadTemplate = asyncHandler(async (req, res) => {
 const exportXlsx = asyncHandler(async (req, res) => {
   const { filter: dateFilter, from, to } = dateRange(req.query);
   const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
-  const [entries, credits] = await Promise.all([
+  const [entries, qcDays, credits] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {})
       .sort({ date: -1, createdAt: -1 })
       .lean(),
+    qcDaysIn(and),
     creditsInRange(req, from, to),
   ]);
+  // Newest first, like the teams' sheet.
+  qcDays.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   // Same roll-up the summary tab shows — built here from the same entries so the
   // spreadsheet and the screen can never disagree.
   const byPerson = new Map();
   const seed = (p, date) => ({
     employee: p.employee, name: p.name || '', employeeCode: p.employeeCode || '', department: p.department || '',
-    days: 0, pickerDays: 0, sheets: 0, teamPoints: 0, creditPoints: 0, points: 0, paidPoints: 0, unpaidPoints: 0, _at: date,
+    days: 0, pickerDays: 0, sheets: 0, qcDays: 0, teamPoints: 0, qcPoints: 0, creditPoints: 0, points: 0,
+    paidPoints: 0, unpaidPoints: 0, _at: date,
   });
-  for (const e of entries) {
+  for (const e of [...entries, ...qcDays]) {
     for (const p of IncentiveEntry.payees(e)) {
       const key = String(p.employee);
       if (!byPerson.has(key)) byPerson.set(key, seed(p, e.date));
       const row = byPerson.get(key);
       row.days += 1;
-      if (p.isPicker) row.pickerDays += 1;
-      row.sheets += e.sheets || 0;
+      if (isQc(e)) {
+        // QC checked the sheets rather than rolling them — see summary.
+        row.qcDays += 1;
+        row.qcPoints = Math.round((row.qcPoints + (p.sharePoints || 0)) * 100) / 100;
+      } else {
+        if (p.isPicker) row.pickerDays += 1;
+        row.sheets += e.sheets || 0;
+      }
       // The share comes off the payee rather than the entry — see payees() on
       // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
@@ -1093,6 +1441,9 @@ const exportXlsx = asyncHandler(async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="incentive_${stamp}.xlsx"`);
   await incentiveExcel.writeExport(res, {
     entries,
+    // QC gets its own sheet: its people, its count and its points, so a QC
+    // person's figure on the per-employee sheet can be traced to the days.
+    qcDays,
     people,
     // The credits get their own sheet: a bonus is a decision somebody made, and
     // the reason it was made is the only thing that explains a payout that the
@@ -1291,16 +1642,22 @@ const myPoints = asyncHandler(async (req, res) => {
       { 'members.employee': profile._id },
     ],
   };
-  const [monthEntries, allEntries, monthCredits, allCredits] = await Promise.all([
+  const [teamMonth, teamAll, qcMonth, qcAll, monthCredits, allCredits] = await Promise.all([
     IncentiveEntry.find({ $and: [mine, dateFilter] }).lean(),
     // The lifetime figure is what somebody actually wants to know when they look
     // at a home screen in the first week of a month; it is one more small query.
     IncentiveEntry.find(mine).lean(),
+    // The days they did QC — the same pool, and the same `mine` filter reaches
+    // them (a QC day's people are its `members`).
+    qcDaysIn([mine, dateFilter]),
+    qcDaysIn([mine]),
     // Points credited straight to them — the same pool, so a home screen that
     // left them out would show less than the person is actually owed.
     IncentiveCredit.find({ employee: profile._id, date: { $gte: from, $lte: to } }).select('points').lean(),
     IncentiveCredit.find({ employee: profile._id }).select('points').lean(),
   ]);
+  const monthEntries = [...teamMonth, ...qcMonth];
+  const allEntries = [...teamAll, ...qcAll];
 
   /** This person's share of a list of days. */
   const share = (rows) => Math.round(rows.reduce((sum, e) => {
@@ -1359,6 +1716,8 @@ const myPoints = asyncHandler(async (req, res) => {
     // Broken out so a home screen can say WHERE the month's points came from.
     creditPoints,
     billingPoints,
+    // The QC part of the month's day points (already inside `points`).
+    qcPoints: share(qcMonth),
     paidPoints,
     unpaidPoints: paise(points - paidPoints),
     days: monthEntries.length,
@@ -1566,11 +1925,14 @@ const myHistory = asyncHandler(async (req, res) => {
   }
 
   const mine = { $or: [{ 'picker.employee': profile._id }, { 'members.employee': profile._id }] };
-  const [monthEntries, allEntries, monthCredits, allCredits, paidRows] = await Promise.all([
+  const [teamMonth, teamAll, qcMonth, qcAll, monthCredits, allCredits, paidRows] = await Promise.all([
     IncentiveEntry.find({ $and: [mine, dateFilter] }).sort({ date: -1 }).lean(),
     // The lifetime figure is what somebody wants in the first week of a month,
     // when this month says almost nothing. One more small query.
     IncentiveEntry.find(mine).lean(),
+    // The days they did QC, month and lifetime — the same pool.
+    qcDaysIn([mine, dateFilter]),
+    qcDaysIn([mine]),
     IncentiveCredit.find({ employee: profile._id, date: { $gte: from, $lte: to } }).sort({ date: -1 }).lean(),
     IncentiveCredit.find({ employee: profile._id }).select('points').lean(),
     IncentivePayment.find({
@@ -1578,6 +1940,9 @@ const myHistory = asyncHandler(async (req, res) => {
       period: { $gte: IncentivePayment.monthStart(from), $lte: IncentivePayment.monthStart(to) },
     }).sort({ paidAt: -1 }).lean(),
   ]);
+
+  const monthEntries = [...teamMonth, ...qcMonth];
+  const allEntries = [...teamAll, ...qcAll];
 
   /** This person's share of a list of days — the same sum GET /me reports. */
   const share = (rows) => paise(rows.reduce((sum, e) => {
@@ -1596,14 +1961,20 @@ const myHistory = asyncHandler(async (req, res) => {
     if (!hit) continue;
     const waiting = IncentiveEntry.isPending(e);
     if (waiting) pending += 1;
-    sheets += e.sheets || 0;
+    const qc = isQc(e);
+    // Sheets ROLLED — a QC day's count is sheets checked, and goes in its row
+    // but not into this total.
+    if (!qc) sheets += e.sheets || 0;
     rows.push({
       _id: String(e._id),
-      kind: 'rolling',
+      // A THIRD KIND OF DAY ROW: the days they did QC. teamName/role are filled
+      // in for it too, so a client that predates the kind still prints a
+      // sensible line ("QC") rather than a blank team.
+      kind: qc ? 'qc' : 'rolling',
       date: e.date,
-      teamName: e.teamName || '',
-      pickerName: e.picker?.name || '',
-      role: hit.isPicker ? 'Picker' : 'Member',
+      teamName: qc ? 'QC' : (e.teamName || ''),
+      pickerName: qc ? '' : (e.picker?.name || ''),
+      role: qc ? 'QC' : (hit.isPicker ? 'Picker' : 'Member'),
       sheets: e.sheets == null ? null : e.sheets,
       pending: waiting,
       headCount: e.headCount || 0,
@@ -1690,7 +2061,9 @@ const myHistory = asyncHandler(async (req, res) => {
     })),
     totals: {
       points,
+      // Every day's points — rolling AND QC; `qcPoints` is the QC part of it.
       teamPoints,
+      qcPoints: share(qcMonth),
       creditPoints,
       billingPoints,
       paidPoints,
@@ -1698,8 +2071,9 @@ const myHistory = asyncHandler(async (req, res) => {
       // DAYS WORKED, so only the rows that ARE a day count. This was a denylist
       // of one ('credit'), which meant the billing row — a whole month on one
       // line — would have been counted as a single day's work. An allowlist
-      // cannot be wrong the same way when a fifth kind of row turns up.
-      days: rows.filter((r) => r.kind === 'rolling').length,
+      // cannot be wrong the same way when a fifth kind of row turns up — and a
+      // QC day is a day worked, so it is on it.
+      days: rows.filter((r) => r.kind === 'rolling' || r.kind === 'qc').length,
       sheets,
       pending,
     },
@@ -1826,7 +2200,7 @@ const leaderboard = asyncHandler(async (req, res) => {
 
   const and = [entryScopeFilter(req), dateFilter].filter((f) => Object.keys(f).length);
   const companyOnly = [entryScopeFilter(req)].filter((f) => Object.keys(f).length);
-  const [entries, credits, allEntries, allCredits, lifetimePaid, billing] = await Promise.all([
+  const [teamMonth, credits, teamAll, allCredits, lifetimePaid, billing, qcMonth, qcAll] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
     creditsInRange(req, from, to),
     // EVERY day and EVERY credit, not just this month's — the rank is lifetime
@@ -1841,7 +2215,12 @@ const leaderboard = asyncHandler(async (req, res) => {
     // not ranked — see peopleIncludingLeavers on why the settling screens use
     // a wider list than this one.
     billingByEmployee(req, { roster }),
+    // QC days, month and lifetime — the same pool again.
+    qcDaysIn(and),
+    qcDaysIn(companyOnly),
   ]);
+  const entries = [...teamMonth, ...qcMonth];
+  const allEntries = [...teamAll, ...qcAll];
 
   // Somebody who has LEFT is deliberately absent from the roster above and so
   // cannot appear here: a leaderboard is a standing among colleagues, and the
@@ -2038,11 +2417,15 @@ const payPoints = asyncHandler(async (req, res) => {
   const and = [entryScopeFilter(req), { date: { $gte: monthStart, $lte: monthEnd } }]
     .filter((f) => Object.keys(f).length);
   const monthKey = IncentivePayment.monthKey(period);
-  const [entries, credits, everyone] = await Promise.all([
+  const [teamDays, qcDays, credits, everyone] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
+    // QC days are earned like team-days. Left out, a QC person's whole month
+    // would read as "owed 0" and every payment to them would be refused.
+    qcDaysIn(and),
     creditsInRange(req, monthStart, monthEnd),
     peopleIncludingLeavers(req),
   ]);
+  const entries = [...teamDays, ...qcDays];
   const billing = await billingByEmployee(req, { months: [monthKey], roster: everyone });
   const byId = new Map(everyone.map((e) => [String(e._id), e]));
 
@@ -2212,8 +2595,10 @@ const pointsDashboard = asyncHandler(async (req, res) => {
   // see `billingWholeMonths` in the answer below.
   const billingMonths = billingIncentive.monthsBetween(from, to);
 
-  const [entries, credits, roster, settings, everyone] = await Promise.all([
+  const [entries, qcDays, credits, roster, settings, everyone] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
+    // The day's QC, earned into the same pool as the teams.
+    qcDaysIn(and),
     creditsInRange(req, from, to),
     pickablePeople(req),
     incentiveSettings(),
@@ -2237,7 +2622,11 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     days: 0,
     pickerDays: 0,
     sheets: 0,
+    qcDays: 0,
+    // Every day's points, rolling AND QC — `qcPoints` is the QC part of it,
+    // kept inside `teamPoints` so the three sources still add up to `points`.
     teamPoints: 0,
+    qcPoints: 0,
     creditPoints: 0,
     credits: 0,
     // What the billing system says they invoiced in this range. A third way
@@ -2263,8 +2652,8 @@ const pointsDashboard = asyncHandler(async (req, res) => {
     }));
   }
 
-  // 2. What the teams earned them.
-  for (const e of entries) {
+  // 2. What the teams — and the day's QC — earned them.
+  for (const e of [...entries, ...qcDays]) {
     for (const p of IncentiveEntry.payees(e)) {
       const key = String(p.employee);
       if (!byPerson.has(key)) {
@@ -2274,8 +2663,13 @@ const pointsDashboard = asyncHandler(async (req, res) => {
       }
       const row = byPerson.get(key);
       row.days += 1;
-      if (p.isPicker) row.pickerDays += 1;
-      row.sheets += e.sheets || 0;
+      if (isQc(e)) {
+        row.qcDays += 1;
+        row.qcPoints = Math.round((row.qcPoints + (p.sharePoints || 0)) * 100) / 100;
+      } else {
+        if (p.isPicker) row.pickerDays += 1;
+        row.sheets += e.sheets || 0;
+      }
       // The share comes off the payee rather than the entry — see payees() on
       // models/IncentiveEntry for why every roll-up reads it that way.
       row.teamPoints = Math.round((row.teamPoints + (p.sharePoints || 0)) * 100) / 100;
@@ -2373,13 +2767,15 @@ const pointsDashboard = asyncHandler(async (req, res) => {
       earners: people.filter((p) => p.points > 0).length,
       points: Math.round(people.reduce((s, p) => s + p.points, 0) * 100) / 100,
       teamPoints: Math.round(people.reduce((s, p) => s + p.teamPoints, 0) * 100) / 100,
+      qcPoints: Math.round(people.reduce((s, p) => s + p.qcPoints, 0) * 100) / 100,
       creditPoints: Math.round(people.reduce((s, p) => s + p.creditPoints, 0) * 100) / 100,
       billingPoints: Math.round(people.reduce((s, p) => s + p.billingPoints, 0) * 100) / 100,
       paidPoints: Math.round(people.reduce((s, p) => s + p.paidPoints, 0) * 100) / 100,
       unpaidPoints: Math.round(people.reduce((s, p) => s + p.unpaidPoints, 0) * 100) / 100,
-      // Days still waiting on their sheet count — the figures above are short
-      // while any of them stands, and nothing else here would say so.
-      pending: entries.filter((e) => IncentiveEntry.isPending(e)).length,
+      // Days still waiting on their sheet count — teams and QC alike. The
+      // figures above are short while any of them stands, and nothing else here
+      // would say so.
+      pending: [...entries, ...qcDays].filter((e) => IncentiveEntry.isPending(e)).length,
     },
     // WHAT THIS CALLER MAY DO, decided by the server and drawn by the client, so
     // a button on screen is never one the API would refuse. Crediting and paying
@@ -2536,14 +2932,16 @@ const deleteCredit = asyncHandler(async (req, res) => {
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
   const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
   const and = [entryScopeFilter(req), { date: { $gte: monthStart, $lte: monthEnd } }].filter((f) => Object.keys(f).length);
-  const [entries, credits, paid] = await Promise.all([
+  const [teamDays, qcDays, credits, paid] = await Promise.all([
     IncentiveEntry.find(and.length ? { $and: and } : {}).lean(),
+    // QC days are part of what the month holds for them.
+    qcDaysIn(and),
     creditsInRange(req, monthStart, monthEnd),
     paidByEmployee(req, monthStart, monthEnd),
   ]);
 
   const key = String(credit.employee);
-  const fromTeams = entries.reduce((sum, e) => {
+  const fromTeams = [...teamDays, ...qcDays].reduce((sum, e) => {
     const mine = IncentiveEntry.payees(e).find((p) => String(p.employee) === key);
     return mine ? sum + (mine.sharePoints || 0) : sum;
   }, 0);
@@ -2577,6 +2975,11 @@ module.exports = {
   createEntry,
   updateEntry,
   deleteEntry,
+  // the day's QC
+  listQc,
+  createQc,
+  updateQc,
+  deleteQc,
   getSettings,
   updateSettings,
   downloadTemplate,

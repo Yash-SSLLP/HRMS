@@ -178,6 +178,17 @@ router.post('/import', managerOnly, sheetUpload.single('file'), ctrl.importEntri
 // GET /summary — the same range rolled up per person: what each one earned.
 router.get('/summary', ctrl.summary);
 
+// ---- the day's QC (models/IncentiveQcDay) ----------------------------------
+// Set in the morning, sheet count filled in the evening, like a team — but it
+// is the MANAGER's to set (user decision 2026-09-26: Admin, the tab's manager,
+// HR, CEO, MD), so every write is managerOnly. Reading it is open to the tab,
+// the picker included. Declared above the `/:id` routes for clarity; the paths
+// cannot collide (`/qc/:id` is two segments).
+router.get('/qc', ctrl.listQc);
+router.post('/qc', managerOnly, ctrl.createQc);
+router.put('/qc/:id', managerOnly, ctrl.updateQc);
+router.delete('/qc/:id', managerOnly, ctrl.deleteQc);
+
 // GET / — the recorded team-days, newest first.
 router.get('/', ctrl.listEntries);
 // POST / — record one team's day. Manager OR picker; the handler then holds a

@@ -199,6 +199,13 @@ const settingSchema = new mongoose.Schema(
       // back to whoever "changed" it. Frozen onto each day when the day is
       // recorded, so editing it never restates a day already saved.
       deductionPct: { type: Number, default: 30, min: 0, max: 100 },
+      // QC's own pair of figures (models/IncentiveQcDay) — what a sheet is worth
+      // to the day's QC people and what comes off it. Separate from the rolling
+      // teams' two above because they are separate decisions that happen to
+      // start at the same numbers (user decision 2026-09-26: 4 a sheet, 30% off).
+      // Declared, like deductionPct, or strict mode would drop every write.
+      qcPointsPerSheet: { type: Number, default: 4, min: 0 },
+      qcDeductionPct: { type: Number, default: 30, min: 0, max: 100 },
       // NOTE: there is deliberately no department setting. The Boys module is
       // the BOYS department's incentive and only theirs — another department
       // gets its own tab rather than a dropdown here (user decision

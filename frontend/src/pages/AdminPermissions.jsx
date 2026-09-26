@@ -395,11 +395,19 @@ function AccessTab({ showGuide, setShowGuide }) {
   // Seed the dialog with what the account effectively holds RIGHT NOW. A null
   // array is "all" for an HR Manager but "none" for a Manager — seeding every
   // box for a Manager would mean one careless Save handed them full admin.
+  //
+  // ONLY THE KEYS THIS DIALOG OFFERS. A stored list can also carry a RETIRED key
+  // (tasks.workflow) or one for a module since removed (expenses/travel, see
+  // HIDDEN_FROM_CATALOG on the server). Seeded as they were, they were counted —
+  // "37 of 36 granted" — and sent back on Save, where the retired one was
+  // refused and the whole save failed (2026-09-26). What the dialog shows is
+  // now exactly what Save stores.
   const openPerms = (u) => {
     const effective = u.permissions == null
       ? (u.role === 'HRManager' ? allKeys : [])
       : u.permissions;
-    setPermSel(new Set(effective));
+    const offered = new Set(allKeys);
+    setPermSel(new Set(effective.filter((k) => offered.has(k))));
     setPermUser(u);
   };
   const togglePerm = (key) => setPermSel((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -450,10 +458,14 @@ function AccessTab({ showGuide, setShowGuide }) {
     return n;
   });
 
-  /** How many capabilities an account effectively holds, for the row's badge. */
+  /**
+   * How many capabilities an account effectively holds, for the row's badge —
+   * counting only the ones on offer, like the dialog, so the badge can never
+   * read more than the total beside it.
+   */
   const capCount = (u) => (u.permissions == null
     ? (u.role === 'HRManager' ? allKeys.length : 0)
-    : u.permissions.length);
+    : u.permissions.filter((k) => allKeys.includes(k)).length);
 
   // The role list is built from who is actually on the page rather than from
   // ROLES, so the filter never offers a role that would return nothing.
