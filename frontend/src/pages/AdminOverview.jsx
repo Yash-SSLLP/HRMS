@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { readCache, writeCache } from '../api/cache';
 import { useAuthStore } from '../store/authStore';
+import { hiddenFromRole } from '../config/nav';
 import BirthdayWisher from '../components/BirthdayWisher';
 import WelcomeBanner from '../components/WelcomeBanner';
 import ComplaintsBanner from '../components/ComplaintsBanner';
@@ -47,6 +48,9 @@ function StatCard({ icon, tint, iconColor, value, label, to }) {
 
 export default function AdminOverview() {
   const user = useAuthStore((s) => s.user);
+  // Departments is out of the CEO/MD's portal (config/nav.jsx `hideRoles`), so
+  // for them its figure and heading stay, but nothing links to the page.
+  const deptLink = hiddenFromRole(user, '/admin/departments') ? null : '/admin/departments';
   // Seed from cache for an instant paint, then refresh (stale-while-revalidate).
   const [data, setData] = useState(() => readCache('admin:dashboard'));
   const [daily, setDaily] = useState(() => readCache('admin:daily') || []);
@@ -132,7 +136,7 @@ export default function AdminOverview() {
         <StatCard icon={<FiUserX />} tint="bg-red-100" iconColor="text-red-600" value={c.absentToday ?? '-'} label="Absent today" to="/admin/attendance" />
         <StatCard icon={<FiClock />} tint="bg-amber-100" iconColor="text-amber-600" value={c.pendingLeaves ?? '-'} label="Pending leaves" to="/admin/leave" />
         <StatCard icon={<FiAlertTriangle />} tint="bg-rose-100" iconColor="text-rose-600" value={c.openComplaints ?? '-'} label="Open complaints" to="/admin/complaints" />
-        <StatCard icon={<TbSitemap />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '-'} label="Departments" to="/admin/departments" />
+        <StatCard icon={<TbSitemap />} tint="bg-sky-100" iconColor="text-sky-600" value={c.departments ?? '-'} label="Departments" to={deptLink} />
         <StatCard icon={<FiFileText />} tint="bg-orange-100" iconColor="text-orange-600" value={c.documentsIncomplete ?? '-'} label="Docs incomplete" to="/admin/employees" />
       </div>
 
@@ -203,7 +207,9 @@ export default function AdminOverview() {
         <div className="bg-white shadow rounded-lg p-5">
           <div className="flex items-center justify-between gap-2 sm:gap-0 mb-3">
             <h2 className="card-title">Employees by Department</h2>
-            <Link to="/admin/departments" className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Departments →</Link>
+            {deptLink && (
+              <Link to={deptLink} className="shrink-0 sm:shrink text-sm text-blue-600 hover:underline">Departments →</Link>
+            )}
           </div>
           {deptBars.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No employees yet</p>

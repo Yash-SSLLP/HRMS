@@ -23,6 +23,25 @@
  *    to the people doing the work. An "after" one goes to them AND to whoever
  *    set it and whoever is in the loop, because at that point it is news the
  *    assigner needs rather than a nudge the doer has already ignored.
+ *
+ * ── ADDED 2026-09-27 ─────────────────────────────────────────────────────────
+ *
+ * 4. "EVERY 2 HOURS UNTIL DONE" — a repeating rule (config/tasks REMINDER_WHEN
+ *    .EVERY), in one of four SHAPES (REMINDER_PATTERN): every N hours on the
+ *    clock inside a window (9 am – 9 pm unless set), or once a day / on chosen
+ *    weekdays / monthly at a set time. Each beat is a MOMENT, claimed on
+ *    `repeatReminderAt` (the same conditional-update lock as rule 1), never
+ *    sent late (rule 2 again) or within half an hour of the task appearing,
+ *    and it stops the moment the work is done — or, for hourly ones, at the
+ *    end of the due day's window; for the rest, a week past the deadline. It
+ *    never reads or writes the bell's 30-minute gate: the user's rule is that
+ *    an auto reminder goes on time even if a person rang five minutes earlier.
+ *
+ * 5. THE DEADLINE PASSING IS ANNOUNCED — once, to the people on it AND whoever
+ *    set it: *"any task which gets overdue, the assigned and assignee get a
+ *    notification automatically"*. Rule 2 applies here too, and it is what keeps
+ *    the first run after deploy quiet: every task already overdue is stamped
+ *    WITHOUT a word, and only tasks crossing their deadline from then on speak.
  */
 const Task = require('../models/Task');
 const User = require('../models/User');
@@ -30,16 +49,121 @@ const notify = require('./taskNotify');
 const engine = require('./taskEngine');
 const points = require('./taskPoints');
 const { enqueueMail } = require('./email');
+const recur = require('./taskRecurrenceWorker');
 const {
   STATUS, reminderOffsetMinutes, reminderKey, reminderLabel,
   REMINDER_WHEN, REMINDER_CHANNEL, statusLabel, KIND_REQUEST,
-  spellingsOf,
+  spellingsOf, REPEAT_REMINDER, ACCEPTANCE,
+  REMINDER_PATTERN, reminderPattern, reminderWindow, repeatEveryMinutes, hhmmOf, DEFAULT_REMIND_AT,
 } = require('../config/tasks');
 
 /** How late a reminder may be and still be worth sending. See rule 2. */
 const FIRING_WINDOW_MIN = 90;
 /** How often the sweep runs. */
 const TICK_MS = 5 * 60 * 1000;
+
+const IST_PARTS = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+const IST_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/** Minutes past midnight, portal time. */
+function istMinutes(ms) {
+  const [h, m] = IST_PARTS.format(new Date(ms)).split(':').map((n) => parseInt(n, 10));
+  return (h % 24) * 60 + m;
+}
+
+/** Inside the hours a repeating reminder may speak (rule 4)? The rule's own window, or 9 to 9. */
+function inActiveHours(ms, rule = null) {
+  const mins = istMinutes(ms);
+  if (rule) {
+    const w = reminderWindow(rule);
+    return mins >= minutesOf(w.from) && mins <= minutesOf(w.to);
+  }
+  return mins >= REPEAT_REMINDER.activeFromHour * 60 && mins <= REPEAT_REMINDER.activeToHour * 60;
+}
+
+/** 'HH:mm' → minutes past midnight. */
+function minutesOf(hhmm) {
+  const [h, m] = String(hhmm).split(':').map((n) => parseInt(n, 10));
+  return (h || 0) * 60 + (m || 0);
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const hhmmFromMinutes = (mins) => `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
+
+/**
+ * A day-shaped rule as the schedule recurrence understands it, so "alternate
+ * days", "Mon and Thu" and "the first Monday" are decided by the SAME code
+ * that decides when a recurring task falls due (taskRecurrenceWorker.fallsOn).
+ * "Every N days" counts from the day the task appeared.
+ */
+function asSchedule(rule, anchorMs) {
+  const pattern = reminderPattern(rule);
+  const frequency = pattern === REMINDER_PATTERN.WEEKLY ? 'WEEKLY'
+    : pattern === REMINDER_PATTERN.MONTHLY ? 'MONTHLY' : 'DAILY';
+  return {
+    frequency,
+    interval: Math.max(1, Math.round(Number(rule.amount) || 1)),
+    weekdays: rule.weekdays,
+    monthlyMode: rule.monthlyMode,
+    monthDay: rule.monthDay,
+    nthWeek: rule.nthWeek,
+    weekday: rule.weekday,
+    startDate: new Date(anchorMs),
+  };
+}
+
+/** Every beat a rule has on one IST day ('YYYY-MM-DD'), as instants. */
+function beatsOn(rule, key, anchorMs) {
+  if (reminderPattern(rule) === REMINDER_PATTERN.HOURLY) {
+    const w = reminderWindow(rule);
+    const every = repeatEveryMinutes(rule);
+    const out = [];
+    for (let m = minutesOf(w.from); m <= minutesOf(w.to); m += every) {
+      out.push(recur.atIST(key, hhmmFromMinutes(m)).getTime());
+    }
+    return out;
+  }
+  if (!recur.fallsOn(asSchedule(rule, anchorMs), key)) return [];
+  return [recur.atIST(key, hhmmOf(rule.at) || DEFAULT_REMIND_AT).getTime()];
+}
+
+/**
+ * The latest beat of a repeating rule at or before `nowMs` — `{ at }` or null.
+ *
+ * Only today and yesterday (IST) are looked at: an older beat is past the
+ * firing window anyway (rule 2), and yesterday covers a beat just before
+ * midnight read just after it. None falls within half an hour of the task
+ * appearing — the New Task notification has only just said it.
+ */
+function latestBeat(rule, anchorMs, nowMs) {
+  if (!Number.isFinite(anchorMs)) return null;
+  const floor = anchorMs + REPEAT_REMINDER.minMinutes * 60 * 1000;
+  const today = recur.occurrenceKeyFor(new Date(nowMs));
+  for (const key of [today, recur.addDaysKey(today, -1)]) {
+    const due = beatsOn(rule, key, anchorMs).filter((at) => at <= nowMs && at >= floor);
+    if (due.length) return { at: Math.max(...due) };
+  }
+  return null;
+}
+
+/**
+ * When a repeating rule has said all it usefully can, for a task due at
+ * `dueMs`. An hourly one chases through the due day, to the end of its window
+ * (a daily routine's next occurrence takes over the morning after); a
+ * once-a-day, weekly or monthly one goes on past the deadline — "till
+ * completed" — for a week.
+ */
+function beatsStopAt(rule, dueMs) {
+  if (reminderPattern(rule) !== REMINDER_PATTERN.HOURLY) {
+    return dueMs + REPEAT_REMINDER.dayPatternStopAfterDueMinutes * 60 * 1000;
+  }
+  const endOfDueDay = recur.atIST(recur.occurrenceKeyFor(new Date(dueMs)), reminderWindow(rule).to).getTime();
+  return Math.max(dueMs, endOfDueDay);
+}
 
 const fmt = (d) => new Date(d).toLocaleString('en-IN', {
   day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
@@ -117,6 +241,33 @@ async function fire(task, rule) {
   );
 }
 
+/** Everybody still doing it — not handed in, not finished, not refused. */
+function stillDoing(task) {
+  return (task.assignees || [])
+    .filter((a) => !['COMPLETED', 'CANCELLED', 'SUBMITTED', 'Done'].includes(a.status)
+      && a.acceptance !== ACCEPTANCE.REJECTED)
+    .map((a) => String(a.user));
+}
+
+/**
+ * One beat of a repeating rule (rule 4). No feed row: a line every two hours
+ * would bury what people actually SAID on the task under the chasing.
+ */
+async function fireRepeat(task, rule) {
+  const to = stillDoing(task);
+  if (!to.length) return false;
+  const late = task.dueDate && new Date(task.dueDate).getTime() < Date.now();
+  const title = `Reminder: ${taskName(task)}`;
+  const body = task.dueDate
+    ? (late
+      ? `Still not done — it was due ${fmt(task.dueDate)}.`
+      : `Still to do — due ${fmt(task.dueDate)}.`)
+    : 'Still to do.';
+  if (rule.channel === REMINDER_CHANNEL.EMAIL) await mailTo(to, title, body, task);
+  else await notify.reminder(task, to, { title, body, portal: 'employee' });
+  return true;
+}
+
 /** Email reminders go through the existing queue, not a direct send. */
 async function mailTo(userIds, subject, body, task) {
   try {
@@ -170,18 +321,49 @@ async function tick(now = new Date()) {
        * the current two would have swept almost nothing.
        */
       status: { $in: spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS) },
-      dueDate: { $ne: null },
       'reminders.0': { $exists: true },
       archived: { $ne: true },
+      // A deadline for the before/after rules; a repeating one needs none.
+      $or: [{ dueDate: { $ne: null } }, { 'reminders.when': REMINDER_WHEN.EVERY }],
     })
       .select('code kind title description status dueDate reminders firedReminders assignees '
-        + 'createdBy loopUsers')
+        + 'createdBy loopUsers remindFrom repeatReminderAt startDate createdAt')
       .limit(2000)
       .lean();
 
     for (const task of tasks) {
-      const due = new Date(task.dueDate).getTime();
+      const due = task.dueDate ? new Date(task.dueDate).getTime() : null;
       for (const rule of task.reminders || []) {
+        // ===== Rule 4: a beat, not an offset =====
+        if (rule.when === REMINDER_WHEN.EVERY) {
+          const anchor = new Date(task.remindFrom || task.startDate || task.createdAt).getTime();
+          const beat = latestBeat(rule, anchor, now.getTime());
+          if (!beat) continue;
+          if (task.repeatReminderAt && new Date(task.repeatReminderAt).getTime() >= beat.at) continue;
+          // Said all it usefully can (beatsStopAt).
+          if (due && beat.at > beatsStopAt(rule, due)) continue;
+          // Too late to be worth sending — the server was down when it fell.
+          // Nothing to claim: the next beat is a later moment anyway.
+          if (now.getTime() - beat.at > FIRING_WINDOW_MIN * 60 * 1000) continue;
+          // eslint-disable-next-line no-await-in-loop
+          const won = await Task.updateOne(
+            {
+              _id: task._id,
+              $or: [{ repeatReminderAt: { $lt: new Date(beat.at) } }, { repeatReminderAt: null }],
+            },
+            { $set: { repeatReminderAt: new Date(beat.at) } }
+          );
+          if (!won.modifiedCount) continue;
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            if (await fireRepeat(task, rule)) sent += 1;
+          } catch (err) {
+            console.error(`Task repeat reminder ${task._id} failed:`, err.message);
+          }
+          continue;
+        }
+        if (!due) continue;
+
         const key = reminderKey(rule);
         if ((task.firedReminders || []).includes(key)) continue;
 
@@ -213,6 +395,59 @@ async function tick(now = new Date()) {
 }
 
 /**
+ * Rule 5 — the deadline passing, said once to both sides.
+ *
+ * Two passes. Everything that went overdue longer ago than the firing window
+ * is stamped in ONE silent update (the first run after a deploy finds every
+ * task that is already late, and none of them is news any more). What crossed
+ * its deadline inside the window is claimed row by row — the claim IS the lock,
+ * so two instances cannot both announce it — and announced.
+ */
+async function overdueTick(now = new Date()) {
+  let told = 0;
+  const chased = spellingsOf(STATUS.PENDING, STATUS.IN_PROGRESS);
+  const cutoff = new Date(now.getTime() - FIRING_WINDOW_MIN * 60 * 1000);
+  try {
+    await Task.updateMany(
+      { status: { $in: chased }, archived: { $ne: true }, dueDate: { $lt: cutoff }, overdueNotifiedAt: null },
+      { $set: { overdueNotifiedAt: now } }
+    );
+
+    const fresh = await Task.find({
+      status: { $in: chased },
+      archived: { $ne: true },
+      dueDate: { $gte: cutoff, $lte: now },
+      overdueNotifiedAt: null,
+    })
+      .select('code kind title status dueDate assignees createdBy createdByName approver approverName')
+      .limit(500)
+      .lean();
+
+    for (const task of fresh) {
+      // eslint-disable-next-line no-await-in-loop
+      const won = await Task.updateOne(
+        { _id: task._id, overdueNotifiedAt: null },
+        { $set: { overdueNotifiedAt: now } }
+      );
+      if (!won.modifiedCount) continue;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await notify.becameOverdue(task);
+        // eslint-disable-next-line no-await-in-loop
+        await engine.systemUpdate(task._id, `Now overdue — it was due ${fmt(task.dueDate)}. Everybody on it was told.`, 'OVERDUE');
+        told += 1;
+      } catch (err) {
+        console.error(`Task overdue notice ${task._id} failed:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Task overdue sweep failed:', err.message);
+  }
+  if (told) console.log(`Task overdue notices: ${told}.`);
+  return told;
+}
+
+/**
  * The evening summary — "you have 4 tasks pending".
  *
  * One notification per person instead of one per task, fired once a day at the
@@ -229,12 +464,14 @@ async function digestTick(now = new Date()) {
   const [h, m] = dailyDigestAt.split(':').map((n) => parseInt(n, 10));
   if (!Number.isFinite(h)) return 0;
 
-  const at = new Date(now);
-  at.setHours(h, m || 0, 0, 0);
+  // In PORTAL time (2026-09-27). `setHours` on the server's clock put the
+  // "6 pm" digest at 11:30 pm, because the server runs in UTC.
+  const day = IST_KEY.format(now);
+  const pad = (n) => String(n).padStart(2, '0');
+  const at = new Date(`${day}T${pad(h)}:${pad(Number.isFinite(m) ? m : 0)}:00+05:30`);
   const lateBy = (now.getTime() - at.getTime()) / 60000;
   if (lateBy < 0 || lateBy > FIRING_WINDOW_MIN) return 0;
 
-  const day = now.toDateString();
   if (lastDigestDay === day) return 0;
   lastDigestDay = day;
 
@@ -289,6 +526,7 @@ function startWorker() {
   if (timer) return;
   timer = setInterval(() => {
     tick().catch(() => {});
+    overdueTick().catch(() => {});
     digestTick().catch(() => {});
   }, TICK_MS);
   console.log('Task reminder worker started.');
@@ -299,4 +537,8 @@ function stopWorker() {
   timer = null;
 }
 
-module.exports = { startWorker, stopWorker, tick, digestTick, fire, FIRING_WINDOW_MIN };
+module.exports = {
+  startWorker, stopWorker, tick, overdueTick, digestTick, fire, fireRepeat, inActiveHours,
+  latestBeat, beatsStopAt,
+  FIRING_WINDOW_MIN,
+};

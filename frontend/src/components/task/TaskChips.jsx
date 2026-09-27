@@ -250,7 +250,9 @@ export function TaskMarks({ task }) {
   if (task.attachmentCount || task.attachments?.length) {
     marks.push(['files', FiPaperclip, `${task.attachmentCount || task.attachments.length} file(s)`]);
   }
-  if (task.repeat?.frequency && task.repeat.frequency !== 'ONCE') {
+  // A recurring OCCURRENCE wears a labelled "Daily" / "Weekly" tag on its row
+  // (TaskRow, 2026-09-27) — the bare icon beside it would say it twice.
+  if (task.repeat?.frequency && task.repeat.frequency !== 'ONCE' && !task.recurringTask) {
     marks.push(['repeat', FiRepeat, repeatLabel(task.repeat)]);
   }
   if (task.updateCount > 1) {

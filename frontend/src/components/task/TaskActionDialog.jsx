@@ -13,15 +13,40 @@
  * sends a plain default ("Approved.") — the engine still refuses a SILENT move
  * (services/taskEngine.move), so the feed always says what happened, but
  * nobody is made to type "ok" to approve good work.
+ *
+ * FROM A SWIPE (2026-09-27) every box is required while the server says so
+ * (`requireRemark` ← meta.swipeRemarkRequired — the user's "mandatory now, we
+ * will decide later"), and two more moves come through here: Accept and a
+ * routine task's Done.
  */
 import { useEffect, useRef, useState } from 'react';
-import { FiX, FiCheckCircle, FiRotateCcw, FiThumbsDown, FiSend, FiCheck } from 'react-icons/fi';
+import { FiX, FiCheckCircle, FiRotateCcw, FiThumbsDown, FiThumbsUp, FiSend, FiCheck } from 'react-icons/fi';
 
 /**
  * What each move says. `defaultNote` is sent when the box is left empty; a
  * move without one requires a remark.
  */
 const COPY = {
+  accept: {
+    title: 'Accept this task?',
+    body: 'It moves to In progress, and whoever set it is told.',
+    label: 'Remark',
+    placeholder: 'e.g. On it — I will send it by 5 pm (optional)',
+    defaultNote: 'Accepted — on it.',
+    confirm: 'Accept',
+    icon: FiThumbsUp,
+    tone: 'green',
+  },
+  done: {
+    title: 'Mark as done?',
+    body: 'Today’s routine is finished — it is marked completed.',
+    label: 'Remark',
+    placeholder: 'e.g. Counted and locked the cash (optional)',
+    defaultNote: 'Done.',
+    confirm: 'Mark done',
+    icon: FiCheckCircle,
+    tone: 'green',
+  },
   approve: {
     title: 'Approve this task?',
     body: 'It is marked completed and the points are recorded.',
@@ -78,7 +103,7 @@ const TONES = {
   violet: { chip: 'bg-violet-50 text-violet-700', button: 'bg-violet-600 hover:bg-violet-700' },
 };
 
-export default function TaskActionDialog({ action, task, onClose, onConfirm }) {
+export default function TaskActionDialog({ action, task, onClose, onConfirm, requireRemark = false }) {
   const copy = COPY[action] || null;
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -97,14 +122,19 @@ export default function TaskActionDialog({ action, task, onClose, onConfirm }) {
 
   if (!copy || !task) return null;
 
-  const required = !copy.defaultNote;
+  const required = requireRemark || !copy.defaultNote;
   const tone = TONES[copy.tone] || TONES.green;
   const Icon = copy.icon;
+  const placeholder = required ? copy.placeholder.replace(/\s*\(optional\)$/i, '') : copy.placeholder;
 
   const confirm = async () => {
     const said = note.trim();
     if (required && !said) {
-      setError('Say why — the other person has nothing else to go on.');
+      // Optional elsewhere, required from a swipe: say so, rather than asking
+      // "why" about an Accept.
+      setError(copy.defaultNote
+        ? 'Add a remark first — a swipe needs one.'
+        : 'Say why — the other person has nothing else to go on.');
       boxRef.current?.focus();
       return;
     }
@@ -167,7 +197,7 @@ export default function TaskActionDialog({ action, task, onClose, onConfirm }) {
             }}
             rows={3}
             maxLength={1000}
-            placeholder={copy.placeholder}
+            placeholder={placeholder}
             className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-sm"
           />
           {error && <p className="mt-1.5 text-xs font-medium text-red-600">{error}</p>}

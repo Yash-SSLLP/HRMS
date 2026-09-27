@@ -51,6 +51,14 @@ const {
   accentFor, PRIORITY_RANK, BOARD_COLUMNS, SORTS, SORT_KEYS, DEFAULT_SORT,
   PROGRESS_STEPS, MAX_SUBTASKS, EXTENSION_STATUS, clampProgress,
   normaliseStatus, spellingsOf, kindFilter, normaliseStatusStage,
+  // 2026-09-27: the edit trail, the bell, and the recurring shapes.
+  EDIT_FIELD_LABELS, reminderLabel, NUDGE_COOLDOWN_MIN, nudgeReadyAt,
+  REMINDER_WHEN, REPEAT_REMINDER, MONTHLY_MODE, MONTHLY_MODES, NTH_WEEKS, NTH_WEEK_LABELS,
+  MAX_DAY_INTERVAL, DEFAULT_LEAD_DAYS, MAX_LEAD_DAYS, WEEKDAY_NAMES, isRoutineFrequency,
+  patternLabel,
+  // …and the shapes a repeating reminder can take.
+  REMINDER_PATTERN, REMINDER_PATTERNS, REMINDER_PATTERN_LABELS, DEFAULT_REMIND_AT,
+  DEFAULT_REMIND_WINDOW, MAX_REMIND_EVERY_HOURS, reminderPattern, hhmmOf,
 } = require('../config/tasks');
 
 // ===== Small shared helpers =====
@@ -413,7 +421,10 @@ const LIST_FIELDS = 'code kind title category priority status points dueDate sta
   // person who set it — so falling back to `createdByName` would confidently
   // name the wrong person on exactly the tasks where it matters. And the
   // transfer trail, so a row can say it changed hands.
-  + 'approver approverName transfers';
+  + 'approver approverName transfers '
+  // 2026-09-27: routine dailies, "Edited ×2", and the bell's 30-minute gate.
+  + 'routine recurringTask occurrenceKey editCount lastEditedAt lastEditedByName '
+  + 'lastNudgeAt nudgeAt nudgeCount';
 
 /**
  * Decorate a lean row with the derived bits every client would compute anyway.
@@ -505,6 +516,18 @@ function decorate(row) {
     // The whole list is rarely wanted on a row; the count is, so "extended
     // twice, asking again" reads without opening anything.
     extensionRequests: (row.extensions || []).length,
+
+    // ===== 2026-09-27 =====
+    // A daily occurrence — only ever marked done.
+    routine: Boolean(row.routine),
+    // "Edited ×2" on the row, so the person about to accept it reads it again.
+    editCount: Number(row.editCount) || 0,
+    // When a bell was last pressed on it, either direction. The gate THIS
+    // reader faces is `can.nudgeReadyAt`, which knows which direction is theirs.
+    lastNudgeAt: row.lastNudgeAt || null,
+    // The schedule's shape in words, for "Daily · 6:00 PM" on a recurring row.
+    repeatLabel: row.repeat?.frequency && row.repeat.frequency !== FREQUENCY.ONCE
+      ? patternLabel(row.repeat) : '',
   };
 }
 
@@ -871,13 +894,20 @@ const taskFeed = asyncHandler(async (req, res) => {
 function cleanReminders(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((r) => ({
-      channel: REMINDER_CHANNELS.includes(r?.channel) ? r.channel : 'APP',
-      amount: Math.max(0, Math.min(365, Number(r?.amount) || 0)),
-      unit: REMINDER_UNITS.includes(r?.unit) ? r.unit : 'DAYS',
-      when: REMINDER_WHENS.includes(r?.when) ? r.when : 'BEFORE',
-    }))
-    .filter((r) => r.amount > 0)
+    .map((r) => {
+      const base = {
+        channel: REMINDER_CHANNELS.includes(r?.channel) ? r.channel : 'APP',
+        amount: Math.max(0, Math.min(365, Number(r?.amount) || 0)),
+        unit: REMINDER_UNITS.includes(r?.unit) ? r.unit : 'DAYS',
+        when: REMINDER_WHENS.includes(r?.when) ? r.when : 'BEFORE',
+      };
+      return base.when === REMINDER_WHEN.EVERY ? cleanRepeatingReminder(r, base) : base;
+    })
+    .filter((r) => r && r.amount > 0)
+    // There is at most one repeating rule: two beats on one task would be one
+    // beat, badly. The first one sent wins.
+    .filter((r, i, all) => r.when !== REMINDER_WHEN.EVERY
+      || all.findIndex((o) => o.when === REMINDER_WHEN.EVERY) === i)
     // Two identical rules would fire once (they share an idempotence key) and
     // look like a bug. De-duplicate at the door.
     .filter((r, i, all) => all.findIndex((o) => o.channel === r.channel && o.amount === r.amount
@@ -885,9 +915,76 @@ function cleanReminders(raw) {
     .slice(0, 10);
 }
 
+/**
+ * A REPEATING rule in the shape it says it is (config/tasks REMINDER_PATTERN,
+ * 2026-09-27) — or null when it could never fire (weekly, with no day ticked).
+ *
+ *   HOURLY   every 1–12 hours (or ≥ 30 minutes, from an older form) inside an
+ *            optional window; "every 5 minutes until done" is not a reminder,
+ *            it is an alarm
+ *   DAILY    every 1–31 days at a time
+ *   WEEKLY   on the weekdays ticked, at a time
+ *   MONTHLY  on a date, or on the Nth weekday, at a time
+ */
+function cleanRepeatingReminder(r, base) {
+  const pattern = reminderPattern(r);
+  const head = { channel: base.channel, when: REMINDER_WHEN.EVERY, pattern };
+
+  if (pattern === REMINDER_PATTERN.HOURLY) {
+    const minutes = base.unit === 'MINUTES';
+    const out = {
+      ...head,
+      unit: minutes ? 'MINUTES' : 'HOURS',
+      amount: minutes
+        ? Math.min(MAX_REMIND_EVERY_HOURS * 60, Math.max(REPEAT_REMINDER.minMinutes, Math.round(base.amount)))
+        : Math.min(MAX_REMIND_EVERY_HOURS, Math.max(1, Math.round(base.amount) || 1)),
+    };
+    const from = hhmmOf(r?.from);
+    const to = hhmmOf(r?.to);
+    // Kept only when it is a real window that is not the default one.
+    if (from && to && from < to && (from !== DEFAULT_REMIND_WINDOW.from || to !== DEFAULT_REMIND_WINDOW.to)) {
+      out.from = from;
+      out.to = to;
+    }
+    return out;
+  }
+
+  const out = { ...head, unit: 'DAYS', amount: 1, at: hhmmOf(r?.at) || DEFAULT_REMIND_AT };
+  if (pattern === REMINDER_PATTERN.DAILY) {
+    out.amount = Math.min(MAX_DAY_INTERVAL, Math.max(1, Math.round(Number(r?.amount) || 1)));
+    return out;
+  }
+  if (pattern === REMINDER_PATTERN.WEEKLY) {
+    const days = [...new Set((Array.isArray(r?.weekdays) ? r.weekdays : []).map(Number))]
+      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+      .sort((a, b) => a - b);
+    if (!days.length) return null;
+    out.weekdays = days;
+    return out;
+  }
+  // MONTHLY
+  if (r?.monthlyMode === MONTHLY_MODE.WEEKDAY) {
+    const wd = Number(r.weekday);
+    const nth = Number(r.nthWeek);
+    out.monthlyMode = MONTHLY_MODE.WEEKDAY;
+    out.weekday = Number.isInteger(wd) && wd >= 0 && wd <= 6 ? wd : 1;
+    out.nthWeek = NTH_WEEKS.includes(nth) ? nth : 1;
+  } else {
+    const d = Math.round(Number(r?.monthDay));
+    out.monthlyMode = MONTHLY_MODE.DATE;
+    out.monthDay = Number.isFinite(d) ? Math.min(31, Math.max(1, d)) : 1;
+  }
+  return out;
+}
+
 function cleanRepeat(raw) {
   const frequency = FREQUENCIES.includes(raw?.frequency) ? raw.frequency : FREQUENCY.ONCE;
   const out = { frequency };
+  // Every N days — 2 is "alternate days" (2026-09-27).
+  if (frequency === FREQUENCY.DAILY) {
+    const n = Math.round(Number(raw?.interval) || 1);
+    out.interval = Math.min(MAX_DAY_INTERVAL, Math.max(1, n));
+  }
   if (frequency === FREQUENCY.WEEKLY) {
     const days = (Array.isArray(raw?.weekdays) ? raw.weekdays : [])
       .map((d) => Number(d))
@@ -897,6 +994,16 @@ function cleanRepeat(raw) {
   if (frequency === FREQUENCY.MONTHLY || frequency === FREQUENCY.YEARLY) {
     const d = Number(raw?.monthDay);
     if (Number.isInteger(d) && d >= 1 && d <= 31) out.monthDay = d;
+  }
+  // "The first Monday of the month" — any weekday, first to fourth or last.
+  if (frequency === FREQUENCY.MONTHLY) {
+    out.monthlyMode = MONTHLY_MODES.includes(raw?.monthlyMode) ? raw.monthlyMode : MONTHLY_MODE.DATE;
+    if (out.monthlyMode === MONTHLY_MODE.WEEKDAY) {
+      const nth = Number(raw?.nthWeek);
+      const wd = Number(raw?.weekday);
+      out.nthWeek = NTH_WEEKS.includes(nth) ? nth : 1;
+      out.weekday = Number.isInteger(wd) && wd >= 0 && wd <= 6 ? wd : 1;
+    }
   }
   if (frequency === FREQUENCY.YEARLY) {
     const m = Number(raw?.month);
@@ -1080,9 +1187,15 @@ const createTask = asyncHandler(async (req, res) => {
   if (!Number.isFinite(pts) || pts < 0) bad(res, 'Points must be a number, 0 or more.');
   pts = Math.min(MAX_TASK_POINTS, Math.round(pts));
 
+  // An older app's Repeat box sends no reminders. The company default ("1 day
+  // before") can never go on a DAILY task — each one only appears at 9 AM on its
+  // day — so a daily one gets what the Recurring tab gives it (2026-09-27): every
+  // two hours until done.
   const reminders = body.reminders !== undefined
     ? cleanReminders(body.reminders)
-    : settings.defaultReminders;
+    : (recurring && isRoutineFrequency(repeat.frequency)
+      ? [{ channel: 'APP', amount: 2, unit: 'HOURS', when: REMINDER_WHEN.EVERY, pattern: REMINDER_PATTERN.HOURLY }]
+      : settings.defaultReminders);
 
   const companyScope = await viewerCompanyScope(req);
 
@@ -1141,7 +1254,15 @@ const createTask = asyncHandler(async (req, res) => {
   });
 
   // A repeating task becomes a schedule, and the worker mints the occurrences.
+  //
+  // This is the OLD way in — the Repeat box on the assign form, which an app
+  // build from before the Recurring tab (2026-09-27) still sends. The new way
+  // is POST /tasks/recurring (taskTemplateController.createRecurring), which
+  // makes only the schedule and lets the worker raise each occurrence when it
+  // is due to appear. Kept working, on the same (IST-correct) date maths.
   if (recurring) {
+    const recur = require('../services/taskRecurrenceWorker');
+    const now = new Date();
     const schedule = await RecurringTask.create({
       title: task.title,
       description: task.description,
@@ -1154,12 +1275,18 @@ const createTask = asyncHandler(async (req, res) => {
       links: task.links,
       reminders: task.reminders,
       frequency: repeat.frequency,
+      interval: repeat.interval,
       weekdays: repeat.weekdays,
+      monthlyMode: repeat.monthlyMode,
+      nthWeek: repeat.nthWeek,
+      weekday: repeat.weekday,
       monthDay: repeat.monthDay,
       month: repeat.month,
       time: repeat.time || '18:00',
       startDate: startDate,
       until: repeat.until,
+      requiresApproval: task.requiresApproval,
+      mintFrom: now,
       company: task.company,
       createdBy: setter._id,
       createdByName: personName(setter),
@@ -1168,9 +1295,23 @@ const createTask = asyncHandler(async (req, res) => {
     task.recurringTask = schedule._id;
     // The row just created IS the first occurrence — mint its deadline now
     // rather than leaving a dateless task sitting until the worker next runs.
-    const { firstDueDate } = require('../services/taskRecurrenceWorker');
-    task.dueDate = firstDueDate(schedule);
-    task.occurrenceKey = require('../services/taskRecurrenceWorker').occurrenceKeyFor(task.dueDate);
+    // The NEXT one that is not already past, so it is never born overdue.
+    const next = recur.nextOccurrence(schedule.toObject(), now);
+    task.dueDate = next ? next.dueAt : recur.firstDueDate(schedule);
+    task.occurrenceKey = next ? next.key : recur.occurrenceKeyFor(task.dueDate);
+    task.remindFrom = now;
+    task.repeat = { ...repeat, time: schedule.time };
+    // A daily one is ROUTINE — taken on already, only ever marked done.
+    if (isRoutineFrequency(repeat.frequency)) {
+      task.routine = true;
+      task.requiresApproval = false;
+      for (const a of task.assignees) {
+        a.status = STATUS.IN_PROGRESS;
+        a.acceptance = ACCEPTANCE.ACCEPTED;
+        a.acceptedAt = now;
+        a.startedAt = now;
+      }
+    }
     await task.save();
   }
 
@@ -1194,27 +1335,57 @@ const updateTask = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
   const task = await Task.findById(req.params.id);
   if (!task) bad(res, 'That task no longer exists.', 404);
+  // Only the assigner, and (2026-09-27) only until somebody has taken it on —
+  // a 409 carrying the reason once it has been (services/taskAccess).
   access.assertCanEdit(req.user, task);
 
   const body = parseBody(req);
   const changed = [];
+  /**
+   * THE TRAIL (2026-09-27) — the user's *"with a trail of what edits were
+   * done"*. Every field that actually moves is written down as before → after,
+   * already worded for reading (models/TaskUpdate.changes), so the person about
+   * to accept it can see exactly what was changed under them, and when.
+   */
+  const changes = [];
+  const note = (field, before, after) => changes.push({
+    field,
+    label: EDIT_FIELD_LABELS[field] || field,
+    before: shortText(before),
+    after: shortText(after),
+  });
 
   if (body.title !== undefined) {
     const t = String(body.title).trim();
     if (!t) bad(res, 'A task needs a title.');
-    if (t !== task.title) { task.title = t; changed.push('title'); }
+    if (t !== task.title) { note('title', task.title, t); task.title = t; changed.push('title'); }
   }
-  if (body.description !== undefined) task.description = String(body.description).trim();
-  if (body.category !== undefined) task.category = String(body.category).trim();
+  if (body.description !== undefined) {
+    const d = String(body.description).trim();
+    if (d !== (task.description || '')) {
+      note('description', task.description, d);
+      task.description = d;
+      changed.push('details');
+    }
+  }
+  if (body.category !== undefined) {
+    const c = String(body.category).trim();
+    if (c !== (task.category || '')) {
+      note('category', task.category, c);
+      task.category = c;
+      changed.push('category');
+    }
+  }
   if (body.priority !== undefined) {
     const p = normalisePriority(body.priority);
-    if (p && p !== task.priority) { task.priority = p; changed.push('priority'); }
+    if (p && p !== task.priority) { note('priority', task.priority, p); task.priority = p; changed.push('priority'); }
   }
 
   if (body.requiresApproval !== undefined) {
     const want = !(body.requiresApproval === false
       || body.requiresApproval === 'false' || body.requiresApproval === '0');
     if (want !== task.requiresApproval) {
+      note('requiresApproval', task.requiresApproval ? 'Needed' : 'Not needed', want ? 'Needed' : 'Not needed');
       task.requiresApproval = want;
       changed.push(want ? 'review needed' : 'no review needed');
     }
@@ -1268,6 +1439,7 @@ const updateTask = asyncHandler(async (req, res) => {
         }
       }
 
+      note('points', task.points, rounded);
       task.points = rounded;
       changed.push('points');
     }
@@ -1277,25 +1449,55 @@ const updateTask = asyncHandler(async (req, res) => {
     const d = body.dueDate ? new Date(body.dueDate) : null;
     if (d && Number.isNaN(d.getTime())) bad(res, 'That due date is not a date.');
     const was = task.dueDate ? new Date(task.dueDate).getTime() : null;
-    if ((d ? d.getTime() : null) !== was) {
+    // To the MINUTE: the web form's date box holds no seconds, so a deadline
+    // picked on the phone (7:15:23) came back from an untouched web form as
+    // 7:15:00 and read as moved — "7:15 am → 7:15 am" in the edit trail, an
+    // extension counted and the reminders re-armed, for a change nobody made.
+    const minute = (t) => (t === null ? null : Math.floor(t / 60000));
+    if (minute(d ? d.getTime() : null) !== minute(was)) {
+      note('dueDate', task.dueDate ? whenText(task.dueDate) : 'No deadline', d ? whenText(d) : 'No deadline');
       if (was && d) task.extensionCount = (task.extensionCount || 0) + 1;
       task.dueDate = d || undefined;
       // A moved deadline is a fresh chase: the rules that already fired against
-      // the old date must be allowed to fire again against the new one.
+      // the old date must be allowed to fire again against the new one — and
+      // so must the "it is overdue now" announcement.
       task.firedReminders = [];
+      task.overdueNotifiedAt = undefined;
       changed.push('deadline');
     }
   }
 
   if (body.reminders !== undefined) {
-    task.reminders = cleanReminders(body.reminders);
+    const next = cleanReminders(body.reminders);
+    const words = (list) => (list || []).map(reminderLabel).join(', ') || 'None';
+    if (words(task.reminders) !== words(next)) {
+      note('reminders', words(task.reminders), words(next));
+      changed.push('reminders');
+    }
+    task.reminders = next;
     task.firedReminders = [];
   }
-  if (body.links !== undefined) task.links = cleanLinks(body.links);
+  if (body.links !== undefined) {
+    const next = cleanLinks(body.links);
+    const words = (list) => (list || []).map((l) => l.label || l.url).join(', ') || 'None';
+    if (words(task.links) !== words(next)) {
+      note('links', words(task.links), words(next));
+      changed.push('links');
+    }
+    task.links = next;
+  }
 
   if (body.loopUsers !== undefined) {
-    task.loopUsers = [...new Set((body.loopUsers || []).map(String))]
+    const next = [...new Set((body.loopUsers || []).map(String))]
       .filter(mongoose.Types.ObjectId.isValid);
+    const before = (task.loopUsers || []).map(String);
+    if (before.slice().sort().join() !== next.slice().sort().join()) {
+      const names = await namesOf([...before, ...next]);
+      const say = (list) => list.map((id) => names.get(id)).filter(Boolean).join(', ') || 'Nobody';
+      note('loopUsers', say(before), say(next));
+      changed.push('who is kept in the loop');
+    }
+    task.loopUsers = next;
   }
 
   // Changing WHO is on it goes through the direction rule again — an edit must
@@ -1305,19 +1507,38 @@ const updateTask = asyncHandler(async (req, res) => {
     if (!wanted.length) bad(res, 'A task needs at least one person on it.');
     await access.resolveAssignmentKind(req.user, wanted, task.kind);
     const fresh = await buildAssignees(wanted);
+    const before = (task.assignees || []).map((a) => String(a.user));
     // Keep the progress of anybody who is staying: re-assigning a five-person
     // task must not reset the two people who have already finished.
     const existing = new Map((task.assignees || []).map((a) => [String(a.user), a]));
+    const beforeNames = (task.assignees || []).map((a) => a.name).filter(Boolean).join(', ') || '—';
     task.assignees = fresh.map((f) => existing.get(String(f.user)) || f);
-    changed.push('who is on it');
+    if (before.slice().sort().join() !== fresh.map((f) => String(f.user)).sort().join()) {
+      note('assignees', beforeNames, fresh.map((f) => f.name).filter(Boolean).join(', ') || '—');
+      changed.push('who is on it');
+    }
   }
 
   const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
   if (uploaded.length) {
+    const had = (task.attachments || []).length;
     task.attachments.push(...await storeFiles(uploaded, task._id, req.user));
+    note('attachments', `${had} file${had === 1 ? '' : 's'}`,
+      `${had + uploaded.length} files — added ${uploaded.map((f) => f.originalname).filter(Boolean).join(', ')}`);
+    changed.push('files');
   }
   const voice = await storeVoiceNote(req.files, task._id, req.user, body.voiceDurationMs);
-  if (voice) task.voiceNote = voice;
+  if (voice) {
+    note('voiceNote', task.voiceNote?.storagePath ? 'Earlier recording' : 'None', 'New recording');
+    task.voiceNote = voice;
+    changed.push('voice note');
+  }
+
+  if (changes.length) {
+    task.editCount = (task.editCount || 0) + 1;
+    task.lastEditedAt = new Date();
+    task.lastEditedByName = personName(req.user);
+  }
 
   await task.save();
 
@@ -1343,12 +1564,127 @@ const updateTask = asyncHandler(async (req, res) => {
       by: req.user._id,
       byName: personName(req.user),
       note: `Changed ${changed.join(', ')}.`,
+      changes: changes.length ? changes : undefined,
     });
-    notify.edited(task, req.user, `Changed ${changed.join(', ')}`)
+    // The first two changes in full, so the notification alone says what moved.
+    const said = changes.slice(0, 2).map((c) => `${c.label}: ${c.before || '—'} → ${c.after || '—'}`).join(' · ')
+      + (changes.length > 2 ? ` · +${changes.length - 2} more` : '');
+    notify.edited(task, req.user, said || `Changed ${changed.join(', ')}`)
       .catch((e) => console.error('task notify failed:', e.message));
   }
 
-  res.json({ task: decorate(task.toObject()) });
+  res.json({
+    task: decorate(task.toObject()),
+    can: access.capabilitiesFor(req.user, task),
+    changes,
+  });
+});
+
+/** One line of an edit trail, short enough for a phone. */
+function shortText(v) {
+  if (v === undefined || v === null || v === '') return '';
+  const s = String(v).replace(/\s+/g, ' ').trim();
+  return s.length > 280 ? `${s.slice(0, 277)}…` : s;
+}
+
+/** A deadline as a person reads it — portal time, twelve-hour. */
+function whenText(d) {
+  return new Date(d).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    hour12: true, timeZone: 'Asia/Kolkata',
+  });
+}
+
+/** id → "First Last" for the people an edit moved, in one query. */
+async function namesOf(ids) {
+  const list = [...new Set((ids || []).map(String))].filter(mongoose.Types.ObjectId.isValid);
+  if (!list.length) return new Map();
+  const users = await User.find({ _id: { $in: list } }).select('firstName lastName').lean();
+  return new Map(users.map((u) => [String(u._id), personName(u)]));
+}
+
+/**
+ * POST /api/tasks/:id/nudge — THE REMINDER BELL (2026-09-27).
+ *
+ * Body `{ note? }`. Whoever set the task chases the people still doing it while
+ * it is not accepted, in progress or overdue; somebody who handed it in chases
+ * the approver while it sits in review (services/taskAccess.nudgeTargets).
+ *
+ * THE 30-MINUTE GATE is one conditional update on `lastNudgeAt` — the claim IS
+ * the check, so two presses in the same second (or two managers) cannot both
+ * get through. A refused press is a 429 carrying `nextAt`, so the client can
+ * say when rather than just "no". The scheduled reminders never read this
+ * field: the user's rule is that an auto reminder goes on time regardless.
+ */
+const nudgeTask = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const task = await Task.findById(req.params.id);
+  if (!task || task.archived) bad(res, 'That task no longer exists.', 404);
+  access.assertCanSee(req.user, task);
+
+  const target = access.nudgeTargets(req.user, task);
+  if (!target) {
+    bad(res, task.status === STATUS.SUBMITTED
+      ? 'Only somebody who handed this in can remind the reviewer.'
+      : 'There is nobody on this task for you to remind right now.', 403);
+  }
+
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - NUDGE_COOLDOWN_MIN * 60 * 1000);
+  const note = String(parseBody(req).note || '').trim().slice(0, 300);
+  const names = await namesOf(target.to);
+  const toNames = target.to.map((id) => names.get(id)).filter(Boolean).join(', ');
+
+  // The gate is per DIRECTION (Task.nudgeAt): the setter chasing the work and
+  // a doer chasing the review are different people being asked.
+  const gate = `nudgeAt.${target.kind}`;
+  const won = await Task.updateOne(
+    { _id: task._id, $or: [{ [gate]: null }, { [gate]: { $lte: cutoff } }] },
+    {
+      $set: { lastNudgeAt: now, [gate]: now },
+      $inc: { nudgeCount: 1 },
+      $push: {
+        nudges: {
+          $each: [{
+            by: req.user._id, byName: personName(req.user), kind: target.kind, to: target.to, toNames, note, at: now,
+          }],
+          $slice: -50,
+        },
+      },
+    }
+  );
+  if (!won.modifiedCount) {
+    const fresh = await Task.findById(task._id).select('nudgeAt lastNudgeAt').lean();
+    const last = fresh?.nudgeAt?.[target.kind] || fresh?.lastNudgeAt || now;
+    const nextAt = nudgeReadyAt(fresh, now, target.kind) || new Date(now.getTime() + NUDGE_COOLDOWN_MIN * 60 * 1000);
+    res.status(429);
+    return res.json({
+      message: `A reminder went out ${Math.max(1, Math.round((now - new Date(last)) / 60000))} min ago. `
+        + `You can send another after ${whenText(nextAt).split(', ').pop()}.`,
+      nextAt,
+    });
+  }
+
+  await TaskUpdate.create({
+    task: task._id,
+    kind: 'NUDGED',
+    by: req.user._id,
+    byName: personName(req.user),
+    note: note || (target.kind === 'REVIEW'
+      ? `Reminded ${toNames || 'the reviewer'} to review it.`
+      : `Sent ${toNames || 'them'} a reminder.`),
+  });
+  notify.nudged(task, req.user, { to: target.to, kind: target.kind, note })
+    .catch((e) => console.error('task nudge notify failed:', e.message));
+
+  const nextAt = new Date(now.getTime() + NUDGE_COOLDOWN_MIN * 60 * 1000);
+  res.json({
+    ok: true,
+    sentTo: toNames,
+    kind: target.kind,
+    nextAt,
+    message: `Reminder sent to ${toNames || (target.kind === 'REVIEW' ? 'the reviewer' : 'them')}.`,
+  });
 });
 
 /**
@@ -1947,8 +2283,25 @@ const taskMeta = asyncHandler(async (req, res) => {
     maxPieces: MAX_SUBTASKS,
     frequencies: FREQUENCIES.map((f) => ({ key: f, label: FREQUENCY_LABELS[f] })),
     weekdays: WEEKDAYS,
+    // ===== The Recurring tab's vocabulary (2026-09-27) =====
+    weekdayNames: WEEKDAY_NAMES,
+    monthlyModes: MONTHLY_MODES,
+    nthWeeks: NTH_WEEKS.map((n) => ({ key: n, label: NTH_WEEK_LABELS[String(n)] })),
+    maxDayInterval: MAX_DAY_INTERVAL,
+    defaultLeadDays: DEFAULT_LEAD_DAYS,
+    maxLeadDays: MAX_LEAD_DAYS,
+    repeatReminder: REPEAT_REMINDER,
     reminderChannels: REMINDER_CHANNELS.map((c) => ({ key: c, label: REMINDER_CHANNEL_LABELS[c] })),
     reminderUnits: REMINDER_UNITS,
+    // The shapes a repeating reminder can take (2026-09-27) and their defaults.
+    reminderPatterns: REMINDER_PATTERNS.map((k) => ({ key: k, label: REMINDER_PATTERN_LABELS[k] })),
+    defaultRemindAt: DEFAULT_REMIND_AT,
+    defaultRemindWindow: DEFAULT_REMIND_WINDOW,
+    // ===== Swiping and the bell (2026-09-27) =====
+    // While true a swipe will not go without a remark — the user's "mandatory
+    // now, we will decide later" (Setting.tasks.swipeRemarkRequired).
+    swipeRemarkRequired: settings.swipeRemarkRequired !== false,
+    nudgeCooldownMin: NUDGE_COOLDOWN_MIN,
     defaultPoints: settings.defaultPoints,
     defaultReminders: settings.defaultReminders,
     pointsArePaid: settings.pointsToPool,
@@ -2260,6 +2613,8 @@ module.exports = {
   acceptTask,
   declineTask,
   delegateTask,
+  // 2026-09-27
+  nudgeTask,
   // 2026-09-22
   submitTask,
   approveTask,
@@ -2295,4 +2650,5 @@ module.exports = {
   cleanLinks,
   buildAssignees,
   personName,
+  namesOf,
 };

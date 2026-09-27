@@ -290,6 +290,13 @@ const settingSchema = new mongoose.Schema(
       // The evening summary — "you have 4 tasks pending" — as "HH:mm" in
       // portal time. Blank switches it off.
       dailyDigestAt: { type: String, default: '18:00', trim: true },
+
+      // SWIPING A TASK ASKS FOR A REMARK — and, while this is on, will not go
+      // without one (2026-09-27). The user: *"remark box pops up (let it be
+      // mandatory now, later we will decide if it needs to be mandatory or
+      // not)"*. Served to both clients on GET /tasks/meta, so deciding later is
+      // flipping this, not shipping an app.
+      swipeRemarkRequired: { type: Boolean, default: true },
     },
 
     // ===== Advance Request Form =====

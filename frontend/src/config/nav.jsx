@@ -53,6 +53,20 @@ import { canOpenPermissions, canManageCashOutCategories, canUseAdminPortal } fro
 // `access` = a predicate from config/permissions.js, for a rule the keys above
 // cannot spell — Permissions is "any ladder grant OR a Cash Out category
 // editor", and the keys only ever AND together. Checked alongside the others.
+// `hideRoles` = roles this page is taken OUT of, whatever they hold. CEO/MD pass
+// every capability check, so "not for the executives" cannot be said with a
+// `perm`. It hides the row from the sidebar, the rail and search, and the
+// Layout's route guard turns a bookmark to the page back to the portal's home
+// (see hiddenFromRole below) — the API is untouched.
+
+/**
+ * OUT OF THE CEO/MD's PORTAL (user request 2026-09-27, web and app alike):
+ * Departments, Org Masters, the onboarding checklist, Performance (goals),
+ * Appraisal cycles, and Email & Letter Templates. The app's twin is
+ * utils/roles EXEC_HIDDEN_SCREENS.
+ */
+const NOT_FOR_EXECS = ['CEO', 'MD'];
+
 export const adminNav = [
   // Pinned above every category: the landing page is reached constantly and
   // shouldn't need a dropdown opened first. An entry with no `group` renders as
@@ -90,9 +104,9 @@ export const adminNav = [
     // Backend only — the Companies tab was deliberately pulled from HR and the
     // executives (user decision 2026-08-26); the routes enforce the same.
     { to: '/admin/companies', label: 'Companies', icon: FiHome, roles: ['SuperAdmin'] },
-    { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage' },
+    { to: '/admin/departments', label: 'Departments', icon: FiGrid, perm: 'org.manage', hideRoles: NOT_FOR_EXECS },
     { to: '/admin/work-locations', label: 'Work Locations', icon: FiMap, perm: 'org.manage' },
-    { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage' },
+    { to: '/admin/org-masters', label: 'Org Masters', icon: FiLayers, perm: 'org.manage', hideRoles: NOT_FOR_EXECS },
     // EVERY ACCESS DECISION IN ONE PLACE. The module-access matrix (Super Admins
     // only), plus the two approval ladders that used to hide as setup tabs on
     // Leave and Regularization, plus the Cash Out category list (what an
@@ -156,9 +170,13 @@ export const adminNav = [
       // Backend). Three gates, one row — so one number.
       badge: ['khata', 'khataConfirm', 'khataSanction'],
       keywords: ['khata', 'khatabook', 'advance', 'advances', 'employee advances', 'udhar', 'cash ledger', 'book', 'books', 'cashbook'],
-      tabs: [{ id: 'overview', label: 'Overview' }, { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
-        { id: 'sanctions', label: 'Advance approvals', roles: ['SuperAdmin', 'CEO', 'MD'] },
-        { id: 'approvals', label: 'Approvals' },
+      // The queues first, in the user's order (2026-09-27): Reimburse ·
+      // Advance · Approval, then People and Ledger.
+      tabs: [{ id: 'overview', label: 'Overview' },
+        { id: 'reimburse', label: 'Reimburse' },
+        { id: 'advance', label: 'Advance' },
+        { id: 'approval', label: 'Approval' },
+        { id: 'people', label: 'People' }, { id: 'ledger', label: 'Ledger' },
         { id: 'accounts', label: 'Accounts' }] },
     // CEO/MD have no employee portal, so their own cash account (advances they
     // take, expenses they file) lives here in the admin portal.
@@ -240,7 +258,8 @@ export const adminNav = [
     // or written up — the same reason /admin/my-khata exists.
     { to: '/admin/my-interviews', label: 'My Interviews', icon: FiVideo, roles: ['CEO', 'MD'],
       keywords: ['interview', 'interviews', 'panel', 'candidate', 'feedback', 'round', 'rounds'] },
-    { to: '/admin/onboarding', label: 'Onboarding Checklist', icon: FiCheckSquare, perm: 'onboarding.manage' },
+    { to: '/admin/onboarding', label: 'Onboarding Checklist', icon: FiCheckSquare, perm: 'onboarding.manage',
+      hideRoles: NOT_FOR_EXECS },
     // Probations due inside 30 days, or already past. The server decides which
     // ones those are (isConfirmationDue), so this number and the rows the table
     // flags are the same rows.
@@ -248,8 +267,10 @@ export const adminNav = [
       badge: 'confirmation' },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
-    { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage' },
-    { to: '/admin/review-cycles', label: 'Appraisals', icon: FiEdit, perm: 'performance.manage' },
+    { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage',
+      hideRoles: NOT_FOR_EXECS },
+    { to: '/admin/review-cycles', label: 'Appraisals', icon: FiEdit, perm: 'performance.manage',
+      hideRoles: NOT_FOR_EXECS },
     // Three queues, one number: joining requests, reported issues, comments to
     // moderate — all worked from the side panels of this one page.
     { to: '/admin/courses', label: 'Courses', icon: FiBook, perm: 'courses.manage', ld: true,
@@ -297,6 +318,7 @@ export const adminNav = [
       // Two grants share this page — the letter wording and the letterhead
       // itself — and either one on its own is enough to have something to do here.
       anyPerm: ['templates.manage', 'branding.manage'],
+      hideRoles: NOT_FOR_EXECS,
       tabs: [{ id: 'templates', label: 'Templates', perm: 'templates.manage' },
         { id: 'branding', label: 'Logo & signatures', perm: 'branding.manage' }] },
     // Push reminder schedule — SuperAdmin-only, matching the server, which
@@ -531,3 +553,20 @@ export const employeeNav = [
       keywords: ['apk', 'android', 'download app', 'install'] },
   ] },
 ];
+
+/** Every row of a nav list — grouped rows and bare ones alike. */
+const rowsOf = (list) => (list || []).flatMap((g) => (g.items ? g.items : (g.to ? [g] : [])));
+
+/**
+ * Is the page at `path` (or under it) taken out of this user's portal by
+ * `hideRoles`? The Layout's route guard asks it of the address bar, and a page
+ * that links to another asks it before drawing the link — so nothing leads to
+ * a page the menu no longer offers.
+ * @param {Object} user - the signed-in account
+ * @param {string} path - a pathname, e.g. '/admin/departments'
+ * @param {Array} [list] - the portal's nav (adminNav by default)
+ */
+export function hiddenFromRole(user, path, list = adminNav) {
+  const row = rowsOf(list).find((i) => i.to && (path === i.to || String(path).startsWith(`${i.to}/`)));
+  return Boolean(row?.hideRoles?.includes(user?.role));
+}

@@ -279,6 +279,78 @@ function isAwaitingAcceptance(task) {
   );
 }
 
+// ===== Editing the terms — only until somebody takes the job on =====
+
+/**
+ * MAY THE TERMS OF THIS TASK STILL BE CHANGED? (2026-09-27)
+ *
+ * The user: *"option to edit task — before it is accepted by the assignee, with
+ * a trail of what edits were done"*. So the assigner edits freely while the
+ * handover is unanswered, and the moment anybody on it accepts (or starts, or
+ * hands in, or finishes — each of which implies accepting) the terms are what
+ * they agreed to and are locked. A deadline that has to move after that goes
+ * through "Ask for more time", which is the doer's to ask and the assigner's to
+ * grant — never a quiet edit under somebody who already said yes.
+ *
+ * A REFUSAL does not lock it: somebody who declined agreed to nothing, and the
+ * assigner fixing the task (or putting somebody else on it) is exactly what a
+ * refusal asks for.
+ */
+function termsOpen(task) {
+  if (!task) return false;
+  if (normaliseStatus(task.status) !== STATUS.PENDING) return false;
+  return !(task.assignees || []).some((a) => {
+    if (a.acceptance === ACCEPTANCE.REJECTED) return false;
+    const s = normaliseStatus(a.status) || STATUS.PENDING;
+    return a.acceptance === ACCEPTANCE.ACCEPTED || (s !== STATUS.PENDING && s !== STATUS.CANCELLED);
+  });
+}
+
+/** What an edit trail calls each field. ONE wording for both clients. */
+const EDIT_FIELD_LABELS = {
+  title: 'Title',
+  description: 'Details',
+  category: 'Category',
+  priority: 'Priority',
+  points: 'Points',
+  dueDate: 'Deadline',
+  requiresApproval: 'Review',
+  reminders: 'Reminders',
+  links: 'Links',
+  loopUsers: 'Kept in the loop',
+  assignees: 'Assigned to',
+  attachments: 'Files',
+  voiceNote: 'Voice note',
+};
+
+// ===== The reminder bell — a person chasing, not the system =====
+
+/**
+ * HOW LONG BEFORE THE SAME TASK CAN BE CHASED BY HAND AGAIN. (2026-09-27)
+ *
+ * The user: *"can send a repeat reminder only after 30 mins of sending the
+ * previous reminder for each task — but if an auto reminder is set, it triggers
+ * as scheduled even if it comes within 30 mins"*. So this gates the BELL only
+ * (`Task.lastNudgeAt`); the reminder worker never reads it and never writes it.
+ * Per task, whoever pressed it: two managers on one task cannot ping the same
+ * person twice in a minute between them.
+ */
+const NUDGE_COOLDOWN_MIN = 30;
+
+/**
+ * When the bell on this task may next be pressed, or null if it may be now.
+ *
+ * Per DIRECTION when one is named (`kind` 'DOER' | 'REVIEW', Task.nudgeAt): the
+ * setter chasing the doer and the doer chasing the reviewer are different
+ * people being asked. With no kind, the latest press of either.
+ */
+function nudgeReadyAt(task, now = new Date(), kind = null) {
+  const last = kind ? task?.nudgeAt?.[kind] : task?.lastNudgeAt;
+  if (!last) return null;
+  const at = new Date(last).getTime() + NUDGE_COOLDOWN_MIN * 60 * 1000;
+  return at > now.getTime() ? new Date(at) : null;
+}
+
 // ===== The rest of a task's vocabulary =====
 
 /**
@@ -480,6 +552,115 @@ const FREQUENCY_LABELS = {
 
 /** Sunday-first, matching JS `Date.getDay()` so an index IS the weekday. */
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * THE SHAPES A REPEATING TASK CAN TAKE (2026-09-27, the Recurring tab).
+ *
+ * The user's list: *"every 2 hours for daily task till completed · for weekly
+ * we can select days · every alternative days · similar like first Monday of the
+ * month (any day we can pick)"*. Four shapes, one schedule model:
+ *
+ *   DAILY    every day, or every N days (`interval` 2 = alternate days),
+ *            counted from the start date so "alternate" means the same days
+ *            for everybody
+ *   WEEKLY   on the weekdays ticked
+ *   MONTHLY  on a date (the 15th — 29–31 clamp to a short month's last day),
+ *            or on the Nth weekday: first / second / third / fourth / LAST
+ *            Monday … Sunday (`monthlyMode: 'WEEKDAY'`)
+ *   YEARLY   on a date
+ */
+const MONTHLY_MODE = { DATE: 'DATE', WEEKDAY: 'WEEKDAY' };
+const MONTHLY_MODES = Object.values(MONTHLY_MODE);
+/** 1–4 count from the front; -1 is "the last one in the month". */
+const NTH_WEEKS = [1, 2, 3, 4, -1];
+const NTH_WEEK_LABELS = { 1: 'First', 2: 'Second', 3: 'Third', 4: 'Fourth', '-1': 'Last' };
+/** "every N days" — 1 is every day, 2 alternate days. Capped at a month. */
+const MAX_DAY_INTERVAL = 31;
+
+/**
+ * HOW EARLY AN OCCURRENCE APPEARS in the doer's list, in days before it is due.
+ *
+ * The user: *"for monthly task 2 day before the deadline"* — the month-end stock
+ * count shows up on the 28th, not at breakfast on the day it is due. A daily or
+ * weekly task appears on its own day. Stored on each schedule (`leadDays`) with
+ * these as the defaults, so the figure can be moved without a code change.
+ */
+const DEFAULT_LEAD_DAYS = { DAILY: 0, WEEKLY: 0, MONTHLY: 2, YEARLY: 2 };
+const MAX_LEAD_DAYS = 14;
+
+/**
+ * WHAT TIME OF DAY AN OCCURRENCE APPEARS — 9 am, portal time.
+ *
+ * The worker used to mint the moment the calendar allowed, which meant the
+ * "New task" push for the day's routine arrived at 5:30 in the morning. The
+ * working day starts at nine, so that is when the day's work shows up — or an
+ * hour before it is due, when it is due earlier than ten.
+ */
+const APPEAR_HOUR = 9;
+
+/**
+ * A DAILY OCCURRENCE IS ROUTINE: it is only ever marked done.
+ *
+ * The user: *"for daily task they have to only mark that as done that it is
+ * completed"*. Nobody accepts today's cash count, delegates it or sends it for
+ * review — it is either done or it is not. So a daily occurrence is minted
+ * already taken on (in progress, accepted) with no review step, and the only
+ * move offered to the person doing it is Done (services/taskAccess).
+ */
+const isRoutineFrequency = (frequency) => frequency === 'DAILY';
+
+const ordinal = (n) => {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
+/** "6:00 PM" from "18:00" — the portal-wide twelve-hour rule. */
+function time12(hhmm) {
+  const [h, m] = String(hhmm || '18:00').split(':').map((n) => parseInt(n, 10));
+  if (!Number.isFinite(h)) return '';
+  const hr = ((h + 11) % 12) + 1;
+  return `${hr}:${String(Number.isFinite(m) ? m : 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * A schedule in one line — "Every 2 days · 6:00 PM", "Weekly on Mon, Wed ·
+ * 6:00 PM", "Monthly on the first Monday · 6:00 PM". The clients mirror this for
+ * the live preview on the form; the list is drawn from this one.
+ */
+function patternLabel(s = {}) {
+  const at = s.time ? ` · ${time12(s.time)}` : '';
+  switch (s.frequency) {
+    case 'DAILY': {
+      const n = Math.max(1, Number(s.interval) || 1);
+      if (n === 1) return `Every day${at}`;
+      if (n === 2) return `Alternate days${at}`;
+      return `Every ${n} days${at}`;
+    }
+    case 'WEEKLY': {
+      const days = (s.weekdays || []).slice().sort((a, b) => a - b).map((d) => WEEKDAYS[d]).filter(Boolean);
+      if (days.length === 7) return `Every day of the week${at}`;
+      return `Weekly${days.length ? ` on ${days.join(', ')}` : ''}${at}`;
+    }
+    case 'MONTHLY': {
+      if (s.monthlyMode === MONTHLY_MODE.WEEKDAY && Number.isInteger(Number(s.weekday))) {
+        const nth = NTH_WEEK_LABELS[String(s.nthWeek ?? 1)] || 'First';
+        return `Monthly on the ${nth.toLowerCase()} ${WEEKDAY_NAMES[Number(s.weekday)]}${at}`;
+      }
+      return `Monthly on the ${ordinal(Number(s.monthDay) || 1)}${at}`;
+    }
+    case 'YEARLY': {
+      const m = MONTH_NAMES[(Number(s.month) || 1) - 1] || '';
+      return `Yearly on ${Number(s.monthDay) || 1} ${m}${at}`;
+    }
+    default:
+      return 'One time';
+  }
+}
 
 // ===== Reminders =====
 
@@ -501,9 +682,90 @@ const REMINDER_UNIT = { MINUTES: 'MINUTES', HOURS: 'HOURS', DAYS: 'DAYS' };
 const REMINDER_UNITS = Object.values(REMINDER_UNIT);
 const UNIT_MINUTES = { MINUTES: 1, HOURS: 60, DAYS: 24 * 60 };
 
-/** Before the deadline, or chasing after it. */
-const REMINDER_WHEN = { BEFORE: 'BEFORE', AFTER: 'AFTER' };
+/**
+ * Before the deadline, chasing after it — or, since 2026-09-27, AGAIN AND
+ * AGAIN until it is done: "every 2 hours until done", the user's words for a
+ * daily task. An EVERY rule is not an offset from the deadline; it is a beat,
+ * counted from when the task appeared (`Task.remindFrom`), that stops the
+ * moment the work is done (see repeatSlot below and the reminder worker).
+ */
+const REMINDER_WHEN = { BEFORE: 'BEFORE', AFTER: 'AFTER', EVERY: 'EVERY' };
 const REMINDER_WHENS = Object.values(REMINDER_WHEN);
+
+/**
+ * The bounds on a repeating reminder, each there so it cannot become noise:
+ *
+ *   minMinutes     no faster than every 30 minutes — the bell's own cooldown
+ *   activeFrom/To  only between 9 am and 9 pm, portal time. "Every 2 hours
+ *                  until done" on a task nobody finished must not ping at 3 am
+ *   stopAfterDue   and not for ever: a day past its deadline it stops, when a
+ *                  daily task's next occurrence has long since taken its place
+ */
+const REPEAT_REMINDER = {
+  minMinutes: 30,
+  activeFromHour: 9,
+  activeToHour: 21,
+  stopAfterDueMinutes: 24 * 60,
+  // A reminder that comes round once a day (or a week, or a month) keeps
+  // going past the deadline — "till completed" — but not for ever: a week on,
+  // the task is a conversation for the people on it, not for a timer.
+  dayPatternStopAfterDueMinutes: 7 * 24 * 60,
+};
+
+/**
+ * THE SHAPES A REPEATING REMINDER CAN TAKE (2026-09-27). The user, of the
+ * Repeats builder on the recurring form: *"these options should be for sending
+ * notifications too"* — so the chasing is set the same way the task is:
+ *
+ *   HOURLY    every N hours inside a window (9 AM – 9 PM unless set), ON THE
+ *             CLOCK — 9, 11, 1, 3 … — not counted from whenever the task
+ *             happened to be handed over
+ *   DAILY     every N days at a time of day (2 = alternate days), counted from
+ *             the day the task appeared
+ *   WEEKLY    on the weekdays ticked, at a time
+ *   MONTHLY   on a date, or on the first / second / … / last <weekday>, at a time
+ *
+ * ONE per task (cleanReminders keeps the first), every one stops the moment the
+ * work is done, and none ever lands within half an hour of the task appearing
+ * (the New Task notification has just said it). A rule written before this
+ * has no `pattern`: hours or minutes make it HOURLY, days make it DAILY.
+ */
+const REMINDER_PATTERN = {
+  HOURLY: 'HOURLY', DAILY: 'DAILY', WEEKLY: 'WEEKLY', MONTHLY: 'MONTHLY',
+};
+const REMINDER_PATTERNS = Object.values(REMINDER_PATTERN);
+const REMINDER_PATTERN_LABELS = {
+  HOURLY: 'Hourly', DAILY: 'Daily', WEEKLY: 'Weekly', MONTHLY: 'Monthly',
+};
+/** When a once-a-day reminder goes, unless the form says otherwise. */
+const DEFAULT_REMIND_AT = '10:00';
+/** The hours an hourly reminder speaks in, unless the form says otherwise. */
+const DEFAULT_REMIND_WINDOW = { from: '09:00', to: '21:00' };
+/** "Every 12 hours" is the slowest an hourly one goes — past that it is daily. */
+const MAX_REMIND_EVERY_HOURS = 12;
+
+/** Which shape a repeating rule is. See REMINDER_PATTERN. */
+function reminderPattern(rule) {
+  if (REMINDER_PATTERNS.includes(rule?.pattern)) return rule.pattern;
+  return rule?.unit === REMINDER_UNIT.DAYS ? REMINDER_PATTERN.DAILY : REMINDER_PATTERN.HOURLY;
+}
+
+/** A clean 'HH:mm', or '' for anything that is not a time of day. */
+function hhmmOf(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v ?? '').trim());
+  if (!m) return '';
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return '';
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
+
+/** The window an HOURLY rule speaks in, as 'HH:mm' strings. */
+function reminderWindow(rule) {
+  const from = hhmmOf(rule?.from);
+  const to = hhmmOf(rule?.to);
+  return from && to && from < to ? { from, to } : { ...DEFAULT_REMIND_WINDOW };
+}
 
 /** A reminder rule as a signed offset in minutes from the due date. */
 function reminderOffsetMinutes(rule) {
@@ -512,13 +774,78 @@ function reminderOffsetMinutes(rule) {
   return rule?.when === REMINDER_WHEN.AFTER ? mins : -mins;
 }
 
+/** A repeating rule's beat in minutes, never faster than the floor. */
+function repeatEveryMinutes(rule) {
+  const n = Math.abs(Number(rule?.amount) || 0);
+  return Math.max(REPEAT_REMINDER.minMinutes, n * (UNIT_MINUTES[rule?.unit] || 60));
+}
+
+/**
+ * The latest beat of a repeating rule that has come round by `nowMs`.
+ *
+ * Beat k (k ≥ 1) falls at `anchor + k × every` — the first one is one full
+ * interval after the task appeared, because "every 2 hours" does not mean "the
+ * moment you were given it" (that is what the New Task notification is for).
+ * Returns null before the first beat.
+ */
+function repeatSlot(rule, anchorMs, nowMs) {
+  const every = repeatEveryMinutes(rule) * 60 * 1000;
+  if (!Number.isFinite(anchorMs) || nowMs < anchorMs + every) return null;
+  const index = Math.floor((nowMs - anchorMs) / every);
+  return { index, at: anchorMs + index * every };
+}
+
 /** The idempotence key a fired reminder is recorded under. See the worker. */
 function reminderKey(rule) {
   return `${rule.channel}:${rule.when}:${rule.amount}:${rule.unit}`;
 }
 
-/** "1 day before", "4 hours after" — one wording, used by every client. */
+/**
+ * A repeating rule's rhythm in words, without the "until done" — "Every 2
+ * hours", "Alternate days at 10:00 AM", "Every Mon, Thu at 10:00 AM",
+ * "Monthly on the first Monday at 10:00 AM". The clients mirror it.
+ */
+function repeatingReminderText(rule) {
+  const at = ` at ${time12(hhmmOf(rule?.at) || DEFAULT_REMIND_AT)}`;
+  switch (reminderPattern(rule)) {
+    case REMINDER_PATTERN.DAILY: {
+      const n = Math.max(1, Math.round(Number(rule?.amount) || 1));
+      if (n === 1) return `Every day${at}`;
+      return n === 2 ? `Alternate days${at}` : `Every ${n} days${at}`;
+    }
+    case REMINDER_PATTERN.WEEKLY: {
+      const days = [...new Set((rule?.weekdays || []).map(Number))]
+        .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        .sort((a, b) => a - b);
+      if (days.length === 7) return `Every day${at}`;
+      if (days.join() === '1,2,3,4,5') return `Every weekday${at}`;
+      return `Every ${days.map((d) => WEEKDAYS[d]).join(', ') || 'week'}${at}`;
+    }
+    case REMINDER_PATTERN.MONTHLY: {
+      if (rule?.monthlyMode === MONTHLY_MODE.WEEKDAY && Number.isInteger(Number(rule?.weekday))) {
+        const nth = NTH_WEEK_LABELS[String(rule.nthWeek ?? 1)] || 'First';
+        return `Monthly on the ${nth.toLowerCase()} ${WEEKDAY_NAMES[Number(rule.weekday)]}${at}`;
+      }
+      return `Monthly on the ${ordinal(Number(rule?.monthDay) || 1)}${at}`;
+    }
+    default: {
+      const mins = repeatEveryMinutes(rule);
+      let every = `Every ${mins} minutes`;
+      if (mins % 60 === 0) every = mins === 60 ? 'Every hour' : `Every ${mins / 60} hours`;
+      const w = reminderWindow(rule);
+      const custom = w.from !== DEFAULT_REMIND_WINDOW.from || w.to !== DEFAULT_REMIND_WINDOW.to;
+      return custom ? `${every}, ${time12(w.from)} – ${time12(w.to)}` : every;
+    }
+  }
+}
+
+/** "1 day before", "4 hours after", "Every 2 hours until done" — one wording. */
 function reminderLabel(rule) {
+  if (rule?.when === REMINDER_WHEN.EVERY) {
+    const text = repeatingReminderText(rule);
+    // "Every 2 hours, 10:00 AM – 6:00 PM, until done" — the comma closes the window.
+    return `${text}${text.includes(' – ') ? ',' : ''} until done`;
+  }
   const n = Math.abs(Number(rule?.amount) || 0);
   const unit = String(rule?.unit || 'MINUTES').toLowerCase().replace(/s$/, '');
   const when = rule?.when === REMINDER_WHEN.AFTER ? 'after' : 'before';
@@ -568,6 +895,9 @@ const UPDATE_KINDS = [
   // A task that went to the wrong person and was handed to the right one. Its
   // own word because it is the opposite of DELEGATED in who stays answerable.
   'TRANSFERRED',
+  // 2026-09-27. A PERSON pressed the bell (not the system's REMINDER), and the
+  // deadline passing, which everybody on it was told about.
+  'NUDGED', 'OVERDUE',
 ];
 
 // ===== Legacy =====
@@ -703,6 +1033,10 @@ module.exports = {
   ACCEPTANCE_LABELS,
   isDeclined,
   isAwaitingAcceptance,
+  termsOpen,
+  EDIT_FIELD_LABELS,
+  NUDGE_COOLDOWN_MIN,
+  nudgeReadyAt,
   TASK_PRIORITY,
   DEFAULT_PRIORITY,
   LEGACY_PRIORITY_MAP,
@@ -729,6 +1063,18 @@ module.exports = {
   FREQUENCIES,
   FREQUENCY_LABELS,
   WEEKDAYS,
+  WEEKDAY_NAMES,
+  MONTHLY_MODE,
+  MONTHLY_MODES,
+  NTH_WEEKS,
+  NTH_WEEK_LABELS,
+  MAX_DAY_INTERVAL,
+  DEFAULT_LEAD_DAYS,
+  MAX_LEAD_DAYS,
+  APPEAR_HOUR,
+  isRoutineFrequency,
+  patternLabel,
+  time12,
   REMINDER_CHANNEL,
   REMINDER_CHANNELS,
   REMINDER_CHANNEL_LABELS,
@@ -737,7 +1083,20 @@ module.exports = {
   UNIT_MINUTES,
   REMINDER_WHEN,
   REMINDER_WHENS,
+  REPEAT_REMINDER,
+  REMINDER_PATTERN,
+  REMINDER_PATTERNS,
+  REMINDER_PATTERN_LABELS,
+  DEFAULT_REMIND_AT,
+  DEFAULT_REMIND_WINDOW,
+  MAX_REMIND_EVERY_HOURS,
+  reminderPattern,
+  hhmmOf,
+  reminderWindow,
+  repeatingReminderText,
   reminderOffsetMinutes,
+  repeatEveryMinutes,
+  repeatSlot,
   reminderKey,
   reminderLabel,
   EVIDENCE_KINDS,

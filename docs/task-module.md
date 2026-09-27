@@ -5,6 +5,23 @@ replaced the twelve-status workflow engine of 2026-09-17, and **simplified
 2026-09-25** (see the section right below). The through-line has not changed: a
 task app a business owner can work without being taught.
 
+### What the 2026-09-27 pass added
+
+| the brief | what it is |
+|---|---|
+| *"option to edit task — before it's accepted by the assignee — with a trail of what edits was done"* | `PATCH /tasks/:id` while `config/tasks.termsOpen(task)` holds (PENDING, nobody has accepted or started; a refusal keeps it open), 409 with `editLockReason` after. Each save writes a `TaskUpdate` of `kind: 'EDITED'` with `changes: [{ field, label, before, after }]` in the server's own words, and stamps `Task.editCount / lastEditedAt / lastEditedByName`. Rows say "Edited ×N" while it is pending; both detail screens have an **Edit history** card. Deadlines compare **to the minute**: the web form holds no seconds, and a deadline picked on the phone (7:15:23) came back from an untouched web form as 7:15:00 — "7:15 am → 7:15 am" in the trail, an extension counted and the reminders re-armed, for nothing |
+| swipe — not accepted: right accept / left reject; in progress: complete / ask for more time; in review: complete / send back; *"remark box pops up (mandatory now, later we will decide)"* | `swipeActionsFor(task)` in both utils, from `can`. App `components/TaskSwipe` (RNGH `Swipeable`), web `components/task/SwipeRow` (touch only, `touch-action: pan-y`, the click at the end of a swipe swallowed). The swipe itself moves nothing: it opens the same remark box as the dropdown, the remark required while `Setting.tasks.swipeRemarkRequired` (default true, served on `/tasks/meta`) — the "decide later" is a setting, not an app release |
+| a bell to remind again — the assigner on not accepted / in progress / overdue, the assignee to the assigner in review; *"only after 30 mins… but an auto reminder triggers as scheduled"* | `POST /tasks/:id/nudge`; `can.canNudge / nudgeTo / nudgeReadyAt`. The 30 minutes are per task **per direction** (`Task.nudgeAt.DOER` / `.REVIEW`, claimed by a conditional update; 429 with `nextAt`), so a manager's reminder never blocks the doer's "please review". Scheduled reminders neither read nor write it |
+| *"any task which gets overdue — the assigner and assignee get a notification automatically"* | reminder worker `overdueTick`: claimed on `Task.overdueNotifiedAt`, said once to the doers AND the setter. Whatever is already overdue by more than the firing window on the first run is stamped silently (no backlog blast); cleared when the deadline moves or an extension is approved |
+| a separate **Recurring** tab, only to assign; monthly *"2 days before the deadline"*; daily *"only mark as done"*; alternate days, chosen weekdays, *"first Monday of the month (any day we can pick)"* | `/tasks/recurring` (§12a, `taskTemplateController`); web `TaskRecurring`, app `RecurringList`; the form is the assign form in recurring mode. Shapes and the IST rules in §8. A DAILY occurrence is **routine**: minted IN_PROGRESS + ACCEPTED, no review, the doer's only move is Done (shown "To do"). The one-off form has no Repeat at all any more — the "Does this repeat?" link went the same day (*"this should only come in recurring tab only"*) and a template saved with a repeat opens as a one-off |
+| *"send multiple notifications — every 2 hours for a daily task till completed"*, then *"these options should be for sending notification too"* | reminder **shapes** (§9): hourly on the clock inside a window, every N days, chosen weekdays, monthly on a date or the Nth weekday — one builder (web `ReminderPattern`, app `ReminderPatternPicker`) on the recurring form and inside the one-off form's "Repeat until done" row |
+| *"here show also from who this task is"* (a schedule card) | "By <setter> → To <people>" on every schedule card, "(sent by …)" when set on somebody's behalf, "Your own task" when both are you — the task rows' wording |
+
+The same day the **cashbook** stopped notifying on every expense (only advance
+and reimbursement requests, and their payment, notify now) and its queues split
+into Reimburse · Advance · Approval tabs with red counts — see
+`docs/employee-khata.md`.
+
 ### What the 2026-09-25 pass changed — "it is too much complicated now"
 
 The user sent a sketch of the page they wanted and five rules. Each, and where
@@ -879,6 +896,32 @@ quarter would hand somebody ninety tasks in one push — very close to the trap
 this module's previous version fell into when a backlog sweep fired 51 overdue
 notifications on its first morning.
 
+### Since 2026-09-27: its own tab, four shapes, and IST
+
+Schedules are set up on the **Recurring** tab only (`/tasks/recurring`); the
+legacy `POST /tasks { repeat }` path still answers an older APK.
+
+- **Shapes** (`RecurringTask` + `fallsOn`): DAILY every `interval` days
+  (2 = alternate days, counted from the START DATE so "alternate" is the same
+  days for everybody), WEEKLY on `weekdays`, MONTHLY on `monthDay` (29–31
+  clamp to a short month's last day) or `monthlyMode: 'WEEKDAY'` with
+  `nthWeek` 1–4 or -1 (last) and `weekday`, YEARLY on a date.
+- **Everything is IST.** The worker used to build due times with `setHours` on
+  the SERVER's clock — UTC on Render — so a 6 PM task fell due at 11:30 PM IST.
+  Day keys come from `occurrenceKeyFor` (IST) and times from
+  `atIST(key, 'HH:mm')`; the evening digest runs on IST too.
+- **When it appears:** 9 AM IST on its day, or an hour before a due time earlier
+  than ten; MONTHLY and YEARLY `leadDays` (default 2) earlier — the user's
+  "2 days before the deadline".
+- **Routine:** a DAILY occurrence is minted already taken on, with no review;
+  the doer only marks it Done.
+- **`mintFrom`**, moved to now on create, resume and any change of WHEN it
+  repeats, so a schedule never raises what was already overdue when it was set
+  up (a 6 PM task set up at 7 starts tomorrow).
+- **"Next due"** on a card skips the days already raised
+  (`statsFor(...).upcoming`): "Next due today, 7 PM" beside today's routine,
+  raised at nine and already done, read as if it were not.
+
 ---
 
 ## 9. Reminders
@@ -905,6 +948,48 @@ wrong once:
 
 The evening digest (`Setting.tasks.dailyDigestAt`) is ONE notification per
 person — "you have 4 pending" — not one per task.
+
+### Repeating reminders and their shapes (2026-09-27)
+
+`when: 'EVERY'` is not an offset but a rhythm, and since the user's *"these
+options should be for sending notifications too"* it has the Repeats builder's
+shapes (`config/tasks.REMINDER_PATTERN`):
+
+| `pattern` | fields | goes |
+|---|---|---|
+| HOURLY | `amount` + `unit` HOURS (1–12; an older MINUTES rule ≥ 30), optional `from`/`to` | **on the clock** — `from`, `from + every`, … up to `to` (default 9 AM – 9 PM) |
+| DAILY | `amount` = every N days, `at` | on the day it appeared and every N days after, at `at` |
+| WEEKLY | `weekdays`, `at` | on those weekdays |
+| MONTHLY | `monthlyMode` DATE + `monthDay`, or WEEKDAY + `nthWeek` + `weekday`; `at` | on that date / "the first Monday" |
+
+A rule saved before this has no `pattern`: `unit: 'DAYS'` reads as DAILY at
+10 AM, anything else as HOURLY. The day shapes are decided by the SAME
+`taskRecurrenceWorker.fallsOn` that decides when a schedule falls due.
+
+- **One per task** (`cleanReminders` keeps the first) — it is the chase; the
+  "before"/"after" rules sit beside it.
+- **Claimed per beat** on `Task.repeatReminderAt` (the beat's instant, a
+  conditional update — the fired-key lock again). `repeatReminderSlot`, a
+  count of intervals, was the first version's and is no longer read.
+- **Never within half an hour of the task appearing** (`remindFrom`): the New
+  Task notification has just said it. A daily routine that appears at 9 is
+  first reminded at 11, and the form's preview lists exactly those times.
+- **It stops the moment the work is done** — and an hourly one at the end of
+  the due day's window (tomorrow's occurrence takes over), a day-shaped one a
+  week past the deadline.
+- **Never late:** a beat more than the firing window old is let go unsent.
+- **Words:** `reminderLabel` / `repeatingReminderText` on the server, twins in
+  both clients' utils — "Every 2 hours until done", "Every 2 hours, 10:00 AM –
+  6:00 PM, until done", "Alternate days at 10:00 AM until done", "Every Mon, Thu
+  at 9:30 AM until done", "Monthly on the first Monday at 11:00 AM until done".
+  Schedule cards add "(email)" to an email rule.
+
+The recurring form's **"Also remind before it is due"** offers 30 min / 1 hour /
+3 hours / 1 day. One earlier than the occurrence exists — a daily task appears at
+9, so "1 day before" can never go — is disabled, and an older schedule that has
+one shows it in red with a note to take it off. Rules the form does not make
+(email, after the deadline) are kept and listed with an ×, never dropped by a
+save.
 
 ---
 
@@ -1124,6 +1209,15 @@ GET    /api/tasks/:id/children            the pieces
 POST   /api/tasks/:id/extension           { toDate, reason }  ← both required
 POST   /api/tasks/:id/extension/:reqId    { approve, note }
 
+POST   /api/tasks/:id/nudge               the bell        → 429 { nextAt } inside 30 min
+
+GET    /api/tasks/recurring[?scope=mine]  the schedules, with stats and "next"
+GET    /api/tasks/recurring/:id           one, for the edit form
+POST   /api/tasks/recurring               set one up (raises what is already due)
+PATCH  /api/tasks/recurring/:id           pause / resume / reshape (moves mintFrom)
+DELETE /api/tasks/recurring/:id           stop it
+POST   /api/tasks/recurring/:id/run       raise what is due now
+
 POST   /api/tasks/:id/subtasks            LEGACY → split
 PATCH  /api/tasks/:id/subtasks/:childId   LEGACY → complete / reopen the child
 DELETE /api/tasks/:id/subtasks/:childId   LEGACY → archive the child
@@ -1151,8 +1245,9 @@ to end.
 
 `can` now carries: `canSubmit`, `canApprove`, `canReject`, `canWithdraw`,
 `canSetProgress`, `myProgress`, `canSplit`, `canClaim`, `canTransfer`,
-`pointsBudget`, `canRequestExtension`, `canDecideExtension` — alongside everything it carried
-before. `canAddSubtasks` and `canTickSubtasks` are kept truthful for an
+`pointsBudget`, `canRequestExtension`, `canDecideExtension` — and since
+2026-09-27 `canEdit` / `editLocked`, `routine` / `canDone`, `canNudge` /
+`nudgeTo` / `nudgeReadyAt` — alongside everything it carried before. `canAddSubtasks` and `canTickSubtasks` are kept truthful for an
 un-updated Android build; they drive child tasks now.
 
 ---
@@ -1205,7 +1300,7 @@ be removed outright and why `High` maps to `Urgent` rather than the reverse.
 ## 14. Testing
 
 ```bash
-npm run test:tasks      # 117 assertions, no database, about a second
+npm run test:tasks      # 260 assertions, no database, about a second
 npm run test:tasks:db   # end-to-end, needs TASK_TEST_MONGO_URI
 ```
 

@@ -5,7 +5,8 @@
 // docked chat. `navItems`/`sectionTitle` select the admin vs employee portal.
 import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Link, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { hiddenFromRole } from '../config/nav';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import api, { signOut } from '../api/client';
@@ -334,6 +335,8 @@ function NavList({ items, user, onNavigate, rail = false }) {
   const grouped = items.some((i) => !!i.group);
   const visible = (arr) => arr.filter((i) => {
     if (i.roles && !i.roles.includes(user?.role)) return false;
+    // Taken OUT of this role's portal (config/nav.jsx `hideRoles`).
+    if (i.hideRoles && i.hideRoles.includes(user?.role)) return false;
     if (i.perm && !hasPermission(user, i.perm)) return false;
     if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
     // EXPLICITLY granted, which is a different question: an HR Manager with no
@@ -814,6 +817,7 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
   const pages = useMemo(() => {
     const canSee = (i) => {
       if (i.roles && !i.roles.includes(user?.role)) return false;
+      if (i.hideRoles && i.hideRoles.includes(user?.role)) return false;
       if (i.perm && !hasPermission(user, i.perm)) return false;
       if (i.anyPerm && !hasAnyPermission(user, i.anyPerm)) return false;
       if (i.anyExplicitPerm && !i.anyExplicitPerm.some((c) => hasExplicitPermission(user, c))) return false;
@@ -1664,7 +1668,12 @@ export default function Layout({ navItems = [], sectionTitle }) {
         <main className="flex-1 min-w-0 p-3.5 sm:p-5 lg:p-6">
           <Suspense fallback={<PageSkeleton />}>
             <div key={pathname} className="page-transition">
-              <Outlet />
+              {/* A page taken out of this role's portal (config/nav.jsx
+                  `hideRoles`) is out of reach too: an old bookmark lands on the
+                  portal's home, which sends each role to its own start page. */}
+              {hiddenFromRole(user, pathname, navItems)
+                ? <Navigate to={`/${pathname.split('/')[1] || ''}`} replace />
+                : <Outlet />}
             </div>
           </Suspense>
         </main>

@@ -10,6 +10,11 @@ const {
   REMINDER_CHANNELS,
   REMINDER_UNITS,
   REMINDER_WHENS,
+  REMINDER_PATTERNS,
+  MONTHLY_MODES,
+  MONTHLY_MODE,
+  DEFAULT_LEAD_DAYS,
+  isRoutineFrequency,
 } = require('../config/tasks');
 
 /**
@@ -43,6 +48,20 @@ const reminderSchema = new mongoose.Schema(
     amount: { type: Number, min: 0, default: 1 },
     unit: { type: String, enum: REMINDER_UNITS, default: 'DAYS' },
     when: { type: String, enum: REMINDER_WHENS, default: 'BEFORE' },
+    // A REPEATING rule's shape (2026-09-27) — see config/tasks
+    // REMINDER_PATTERN. Absent on a before/after rule and on an older
+    // "every 2 hours" one (read as HOURLY).
+    pattern: { type: String, enum: REMINDER_PATTERNS, default: undefined },
+    /** 'HH:mm' — when a daily / weekly / monthly reminder goes. */
+    at: { type: String, default: undefined },
+    /** 'HH:mm' — the window an hourly one speaks in. */
+    from: { type: String, default: undefined },
+    to: { type: String, default: undefined },
+    weekdays: { type: [Number], default: undefined },
+    monthlyMode: { type: String, enum: MONTHLY_MODES, default: undefined },
+    monthDay: { type: Number, min: 1, max: 31, default: undefined },
+    nthWeek: { type: Number, default: undefined },
+    weekday: { type: Number, min: 0, max: 6, default: undefined },
   },
   { _id: false }
 );
@@ -98,19 +117,47 @@ const recurringTaskSchema = new mongoose.Schema(
 
     // ===== The schedule =====
     frequency: { type: String, enum: FREQUENCIES, default: FREQUENCY.DAILY, required: true },
+    /** DAILY: every N days, counted from the start date. 2 = alternate days. */
+    interval: { type: Number, min: 1, default: 1 },
     /** WEEKLY: which days, as `Date.getDay()` indexes (0 = Sunday). */
     weekdays: { type: [Number], default: undefined },
-    /** MONTHLY: which day. 29–31 clamp to the last day of a short month. */
+    /**
+     * MONTHLY: on a DATE (`monthDay`) or on the Nth WEEKDAY — "the first
+     * Monday", "the last Friday" (`nthWeek` 1–4 or -1, `weekday` 0–6). Added
+     * 2026-09-27: *"similar like first Monday of the month (any day we can pick)"*.
+     */
+    monthlyMode: { type: String, enum: MONTHLY_MODES, default: MONTHLY_MODE.DATE },
+    nthWeek: Number,
+    weekday: Number,
+    /** MONTHLY/YEARLY: which day. 29–31 clamp to the last day of a short month. */
     monthDay: Number,
     /** YEARLY: 1-12, with monthDay. */
     month: Number,
     /** "HH:mm" 24h in portal time — when the occurrence falls due that day. */
     time: { type: String, trim: true, default: '18:00' },
+    /**
+     * How many days BEFORE it is due an occurrence lands in the doer's list —
+     * a month-end task shows up two days early (config/tasks.DEFAULT_LEAD_DAYS,
+     * the user's *"for monthly task 2 day before the deadline"*).
+     */
+    leadDays: { type: Number, min: 0 },
+    /**
+     * Does each occurrence go through a review? Ignored for DAILY, which is
+     * ROUTINE — only ever marked done (config/tasks.isRoutineFrequency).
+     */
+    requiresApproval: { type: Boolean, default: true },
 
-    /** The first day an occurrence may be minted for. */
+    /** The first day an occurrence may be minted for (IST midnight of that day). */
     startDate: { type: Date, required: true },
     /** The last. Null = forever. */
     until: Date,
+    /**
+     * NOTHING DUE BEFORE THIS IS EVER MINTED. Set when the schedule is created
+     * and whenever it is switched back on, so a daily 6 pm task set up at 7 pm
+     * starts tomorrow instead of arriving already overdue — and a schedule
+     * paused for a fortnight does not wake up and hand somebody the fortnight.
+     */
+    mintFrom: Date,
 
     // ===== Bookkeeping =====
     company: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', index: true },
@@ -128,5 +175,21 @@ const recurringTaskSchema = new mongoose.Schema(
 
 // The worker's sweep: every live schedule, cheapest first.
 recurringTaskSchema.index({ isActive: 1, startDate: 1 });
+
+/**
+ * The defaults that depend on WHICH shape the schedule is, filled in here so
+ * every path that saves one — the Recurring tab, the old assign form's Repeat
+ * box, a PATCH from either client — lands on the same values.
+ */
+recurringTaskSchema.pre('validate', function shapeDefaults(next) {
+  if (this.leadDays === undefined || this.leadDays === null) {
+    this.leadDays = DEFAULT_LEAD_DAYS[this.frequency] ?? 0;
+  }
+  if (!Number.isInteger(this.interval) || this.interval < 1) this.interval = 1;
+  // A routine (daily) occurrence is only ever marked done — there is nothing to
+  // review. Stored false so a reader of the schedule sees what will happen.
+  if (isRoutineFrequency(this.frequency)) this.requiresApproval = false;
+  next();
+});
 
 module.exports = mongoose.model('RecurringTask', recurringTaskSchema);

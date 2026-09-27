@@ -534,9 +534,71 @@ function canTransfer(user, task) {
     || seesEverything(user);
 }
 
-/** May this caller edit the task's own fields (title, deadline, points)? */
+/**
+ * May this caller edit the task's own fields (title, deadline, points)?
+ *
+ * The assigner — and since 2026-09-27 ONLY UNTIL SOMEBODY TAKES IT ON
+ * (config/tasks.termsOpen): the user's *"option to edit task before it is
+ * accepted by the assignee"*. After that the terms are what was agreed to.
+ */
 function canEdit(user, task) {
-  return actorRoleOn(user, task) === 'assigner';
+  const { termsOpen } = require('../config/tasks');
+  return actorRoleOn(user, task) === 'assigner' && termsOpen(task);
+}
+
+/**
+ * Why an assigner's Edit is gone, in a sentence — or null when it is not.
+ * Both clients print it where the button used to be, so a missing button is
+ * never a mystery.
+ */
+function editLockReason(user, task) {
+  const { termsOpen, isTerminal: terminal, ACCEPTANCE } = require('../config/tasks');
+  if (actorRoleOn(user, task) !== 'assigner' || termsOpen(task)) return null;
+  if (terminal(task.status)) return 'This task is closed, so it can no longer be edited.';
+  const took = (task.assignees || []).find((a) => a.acceptance === ACCEPTANCE.ACCEPTED)
+    || (task.assignees || []).find((a) => a.acceptance !== ACCEPTANCE.REJECTED);
+  const who = took?.name || 'The person on it';
+  return `${who} has accepted this task, so it can no longer be edited. `
+    + 'Say what should change in a remark — or they can ask for more time.';
+}
+
+/**
+ * WHO THE BELL ON THIS TASK REACHES, FOR THIS CALLER — or null when they have
+ * no bell here (2026-09-27). The user:
+ *
+ *   *"add a bell icon … if somebody wants to send a notification again
+ *    reminding whom the task has been assigned, in not accepted, in progress
+ *    and overdue"*   → whoever set it (or signs it off, or tasks.manage)
+ *                      chases the people still doing it
+ *   *"if it is in review stage, a bell icon from the assignee to the assigned
+ *    to review it"*   → somebody on it chases the approver
+ *
+ * Never oneself, and never somebody who has handed in, finished or refused.
+ */
+function nudgeTargets(user, task) {
+  const { STATUS, ACCEPTANCE } = require('../config/tasks');
+  if (!task) return null;
+  const id = String(user._id);
+  const onIt = (task.assignees || []).some((a) => String(a.user?._id || a.user) === id);
+
+  if (task.status === STATUS.SUBMITTED) {
+    if (!onIt) return null;
+    const approver = String(approverOf(task)?._id || approverOf(task) || '');
+    if (!approver || approver === id) return null;
+    return { kind: 'REVIEW', to: [approver] };
+  }
+
+  if (task.status !== STATUS.PENDING && task.status !== STATUS.IN_PROGRESS) return null;
+  const setsIt = String(task.createdBy?._id || task.createdBy || '') === id
+    || String(task.approver?._id || task.approver || '') === id
+    || seesEverything(user);
+  if (!setsIt) return null;
+  const doing = (task.assignees || [])
+    .filter((a) => (a.status === STATUS.PENDING || a.status === STATUS.IN_PROGRESS)
+      && a.acceptance !== ACCEPTANCE.REJECTED)
+    .map((a) => String(a.user?._id || a.user))
+    .filter((u) => u && u !== id);
+  return doing.length ? { kind: 'DOER', to: [...new Set(doing)] } : null;
 }
 
 /**
@@ -578,7 +640,7 @@ function canPurge(user) {
 function capabilitiesFor(user, task) {
   const {
     TRANSITIONS, ACCEPTANCE, STATUS, EXTENSION_STATUS, MAX_SPLIT_DEPTH,
-    KIND_TASK, isTerminal: terminal, effectiveTarget,
+    KIND_TASK, isTerminal: terminal, effectiveTarget, nudgeReadyAt,
   } = require('../config/tasks');
   const role = actorRoleOn(user, task);
   const id = String(user._id);
@@ -590,6 +652,12 @@ function capabilitiesFor(user, task) {
   const isPiece = Boolean(task.parentTask);
   const unclaimed = isPiece && !(task.assignees || []).length;
   const offeredToMe = (task.openTo || []).some((u) => String(u?._id || u) === id);
+  /**
+   * A DAILY occurrence (2026-09-27) is only ever marked done: *"for daily task
+   * they have to only mark that as done"*. No accept, decline, delegate, split,
+   * review or more time — the doer's one move is Done.
+   */
+  const routine = Boolean(task.routine);
 
   /**
    * The moves, AFTER the review rule.
@@ -607,29 +675,45 @@ function capabilitiesFor(user, task) {
     if (!role || !t.by.includes(role)) continue;
     const to = effectiveTarget(task, role, t.to, user._id);
     if (seen.has(to) || to === task.status) continue;
+    // Routine: done, or (the assigner's) called off — nothing in between.
+    if (routine && to !== STATUS.COMPLETED && !(role === 'assigner' && to === STATUS.CANCELLED)) continue;
     seen.add(to);
     moves.push({ to, note: Boolean(t.note) });
   }
 
   const canApprove = task.status === STATUS.SUBMITTED && role === 'assigner';
+  const nudge = nudgeTargets(user, task);
 
   return {
     role,
     canComment: Boolean(role) || canSee(user, task),
     canEdit: canEdit(user, task),
+    // Why Edit is not offered to the assigner any more — the task was taken on.
+    editLocked: editLockReason(user, task),
     canDelete: canDelete(user, task),
     canPurge: canPurge(user),
     transitions: moves,
+    routine,
+    // The one button a routine task's doer gets.
+    canDone: routine && Boolean(mine) && open && mine.status !== STATUS.COMPLETED,
+
+    // ===== The reminder bell (2026-09-27) =====
+    // `nudgeTo` says who it reaches ('doers' or 'approver'); `nudgeReadyAt` is
+    // when the 30-minute gate opens again, null when it is open now.
+    canNudge: Boolean(nudge),
+    nudgeTo: nudge ? (nudge.kind === 'REVIEW' ? 'approver' : 'doers') : null,
+    // The gate for THIS direction — see config/tasks.nudgeReadyAt.
+    nudgeReadyAt: nudge ? nudgeReadyAt(task, new Date(), nudge.kind) : null,
 
     // ===== Accept / decline / delegate — the doer's three answers =====
     // Only ever offered to somebody who actually HAS the task: an assigner
     // cannot accept on a doer's behalf, which would make acceptance worthless.
-    canAccept: Boolean(mine) && open && mine.acceptance === ACCEPTANCE.AWAITING,
-    canDecline: Boolean(mine) && open && mine.acceptance !== ACCEPTANCE.REJECTED
+    canAccept: !routine && Boolean(mine) && open && mine.acceptance === ACCEPTANCE.AWAITING,
+    canDecline: !routine && Boolean(mine) && open && mine.acceptance !== ACCEPTANCE.REJECTED
       && mine.status !== STATUS.COMPLETED,
     // Delegating is passing YOUR OWN piece on, so an assigner who is not also a
     // doer has nothing to delegate — they reassign instead (PATCH /:id).
-    canDelegate: Boolean(mine) && open && mine.status !== STATUS.COMPLETED,
+    canDelegate: !routine && Boolean(mine) && open && mine.status !== STATUS.COMPLETED,
     myAcceptance: mine ? mine.acceptance : null,
 
     // ===== Submit · approve · send back (2026-09-22) =====
@@ -637,7 +721,7 @@ function capabilitiesFor(user, task) {
     // named separately from `transitions` because the WORDS matter on a button
     // — "Approve" and "Send back" are not "mark completed" and "mark in
     // progress", even though that is what they do underneath.
-    canSubmit: Boolean(mine) && open && task.status !== STATUS.SUBMITTED
+    canSubmit: !routine && Boolean(mine) && open && task.status !== STATUS.SUBMITTED
       && mine.status !== STATUS.COMPLETED && task.requiresApproval !== false && !isSetter,
     canApprove,
     canReject: canApprove,
@@ -653,7 +737,7 @@ function capabilitiesFor(user, task) {
     // Anybody on the task may split it, not just whoever set it: the person
     // doing the work is the one who knows what the pieces are. Capped by depth
     // so a chain of pieces-of-pieces cannot run away.
-    canSplit: Boolean(role) && open && task.kind === KIND_TASK
+    canSplit: !routine && Boolean(role) && open && task.kind === KIND_TASK
       && (Number(task.depth) || 0) < MAX_SPLIT_DEPTH - 1,
     // A piece nobody has been named for, offered to me.
     canClaim: unclaimed && open && (offeredToMe || seesEverything(user)),
@@ -663,7 +747,7 @@ function capabilitiesFor(user, task) {
     // One un-answered request per person: a doer who could stack three would be
     // asking the same question three times, and the assigner would have to say
     // no to all of them.
-    canRequestExtension: Boolean(mine) && open && Boolean(task.dueDate)
+    canRequestExtension: !routine && Boolean(mine) && open && Boolean(task.dueDate)
       && !(task.extensions || []).some(
         (e) => e.status === EXTENSION_STATUS.PENDING
           && String(e.requestedBy?._id || e.requestedBy) === id
@@ -674,7 +758,7 @@ function capabilitiesFor(user, task) {
     // ===== Handing it to the right person =====
     // Correcting a mis-assignment, which is NOT delegating: the person it comes
     // off drops out completely. See services/taskEngine.transferTask.
-    canTransfer: canTransfer(user, task) && open,
+    canTransfer: canTransfer(user, task) && open && !(routine && role === 'doer'),
 
     // ===== Retired, kept truthful for an un-updated Android build =====
     // It reads `can.canAddSubtasks` to decide whether to draw the split button
@@ -696,8 +780,11 @@ function assertCanSee(user, task) {
 
 function assertCanEdit(user, task) {
   if (!canEdit(user, task)) {
-    const err = new Error('Only the person who set this task can change it.');
-    err.status = 403;
+    // Two different refusals: not yours at all (403), or yours but already
+    // taken on (409 — the state moved, not the permission).
+    const locked = editLockReason(user, task);
+    const err = new Error(locked || 'Only the person who set this task can change it.');
+    err.status = locked ? 409 : 403;
     throw err;
   }
 }
@@ -725,6 +812,8 @@ module.exports = {
   approverOf,
   canTransfer,
   canEdit,
+  editLockReason,
+  nudgeTargets,
   canDelete,
   canPurge,
   actorRoleOn,

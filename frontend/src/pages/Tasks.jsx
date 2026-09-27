@@ -36,7 +36,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
   FiPlus, FiFilter, FiSearch, FiX, FiBookmark, FiBarChart2, FiChevronLeft, FiChevronRight,
-  FiArrowLeft,
+  FiArrowLeft, FiList, FiRepeat,
 } from 'react-icons/fi';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -54,15 +54,18 @@ import TransferModal from '../components/task/TransferModal';
 import { EmptyTasks } from '../components/task/TaskChips';
 import TaskTemplates from '../components/task/TaskTemplates';
 import TaskDashboard from '../components/task/TaskDashboard';
+import TaskRecurring from '../components/task/TaskRecurring';
+import ExtensionModal from '../components/task/ExtensionModal';
 import * as T from '../api/tasks';
-import { RANGES, STAT_BAR, TASK_PRIORITY } from '../utils/taskLifecycle';
+import { RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor } from '../utils/taskLifecycle';
 
 /**
  * Everything `?tab=` has ever meant here. The three piles are the page; the
  * rest are old links (Kanban, Requests, Dashboard) and the two header places,
- * each sent somewhere sensible rather than to an empty screen.
+ * each sent somewhere sensible rather than to an empty screen. `recurring`
+ * (2026-09-27) is the Recurring tab — the schedules, not the tasks.
  */
-const TAB_IDS = ['mine', 'delegated', 'loop', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests'];
+const TAB_IDS = ['mine', 'delegated', 'loop', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests', 'recurring'];
 
 const PAGE_SIZE = 50;
 
@@ -80,10 +83,11 @@ export default function Tasks({ base = '/employee/tasks' }) {
     : tab === 'loop' ? 'loop'
     : tab === 'all' && (isAdmin || !meta) ? 'all'
       : 'mine';
-  /** The page itself, or one of the two places reached from the header. */
+  /** The page itself, one of the two places reached from the header, or the Recurring tab. */
   const view = tab === 'report' || tab === 'dashboard' ? 'report'
     : tab === 'templates' ? 'templates'
-      : 'list';
+      : tab === 'recurring' ? 'recurring'
+        : 'list';
 
   // "All tasks" is tasks.manage's — somebody who followed an old link to it
   // without the grant is put on their own pile once meta says so.
@@ -118,13 +122,24 @@ export default function Tasks({ base = '/employee/tasks' }) {
   // ===== Dialogs =====
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignPrefill, setAssignPrefill] = useState(null);
+  /**
+   * What the assign form is for (2026-09-27): a one-off (null), a new
+   * recurring task (`{ recurring: true }`), or an existing schedule
+   * (`{ recurring: true, scheduleId }`).
+   */
+  const [assignMode, setAssignMode] = useState(null);
+  const [recurringKey, setRecurringKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   /** `{ id, to }` — the task opened over the list. */
   const [openTask, setOpenTask] = useState(null);
-  /** `{ key, task }` — a status move waiting on its remark. */
+  /** `{ key, task, swipe? }` — a status move waiting on its remark. */
   const [action, setAction] = useState(null);
   const [delegating, setDelegating] = useState(null);
   const [transferring, setTransferring] = useState(null);
+  /** A swipe left on work in progress — "ask for more time". */
+  const [extending, setExtending] = useState(null);
+  /** The bell's gate per task, restarted by a press in THIS tab. */
+  const [nudged, setNudged] = useState({});
 
   // Debounced, or every keystroke is a round trip.
   useEffect(() => {
@@ -251,13 +266,16 @@ export default function Tasks({ base = '/employee/tasks' }) {
     else if (key === 'sendBack') res = await T.rejectTask(task._id, { note });
     else if (key === 'decline') res = await T.declineTask(task._id, note);
     else if (key === 'submit') res = await T.submitTask(task._id, { note });
-    else if (key === 'complete') res = await T.changeStatus(task._id, 'COMPLETED', { note });
+    else if (key === 'complete' || key === 'done') res = await T.changeStatus(task._id, 'COMPLETED', { note });
+    else if (key === 'accept') res = await T.acceptTask(task._id, note);
 
     const said = {
       approve: 'Approved — it is completed.',
       sendBack: 'Sent back. They have been told what is missing.',
       decline: 'Rejected. Whoever set it has been told.',
       submit: 'Sent for review.',
+      accept: 'Accepted — it is in progress now.',
+      done: 'Done — nicely.',
       // A doer's Complete on a reviewed task lands in review instead, and the
       // server says so (`coerced`) — the toast must not claim it is done.
       complete: res?.coerced ? 'Sent for review — it needs approving first.' : 'Marked completed.',
@@ -266,6 +284,28 @@ export default function Tasks({ base = '/employee/tasks' }) {
     setAction(null);
     refresh();
   }, [action, refresh]);
+
+  /**
+   * A SWIPE on a touch screen (2026-09-27) — the same moves as the dropdown,
+   * opened straight on their remark box, which is REQUIRED while the server
+   * says so. "More time" opens its own form (a date and a reason).
+   */
+  const onSwipe = useCallback((key, task) => {
+    if (key === 'extension') { setExtending(task); return; }
+    setAction({ key, task, swipe: true });
+  }, []);
+  const requireSwipeRemark = meta?.swipeRemarkRequired !== false;
+  const anySwipe = useMemo(
+    () => !viewOnly && tasks.some((t) => { const a = swipeActionsFor(t); return a.left || a.right; }),
+    [tasks, viewOnly]
+  );
+  const onNudged = useCallback((id, at) => setNudged((m) => ({ ...m, [id]: at })), []);
+
+  const openRecurringForm = useCallback((schedule = null) => {
+    setAssignPrefill(null);
+    setAssignMode({ recurring: true, scheduleId: schedule?._id || null });
+    setAssignOpen(true);
+  }, []);
 
   // ===== Filters, as chips under the toolbar =====
 
@@ -364,7 +404,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
         {!viewOnly && (
           <button
             type="button"
-            onClick={() => { setAssignPrefill(null); setAssignOpen(true); }}
+            onClick={() => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
             className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 min-h-[40px]"
           >
             <FiPlus size={16} /> Assign task
@@ -372,8 +412,41 @@ export default function Tasks({ base = '/employee/tasks' }) {
         )}
       </PageHeader>
 
+      {/* ── Tasks | Recurring (2026-09-27) ──────────────────── */}
+      {/* The user: "a separate tab for recurring tasks, only to assign". The
+          schedules live on their own tab; what they raise lands in the Tasks
+          tab like any other task. */}
+      {(view === 'list' || view === 'recurring') && (
+        <div className="mb-4 inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1" role="tablist" aria-label="Tasks or recurring">
+          {[['list', 'Tasks', FiList], ['recurring', 'Recurring', FiRepeat]].map(([k, label, Icon]) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={view === k}
+              onClick={() => setTab(k === 'list' ? backTo : 'recurring')}
+              className={`inline-flex items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition min-h-[36px] ${
+                view === k ? 'border-gray-200 bg-white text-gray-900 shadow-sm' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon size={14} /> {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {view === 'recurring' && (
+        <TaskRecurring
+          viewOnly={viewOnly}
+          isAdmin={isAdmin}
+          refreshKey={recurringKey}
+          onNew={() => openRecurringForm(null)}
+          onEdit={(row) => openRecurringForm(row)}
+        />
+      )}
+
       {/* ── The two places reached from the header ──────────── */}
-      {view !== 'list' && (
+      {(view === 'report' || view === 'templates') && (
         <>
           <button
             type="button"
@@ -387,7 +460,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
             <TaskTemplates
               meta={meta}
               viewOnly={viewOnly}
-              onUse={(prefill) => { setAssignPrefill(prefill); setAssignOpen(true); }}
+              onUse={(prefill) => { setAssignPrefill(prefill); setAssignMode(null); setAssignOpen(true); }}
             />
           )}
         </>
@@ -474,6 +547,14 @@ export default function Tasks({ base = '/employee/tasks' }) {
           {/* ── The five figures ──────────────────────────────── */}
           <TaskStatBar counters={counters} active={stat} onPick={setStat} loading={loading} />
 
+          {/* The swipe, said once — touch screens only (a mouse keeps the
+              dropdown), and only while some row on screen actually swipes. */}
+          {anySwipe && (
+            <p className="swipe-hint -mt-1 hidden text-[11px] text-gray-400 [@media(pointer:coarse)]:block">
+              Swipe a task right to accept or complete it, left to reject, send back or ask for more time.
+            </p>
+          )}
+
           {/* ── The rows ──────────────────────────────────────── */}
           {loading ? (
             <div className="space-y-2">
@@ -486,7 +567,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
               scope={pile}
               filtered={narrowed}
               olderHint={['today', 'week', 'month'].includes(filters.range)}
-              onAssign={viewOnly || narrowed ? undefined : () => { setAssignPrefill(null); setAssignOpen(true); }}
+              onAssign={viewOnly || narrowed ? undefined : () => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
             />
           ) : (
             <div className={`space-y-2.5 transition-opacity ${refreshing ? 'opacity-60' : ''}`}>
@@ -500,6 +581,9 @@ export default function Tasks({ base = '/employee/tasks' }) {
                   viewOnly={viewOnly}
                   onOpen={showTask}
                   onAction={onAction}
+                  onSwipe={onSwipe}
+                  nudgedAt={nudged[task._id] || null}
+                  onNudged={onNudged}
                 />
               ))}
             </div>
@@ -538,10 +622,16 @@ export default function Tasks({ base = '/employee/tasks' }) {
       {/* ── Dialogs ──────────────────────────────────────────── */}
       <AssignTaskModal
         open={assignOpen}
-        onClose={() => setAssignOpen(false)}
-        onCreated={refresh}
+        onClose={() => { setAssignOpen(false); setAssignMode(null); }}
+        onCreated={(_row, how) => {
+          // A recurring task raises nothing now — its list is what changed.
+          if (how?.recurring) setRecurringKey((n) => n + 1);
+          else refresh();
+        }}
         meta={meta}
         prefill={assignPrefill}
+        recurring={Boolean(assignMode?.recurring)}
+        scheduleId={assignMode?.scheduleId || null}
       />
 
       <TaskFilters
@@ -556,8 +646,19 @@ export default function Tasks({ base = '/employee/tasks' }) {
       <TaskActionDialog
         action={action?.key}
         task={action?.task}
+        requireRemark={Boolean(action?.swipe) && requireSwipeRemark}
         onClose={() => setAction(null)}
         onConfirm={confirmAction}
+      />
+
+      {/* A swipe left on work in progress — ask for more time. */}
+      <ExtensionModal
+        open={Boolean(extending)}
+        onClose={() => setExtending(null)}
+        task={extending}
+        can={extending?.can || {}}
+        mode="ask"
+        onDone={refresh}
       />
 
       <DelegateModal

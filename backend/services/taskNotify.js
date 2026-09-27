@@ -591,18 +591,106 @@ async function extensionDecided(task, update, actor, request) {
   });
 }
 
-/** The assigner changed something after the fact. */
+/**
+ * The assigner changed the task before it was taken on. `what` is the trail
+ * in one line — "Deadline: 28 Sep, 6:00 PM → 30 Sep, 6:00 PM" — so the person
+ * about to accept it reads what moved without opening it.
+ */
 async function edited(task, actor, what = '') {
   const doers = recipients(ids(task.assignees), actor?._id);
   if (!doers.length) return;
   await notifyMany(doers, {
     type: 'task',
     audience: 'employee',
-    title: `${nameOf(actor)} updated a ${noun(task)}`,
-    body: `${taskName(task)}${what ? ` — ${what}` : ''}${meta(task)}`,
+    title: `${nameOf(actor)} edited a ${noun(task)} for you`,
+    body: `${taskName(task)}${what ? ` — ${what}` : ''}`,
     link: employeeTaskLink(task._id),
-    data: { taskId: String(task._id) },
+    data: { taskId: String(task._id), edited: true },
   });
+}
+
+/**
+ * THE BELL (2026-09-27) — a person chasing, by hand.
+ *
+ *   kind DOER    the assigner reminding the people on it, while it is not
+ *                accepted, in progress or overdue — employee portal, it is
+ *                work they have to do
+ *   kind REVIEW  a doer reminding the approver that their submission is
+ *                waiting — admin portal, like every "news about work you set"
+ *
+ * `to` is already worked out by the controller (who is still doing it, or who
+ * signs it off); this only words it. The actor is never among them.
+ */
+async function nudged(task, actor, { to = [], kind = 'DOER', note = '' } = {}) {
+  const list = recipients(to, actor?._id);
+  if (!list.length) return;
+  const said = String(note || '').trim();
+  const where = task.dueDate ? ` · due ${fmtDateTime(task.dueDate)}` : '';
+  if (kind === 'REVIEW') {
+    await notifyMany(list, {
+      type: 'task',
+      audience: 'admin',
+      title: `${nameOf(actor)} is waiting on your review`,
+      body: `${taskName(task)}${said ? ` — “${said.slice(0, 140)}”` : ' — please approve it or send it back.'}`,
+      link: adminTaskLink(task._id),
+      data: { taskId: String(task._id), nudge: true },
+    });
+    return;
+  }
+  const state = (() => {
+    const overdue = task.dueDate && new Date(task.dueDate) < new Date();
+    if (overdue) return 'It is overdue';
+    if (task.status === STATUS.PENDING) return 'You have not accepted it yet';
+    return 'It is still in progress';
+  })();
+  await notifyMany(list, {
+    type: 'task',
+    audience: 'employee',
+    title: `Reminder from ${nameOf(actor)}`,
+    body: `${taskName(task)} — ${said ? `“${said.slice(0, 140)}”` : `${state}.`}${where}`,
+    link: employeeTaskLink(task._id),
+    data: { taskId: String(task._id), nudge: true },
+  });
+}
+
+/**
+ * The deadline just passed (2026-09-27) — told ONCE, to both sides: the people
+ * still doing it (employee portal) and whoever set it or signs it off (admin
+ * portal). Sent by the reminder worker, so there is no actor to leave out.
+ */
+async function becameOverdue(task) {
+  const doing = (task.assignees || [])
+    .filter((a) => !['COMPLETED', 'CANCELLED', 'SUBMITTED'].includes(a.status)
+      && a.acceptance !== 'REJECTED')
+    .map((a) => String(a.user?._id || a.user));
+  const doers = recipients(doing, null);
+  const due = task.dueDate ? fmtDateTime(task.dueDate) : '';
+
+  if (doers.length) {
+    await notifyMany(doers, {
+      type: 'task',
+      audience: 'employee',
+      title: `Overdue: ${taskName(task)}`,
+      body: `It was due ${due} and is not done yet.`,
+      link: employeeTaskLink(task._id),
+      data: { taskId: String(task._id), overdue: true },
+    });
+  }
+
+  const setters = recipients([task.createdBy, task.approver], null).filter((id) => !doers.includes(id));
+  if (setters.length) {
+    const who = (task.assignees || [])
+      .filter((a) => doing.includes(String(a.user?._id || a.user)))
+      .map((a) => a.name).filter(Boolean).join(', ');
+    await notifyMany(setters, {
+      type: 'task',
+      audience: 'admin',
+      title: `Overdue: ${taskName(task)}`,
+      body: who ? `${who} has not finished it — it was due ${due}.` : `It is not finished — it was due ${due}.`,
+      link: adminTaskLink(task._id),
+      data: { taskId: String(task._id), overdue: true },
+    });
+  }
 }
 
 /**
@@ -655,6 +743,8 @@ module.exports = {
   extensionDecided,
   commented,
   edited,
+  nudged,
+  becameOverdue,
   reminder,
   digest,
 };

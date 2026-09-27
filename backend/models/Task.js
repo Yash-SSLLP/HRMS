@@ -19,10 +19,12 @@ const {
   REMINDER_CHANNELS,
   REMINDER_UNITS,
   REMINDER_WHENS,
+  REMINDER_PATTERNS,
   EVIDENCE_KINDS,
   LEGACY_STATUS_MAP,
   normaliseStatus,
   isTerminal,
+  MONTHLY_MODES,
 } = require('../config/tasks');
 const { stampCode } = require('../services/sequence');
 
@@ -274,6 +276,20 @@ const reminderSchema = new mongoose.Schema(
     amount: { type: Number, min: 0, default: 1 },
     unit: { type: String, enum: REMINDER_UNITS, default: 'DAYS' },
     when: { type: String, enum: REMINDER_WHENS, default: 'BEFORE' },
+    // A REPEATING rule's shape (2026-09-27) — see config/tasks
+    // REMINDER_PATTERN. Absent on a before/after rule and on an older
+    // "every 2 hours" one (read as HOURLY).
+    pattern: { type: String, enum: REMINDER_PATTERNS, default: undefined },
+    /** 'HH:mm' — when a daily / weekly / monthly reminder goes. */
+    at: { type: String, default: undefined },
+    /** 'HH:mm' — the window an hourly one speaks in. */
+    from: { type: String, default: undefined },
+    to: { type: String, default: undefined },
+    weekdays: { type: [Number], default: undefined },
+    monthlyMode: { type: String, enum: MONTHLY_MODES, default: undefined },
+    monthDay: { type: Number, min: 1, max: 31, default: undefined },
+    nthWeek: { type: Number, default: undefined },
+    weekday: { type: Number, min: 0, max: 6, default: undefined },
   },
   { _id: false }
 );
@@ -295,12 +311,39 @@ const repeatSchema = new mongoose.Schema(
     monthDay: Number,
     /** For YEARLY: 1-12 with monthDay. */
     month: Number,
+    /** For DAILY: every N days (2 = alternate days). See config/tasks. */
+    interval: Number,
+    /** For MONTHLY: on a DATE, or on the Nth WEEKDAY ("first Monday"). */
+    monthlyMode: { type: String, enum: MONTHLY_MODES },
+    /** For MONTHLY by weekday: 1-4, or -1 for the last one. */
+    nthWeek: Number,
+    /** For MONTHLY by weekday: which day, 0 = Sunday. */
+    weekday: Number,
     /** "HH:mm", 24h, in the portal's timezone. The time of day it falls due. */
     time: { type: String, trim: true },
     /** Stop minting occurrences after this. Null = forever. */
     until: Date,
   },
   { _id: false }
+);
+
+/**
+ * One press of the reminder bell (2026-09-27). Append-only and capped (the
+ * controller pushes with $slice), so "did anybody chase this?" is answerable
+ * from the row, and the 30-minute gate has a record to stand on.
+ */
+const nudgeSchema = new mongoose.Schema(
+  {
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: { type: String, trim: true },
+    /** DOER — the assigner chasing the work; REVIEW — a doer chasing the review. */
+    kind: { type: String, enum: ['DOER', 'REVIEW'], default: 'DOER' },
+    to: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    toNames: { type: String, trim: true },
+    note: { type: String, trim: true, maxlength: 300 },
+    at: { type: Date, default: Date.now },
+  },
+  { _id: true }
 );
 
 // ===== The task =====
@@ -589,6 +632,63 @@ const taskSchema = new mongoose.Schema(
      * attendance push worker hit and had to be fixed for.
      */
     firedReminders: { type: [String], default: [] },
+    /**
+     * A REPEATING rule ("every 2 hours until done", 2026-09-27) is not an
+     * offset but a beat, so it cannot live in `firedReminders` without one key
+     * per beat piling up for weeks. Instead: when the beat is counted from
+     * (`remindFrom` — when the task appeared; `createdAt` if unset) and the
+     * last beat that went out. Claiming a beat is a conditional update on
+     * `repeatReminderAt < beat` — the same lock shape as a fired key.
+     *
+     * `repeatReminderAt` since the reminder SHAPES (hourly on the clock, daily,
+     * weekly, monthly — config/tasks REMINDER_PATTERN): a beat is a moment, so
+     * the moment is the key. `repeatReminderSlot` (a count of intervals since
+     * `remindFrom`) was the first version's and is no longer read.
+     */
+    remindFrom: Date,
+    repeatReminderAt: { type: Date, default: undefined },
+    repeatReminderSlot: { type: Number, default: 0 },
+
+    /**
+     * THE DEADLINE PASSING, ANNOUNCED ONCE (2026-09-27). The user: *"any task
+     * which gets overdue, the assigned and assignee get a notification
+     * automatically about the change of status"*. Stamped by the reminder
+     * worker when it tells them, and cleared whenever the deadline moves, so a
+     * task extended and missed again is announced again.
+     */
+    overdueNotifiedAt: Date,
+
+    // ===== The reminder bell (2026-09-27) =====
+    /**
+     * When somebody last pressed the bell on this task. THE 30-MINUTE GATE
+     * reads this and nothing else (config/tasks.NUDGE_COOLDOWN_MIN) — the
+     * scheduled reminders never touch it, which is the user's rule: an auto
+     * reminder goes when it is due even if a person rang five minutes earlier.
+     */
+    lastNudgeAt: Date,
+    /**
+     * …and per DIRECTION, which is what the gate actually reads: the setter
+     * chasing the work (DOER) and a doer chasing the review (REVIEW) are two
+     * different people being asked, so a manager's reminder at 10:00 must not
+     * stop the doer asking for a review at 10:20.
+     */
+    nudgeAt: {
+      DOER: Date,
+      REVIEW: Date,
+    },
+    nudgeCount: { type: Number, default: 0 },
+    nudges: { type: [nudgeSchema], default: [] },
+
+    // ===== Edits to the terms (2026-09-27) =====
+    /**
+     * How many times the assigner changed the task before it was taken on, and
+     * the last time — so a row can say "Edited ×2" and the person about to
+     * accept it knows to read it again. The trail itself is the EDITED rows in
+     * the feed, each carrying before → after for every field it touched.
+     */
+    editCount: { type: Number, default: 0 },
+    lastEditedAt: Date,
+    lastEditedByName: { type: String, trim: true },
 
     // ===== Recurrence =====
     repeat: { type: repeatSchema, default: () => ({ frequency: FREQUENCY.ONCE }) },
@@ -596,6 +696,13 @@ const taskSchema = new mongoose.Schema(
     // The occurrence this instance is for, as an IST day key. The generator's
     // idempotence key: a worker restart cannot mint the same day twice.
     occurrenceKey: { type: String, trim: true },
+    /**
+     * ROUTINE — only ever marked done (2026-09-27). Set on every occurrence of
+     * a DAILY schedule: the user's *"for daily task they have to only mark that
+     * as done"*. There is nothing to accept, decline, delegate, split or send
+     * for review, so services/taskAccess offers the doer one move: Done.
+     */
+    routine: { type: Boolean, default: false },
     template: { type: mongoose.Schema.Types.ObjectId, ref: 'TaskTemplate' },
 
     // ===== Requests =====

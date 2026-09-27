@@ -28,15 +28,22 @@
  * deadline, how far along it is, and — on the right — overdue / priority /
  * points and the status dropdown.
  */
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { FiUser, FiLayers, FiCornerUpRight, FiUserPlus, FiArrowRight, FiCalendar } from 'react-icons/fi';
+import {
+  FiUser, FiLayers, FiCornerUpRight, FiUserPlus, FiArrowRight, FiCalendar, FiRepeat, FiEdit3,
+} from 'react-icons/fi';
 import {
   OverdueChip, PriorityChip, DueChip, PointsChip, PiecesChip, ExtensionChip,
   TransferredChip, ProgressBar, TaskMarks,
 } from './TaskChips';
 import TaskStatusMenu from './TaskStatusMenu';
+import NudgeBell from './NudgeBell';
+import SwipeRow from './SwipeRow';
 import { useAccentStyle } from './taskColors';
-import { assigneeNames, personName, dayLabel } from '../../utils/taskLifecycle';
+import {
+  assigneeNames, personName, dayLabel, swipeActionsFor, FREQUENCY_LABELS,
+} from '../../utils/taskLifecycle';
 
 /** Anything inside one of these answers for itself; the row must not also fire. */
 const INTERACTIVE = 'button, a, input, select, textarea, label, [role="button"], [role="menu"]';
@@ -49,10 +56,19 @@ export default function TaskRow({
   onOpen,
   /** `(actionKey, task)` — a pick from the status dropdown. */
   onAction,
+  /** `(actionKey, task)` — a swipe on a touch screen (2026-09-27). */
+  onSwipe,
+  /** The bell's gate, restarted by a press in this tab, and the callback. */
+  nudgedAt = null,
+  onNudged,
   viewOnly = false,
 }) {
   const accent = useAccentStyle(task);
   const parentId = task.parentTask?._id || task.parentTask || null;
+  const swipe = useMemo(() => (viewOnly || !onSwipe ? {} : swipeActionsFor(task)), [task, viewOnly, onSwipe]);
+  // A one-word schedule tag — "Daily", "Weekly" — on a recurring occurrence.
+  const freq = task.recurringTask && task.repeat?.frequency && task.repeat.frequency !== 'ONCE'
+    ? FREQUENCY_LABELS[task.repeat.frequency] : '';
 
   const setterId = String(task.createdBy?._id || task.createdBy || '');
   const byMe = Boolean(meId) && setterId === String(meId);
@@ -96,6 +112,7 @@ export default function TaskRow({
   };
 
   return (
+    <SwipeRow actions={swipe} onAction={(key) => onSwipe?.(key, task)}>
     <div
       onClick={openRow}
       style={accent}
@@ -187,6 +204,21 @@ export default function TaskRow({
                   <FiUserPlus size={11} /> open — pick it up
                 </span>
               )}
+              {freq && (
+                <span className="inline-flex items-center gap-1 text-gray-500" title={task.repeatLabel || freq}>
+                  <FiRepeat size={11} className="text-gray-400" /> {freq}
+                </span>
+              )}
+              {/* Changed after it was sent and nobody has taken it on yet —
+                  worth a second read before accepting (the trail is on it). */}
+              {task.editCount > 0 && task.status === 'PENDING' && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 font-medium text-amber-700"
+                  title={task.lastEditedByName ? `Last edited by ${task.lastEditedByName}` : 'Edited after it was sent'}
+                >
+                  <FiEdit3 size={10} /> Edited{task.editCount > 1 ? ` ×${task.editCount}` : ''}
+                </span>
+              )}
               <TaskMarks task={task} />
             </div>
 
@@ -210,7 +242,12 @@ export default function TaskRow({
             <TransferredChip task={task} />
             <PointsChip task={task} earned={task.status === 'COMPLETED'} />
           </div>
-          <TaskStatusMenu task={task} viewOnly={viewOnly} onAction={onAction} onOpen={onOpen} />
+          <div className="flex items-center gap-2">
+            {/* THE BELL (2026-09-27): the setter chasing the work, or the doer
+                chasing the review — whichever the server says. */}
+            {!viewOnly && <NudgeBell task={task} override={nudgedAt} onNudged={onNudged} />}
+            <TaskStatusMenu task={task} viewOnly={viewOnly} onAction={onAction} onOpen={onOpen} />
+          </div>
         </div>
       </div>
 
@@ -220,5 +257,6 @@ export default function TaskRow({
         <p className="mt-2 border-t border-black/5 pt-2 text-xs text-gray-500">{task.stateNote}</p>
       )}
     </div>
+    </SwipeRow>
   );
 }

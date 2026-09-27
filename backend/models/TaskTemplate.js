@@ -10,6 +10,8 @@ const {
   REMINDER_CHANNELS,
   REMINDER_UNITS,
   REMINDER_WHENS,
+  REMINDER_PATTERNS,
+  MONTHLY_MODES,
 } = require('../config/tasks');
 
 /**
@@ -41,6 +43,20 @@ const reminderSchema = new mongoose.Schema(
     amount: { type: Number, min: 0, default: 1 },
     unit: { type: String, enum: REMINDER_UNITS, default: 'DAYS' },
     when: { type: String, enum: REMINDER_WHENS, default: 'BEFORE' },
+    // A REPEATING rule's shape (2026-09-27) — see config/tasks
+    // REMINDER_PATTERN. Absent on a before/after rule and on an older
+    // "every 2 hours" one (read as HOURLY).
+    pattern: { type: String, enum: REMINDER_PATTERNS, default: undefined },
+    /** 'HH:mm' — when a daily / weekly / monthly reminder goes. */
+    at: { type: String, default: undefined },
+    /** 'HH:mm' — the window an hourly one speaks in. */
+    from: { type: String, default: undefined },
+    to: { type: String, default: undefined },
+    weekdays: { type: [Number], default: undefined },
+    monthlyMode: { type: String, enum: MONTHLY_MODES, default: undefined },
+    monthDay: { type: Number, min: 1, max: 31, default: undefined },
+    nthWeek: { type: Number, default: undefined },
+    weekday: { type: Number, min: 0, max: 6, default: undefined },
   },
   { _id: false }
 );

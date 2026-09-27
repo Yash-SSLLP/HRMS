@@ -20,15 +20,21 @@ const mongoose = require('mongoose');
 const TaskTemplate = require('../models/TaskTemplate');
 const RecurringTask = require('../models/RecurringTask');
 const Task = require('../models/Task');
+const User = require('../models/User');
 const access = require('../services/taskAccess');
 const recurrence = require('../services/taskRecurrenceWorker');
+const points = require('../services/taskPoints');
 const {
   TASK_PRIORITY, DEFAULT_PRIORITY, normalisePriority, MAX_TASK_POINTS, FREQUENCIES, FREQUENCY,
+  MONTHLY_MODE, MONTHLY_MODES, NTH_WEEKS, MAX_DAY_INTERVAL, DEFAULT_LEAD_DAYS, MAX_LEAD_DAYS,
+  REMINDER_WHEN, patternLabel, reminderLabel, isRoutineFrequency, spellingsOf, STATUS, OPEN_STATUS,
 } = require('../config/tasks');
 const {
-  cleanReminders, cleanRepeat, cleanLinks, personName,
+  cleanReminders, cleanRepeat, cleanLinks, personName, parseBody, buildAssignees, storeVoiceNote,
 } = require('./taskController');
 const { departedUserIdSet } = require('../utils/departed');
+const { pickableUserFilter } = require('../utils/peoplePicker');
+const { viewerCompanyScope } = require('../utils/employeeScope');
 
 function bad(res, message, status = 400) {
   res.status(status);
@@ -252,6 +258,164 @@ const prefillFromTemplate = asyncHandler(async (req, res) => {
 });
 
 // ===== Repeating schedules =====
+//
+// REWORKED 2026-09-27 into the RECURRING TAB — the user's *"need a separate
+// tab for recurring tasks, only to assign; after assigned it will show them in
+// their task tab"*. A schedule is set up on its own here, and nothing is
+// raised until an occurrence is due to APPEAR (services/taskRecurrenceWorker):
+// a daily task at 9 am on its day, a monthly one two days early. Each
+// occurrence is an ordinary task in the doer's Tasks list.
+
+const IST_DAY = (key) => new Date(`${key}T00:00:00+05:30`);
+
+/** 'YYYY-MM-DD' (or an ISO instant) → IST midnight of that day, or null. */
+function dayOf(raw) {
+  if (!raw) return null;
+  const s = String(raw);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return IST_DAY(s);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return IST_DAY(recurrence.occurrenceKeyFor(d));
+}
+
+const validTime = (t) => /^\d{1,2}:\d{2}$/.test(String(t || ''));
+
+/**
+ * The schedule fields a body may set, cleaned — shared by create and update.
+ * Accepts them flat or under `repeat` (the shape the assign form already sends).
+ * Returns only what was SENT, so a PATCH changes only what it names.
+ */
+function scheduleFields(body) {
+  const src = { ...(body.repeat && typeof body.repeat === 'object' ? body.repeat : {}), ...body };
+  const out = {};
+  if (src.frequency !== undefined) {
+    if (!FREQUENCIES.includes(src.frequency) || src.frequency === FREQUENCY.ONCE) {
+      const err = new Error('Choose how often it repeats — daily, weekly, monthly or yearly.');
+      err.status = 400;
+      throw err;
+    }
+    out.frequency = src.frequency;
+  }
+  if (src.interval !== undefined) {
+    const n = Math.round(Number(src.interval) || 1);
+    out.interval = Math.min(MAX_DAY_INTERVAL, Math.max(1, n));
+  }
+  if (src.weekdays !== undefined) {
+    out.weekdays = [...new Set((Array.isArray(src.weekdays) ? src.weekdays : [])
+      .map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
+  }
+  if (src.monthlyMode !== undefined) {
+    out.monthlyMode = MONTHLY_MODES.includes(src.monthlyMode) ? src.monthlyMode : MONTHLY_MODE.DATE;
+  }
+  if (src.nthWeek !== undefined) {
+    const n = Number(src.nthWeek);
+    out.nthWeek = NTH_WEEKS.includes(n) ? n : 1;
+  }
+  if (src.weekday !== undefined) {
+    const w = Number(src.weekday);
+    out.weekday = Number.isInteger(w) && w >= 0 && w <= 6 ? w : 1;
+  }
+  if (src.monthDay !== undefined) {
+    const d = Number(src.monthDay);
+    out.monthDay = Number.isInteger(d) && d >= 1 && d <= 31 ? d : undefined;
+  }
+  if (src.month !== undefined) {
+    const m = Number(src.month);
+    out.month = Number.isInteger(m) && m >= 1 && m <= 12 ? m : undefined;
+  }
+  if (src.time !== undefined && validTime(src.time)) {
+    const [h, m] = String(src.time).split(':').map((n) => parseInt(n, 10));
+    out.time = `${String(Math.min(23, h)).padStart(2, '0')}:${String(Math.min(59, m)).padStart(2, '0')}`;
+  }
+  if (src.startDate !== undefined) out.startDate = dayOf(src.startDate) || undefined;
+  if (src.until !== undefined) out.until = src.until ? dayOf(src.until) : null;
+  if (src.leadDays !== undefined && src.leadDays !== null && src.leadDays !== '') {
+    const n = Math.round(Number(src.leadDays));
+    if (Number.isFinite(n)) out.leadDays = Math.min(MAX_LEAD_DAYS, Math.max(0, n));
+  }
+  return out;
+}
+
+/** The pattern must say WHICH days, or it would never fire. */
+function assertShape(s) {
+  const fail = (m) => { const e = new Error(m); e.status = 400; throw e; };
+  if (s.frequency === FREQUENCY.WEEKLY && !(s.weekdays || []).length) fail('Pick at least one day of the week.');
+  if (s.until && s.startDate && new Date(s.until) < new Date(s.startDate)) {
+    fail('The end date is before the start date.');
+  }
+}
+
+/**
+ * One schedule as both clients draw it: the pattern in words, when the next
+ * one is due and when it will appear, who it is for, and what it has produced.
+ */
+function present(s, stats = {}, gone = new Set()) {
+  const assignees = (s.assignees || []).filter((u) => u && !gone.has(String(u._id || u)));
+  // Past the days already raised: today's daily task appeared at nine and may
+  // be done by now — "Next due today, 7 PM" beside it read as if it were not.
+  const next = s.isActive
+    ? recurrence.nextOccurrence(s, new Date(), { skipKeys: stats.upcoming || null })
+    : null;
+  return {
+    ...s,
+    assignees,
+    routine: isRoutineFrequency(s.frequency),
+    leadDays: recurrence.leadDaysOf(s),
+    patternLabel: patternLabel(s),
+    // An email reminder says so — "1 day after (email)" — the rest are app pushes.
+    reminderLabels: (s.reminders || []).map((r) => `${reminderLabel(r)}${r.channel === 'EMAIL' ? ' (email)' : ''}`),
+    next: next ? { dueAt: next.dueAt, appearAt: next.appearAt } : null,
+    // Kept under its old name: an app build from before the tab reads it.
+    nextDueDate: next ? next.dueAt : null,
+    who: assignees.map((u) => personName(u)).filter(Boolean).join(', '),
+    stats: {
+      raised: stats.raised || 0,
+      open: stats.open || 0,
+      done: stats.done || 0,
+      last: stats.last || null,
+    },
+  };
+}
+
+/** What each schedule has produced, for a page of them, in ONE aggregation. */
+async function statsFor(ids) {
+  if (!ids.length) return new Map();
+  const open = spellingsOf(...OPEN_STATUS);
+  const done = spellingsOf(STATUS.COMPLETED);
+  const rows = await Task.aggregate([
+    { $match: { recurringTask: { $in: ids }, archived: { $ne: true } } },
+    { $sort: { dueDate: -1 } },
+    {
+      $group: {
+        _id: '$recurringTask',
+        raised: { $sum: 1 },
+        open: { $sum: { $cond: [{ $in: ['$status', open] }, 1, 0] } },
+        done: { $sum: { $cond: [{ $in: ['$status', done] }, 1, 0] } },
+        last: { $first: { _id: '$_id', code: '$code', status: '$status', dueDate: '$dueDate' } },
+      },
+    },
+  ]);
+  const out = new Map(rows.map((r) => [String(r._id), { ...r, upcoming: new Set() }]));
+
+  // The days from today on that already have their task (a handful at most —
+  // the lead is ≤ 14 days), so present() can say which one is NEXT. Archived
+  // ones count: the unique key still stops that day being raised again.
+  const raised = await Task.find({
+    recurringTask: { $in: ids },
+    occurrenceKey: { $gte: recurrence.occurrenceKeyFor(new Date()) },
+  }).select('recurringTask occurrenceKey').lean();
+  for (const t of raised) {
+    const id = String(t.recurringTask);
+    if (!out.has(id)) out.set(id, { upcoming: new Set() });
+    out.get(id).upcoming.add(t.occurrenceKey);
+  }
+  return out;
+}
+
+/** Whose schedules this caller may see and change. */
+function mayManage(user, schedule) {
+  return String(schedule.createdBy || '') === String(user._id) || access.seesEverything(user);
+}
 
 /**
  * GET /api/tasks/recurring — the schedules, with what each one has produced.
@@ -261,12 +425,13 @@ const prefillFromTemplate = asyncHandler(async (req, res) => {
  * find it again.
  */
 const listRecurring = asyncHandler(async (req, res) => {
-  const filter = access.seesEverything(req.user)
+  const filter = access.seesEverything(req.user) && req.query.scope !== 'mine'
     ? (req.user.company ? { $or: [{ company: req.user.company }, { company: null }] } : {})
     : { createdBy: req.user._id };
 
   const schedules = await RecurringTask.find(filter)
-    .populate('assignees', 'firstName lastName')
+    .populate('assignees', 'firstName lastName photo')
+    .populate('loopUsers', 'firstName lastName')
     .sort({ isActive: -1, createdAt: -1 })
     .lean();
 
@@ -274,33 +439,169 @@ const listRecurring = asyncHandler(async (req, res) => {
   // skips them when it raises each task — so the list does not name them
   // either. A schedule left with nobody on it reads as exactly that.
   const gone = await departedUserIdSet(schedules.flatMap((s) => (s.assignees || []).map((u) => u?._id)));
+  const stats = await statsFor(schedules.map((s) => s._id));
 
   res.json({
-    schedules: schedules.map((s) => {
-      const assignees = (s.assignees || []).filter((u) => u && !gone.has(String(u._id)));
-      return {
-        ...s,
-        assignees,
-        // What the next one will be due, so a list can say it without the reader
-        // having to work out what "weekly on Fri" means from today.
-        nextDueDate: s.isActive ? recurrence.firstDueDate({ ...s, startDate: new Date() }) : null,
-        who: assignees.map((u) => [u.firstName, u.lastName].filter(Boolean).join(' ')).join(', '),
-      };
-    }),
+    schedules: schedules.map((s) => present(s, stats.get(String(s._id)), gone)),
+    canSeeAll: access.seesEverything(req.user),
   });
 });
 
-/** PATCH /api/tasks/recurring/:id — pause it, resume it, or move its terms. */
-const updateRecurring = asyncHandler(async (req, res) => {
-  const schedule = await RecurringTask.findById(req.params.id);
+/** GET /api/tasks/recurring/:id — one schedule, for the edit form. */
+const getRecurring = asyncHandler(async (req, res) => {
+  if (!access.isValidId(req.params.id)) bad(res, 'That schedule is gone.', 404);
+  const schedule = await RecurringTask.findById(req.params.id)
+    .populate('assignees', 'firstName lastName photo')
+    .populate('loopUsers', 'firstName lastName')
+    .lean();
   if (!schedule) bad(res, 'That schedule is gone.', 404);
-  if (String(schedule.createdBy || '') !== String(req.user._id) && !access.seesEverything(req.user)) {
-    bad(res, 'That schedule is not yours to change.', 403);
+  if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to open.', 403);
+  const stats = await statsFor([schedule._id]);
+  res.json({ schedule: present(schedule, stats.get(String(schedule._id))) });
+});
+
+/**
+ * POST /api/tasks/recurring — set one up.
+ *
+ * Only the SCHEDULE is made. Whatever is already due to appear (today's daily
+ * task, set up at eleven for six o'clock) is raised at once; everything else
+ * appears when its day comes. `mintFrom` = now, so an occurrence whose time has
+ * already passed today is never raised overdue — it starts next time.
+ */
+const createRecurring = asyncHandler(async (req, res) => {
+  const body = parseBody(req);
+  const title = String(body.title || '').trim();
+  if (!title) bad(res, 'Give the task a title.');
+
+  // On somebody else's behalf — the same rule, and the same check, as a one-off
+  // (taskController.createTask): the grant, and the company wall.
+  let setter = req.user;
+  let proxy = null;
+  const behalfId = String(body.onBehalfOf || '').trim();
+  if (behalfId && behalfId !== String(req.user._id)) {
+    if (!access.canAssignOnBehalf(req.user)) {
+      bad(res, 'Setting a task on somebody else’s behalf needs a permission only a Super Admin can give.', 403);
+    }
+    if (!mongoose.Types.ObjectId.isValid(behalfId)) bad(res, 'Choose who the task is being set for.');
+    const principal = await User.findOne({ $and: [await pickableUserFilter(req), { _id: behalfId }] })
+      .select('firstName lastName role company');
+    if (!principal) bad(res, 'You cannot set a task for that person — they are not in your company, or no longer active.');
+    setter = principal;
+    proxy = { by: req.user._id, byName: personName(req.user), at: new Date() };
   }
 
-  const b = req.body || {};
-  if (b.isActive !== undefined) schedule.isActive = Boolean(b.isActive);
-  if (b.title !== undefined) schedule.title = String(b.title).trim();
+  let wanted = (body.assignees || []).map(String).filter(Boolean);
+  // Nobody chosen means the setter's own routine — "remind me every Friday".
+  if (!wanted.length) wanted = [String(setter._id)];
+  await access.resolveAssignmentKind(setter, wanted);
+  const people = await buildAssignees(wanted);
+  if (!people.length) bad(res, 'None of the people chosen are available any more.');
+  const selfOnly = people.every((p) => String(p.user) === String(setter._id));
+
+  const shape = scheduleFields(body);
+  if (!shape.frequency) bad(res, 'Choose how often it repeats — daily, weekly, monthly or yearly.');
+  if (!shape.startDate) shape.startDate = dayOf(new Date());
+  if (shape.frequency === FREQUENCY.WEEKLY && !(shape.weekdays || []).length) {
+    shape.weekdays = [new Date(shape.startDate.getTime() + 6 * 3600 * 1000).getUTCDay()];
+  }
+  assertShape(shape);
+
+  const settings = await points.taskSettings();
+  let pts = body.points === undefined || body.points === null || body.points === ''
+    ? settings.defaultPoints : Number(body.points);
+  if (!Number.isFinite(pts) || pts < 0) bad(res, 'Points must be a number, 0 or more.');
+  pts = Math.min(MAX_TASK_POINTS, Math.round(pts));
+
+  // A daily task is chased every two hours until done unless the form says
+  // otherwise — the user's own example.
+  const reminders = body.reminders !== undefined
+    ? cleanReminders(body.reminders)
+    : (isRoutineFrequency(shape.frequency)
+      ? [{ channel: 'APP', amount: 2, unit: 'HOURS', when: REMINDER_WHEN.EVERY }]
+      : settings.defaultReminders);
+
+  const companyScope = await viewerCompanyScope(req);
+  const schedule = await RecurringTask.create({
+    title,
+    description: String(body.description || '').trim(),
+    category: String(body.category || '').trim(),
+    priority: normalisePriority(body.priority) || DEFAULT_PRIORITY,
+    points: selfOnly ? 0 : pts,
+    assignees: people.map((p) => p.user),
+    loopUsers: [...new Set((body.loopUsers || []).map(String))].filter(mongoose.Types.ObjectId.isValid),
+    links: cleanLinks(body.links),
+    reminders,
+    requiresApproval: !(body.requiresApproval === false
+      || body.requiresApproval === 'false' || body.requiresApproval === '0'),
+    time: '18:00',
+    ...shape,
+    mintFrom: new Date(),
+    isActive: true,
+    company: setter.company || req.user.company || companyScope?.[0] || null,
+    createdBy: setter._id,
+    createdByName: personName(setter),
+    ...(proxy ? { onBehalf: proxy } : {}),
+  });
+
+  // The recording, explained once and copied onto every occurrence.
+  const voice = await storeVoiceNote(req.files, schedule._id, req.user, body.voiceDurationMs);
+  if (voice) {
+    schedule.voiceNote = voice;
+    await schedule.save();
+  }
+
+  const made = await recurrence.runSchedule(schedule.toObject(), new Date());
+  const fresh = await RecurringTask.findById(schedule._id)
+    .populate('assignees', 'firstName lastName photo')
+    .populate('loopUsers', 'firstName lastName')
+    .lean();
+  const out = present(fresh, {
+    raised: made.length,
+    open: made.length,
+    upcoming: new Set(made.map((t) => t.occurrenceKey)),
+  });
+  res.status(201).json({
+    schedule: out,
+    raised: made.length,
+    message: made.length
+      ? `Set up. The first one is on ${out.who || 'their'} list now.`
+      : (out.next
+        ? `Set up. The first one appears on ${new Date(out.next.appearAt).toLocaleDateString('en-IN', {
+          day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata',
+        })}.`
+        : 'Set up.'),
+  });
+});
+
+/**
+ * PATCH /api/tasks/recurring/:id — pause it, resume it, or move its terms.
+ *
+ * The OCCURRENCES ALREADY RAISED keep the terms they were raised with; this
+ * changes what is raised from now on. Changing WHEN it repeats, or switching it
+ * back on, moves `mintFrom` to now — without that, turning a Monday task into a
+ * daily one on a Thursday would raise Tuesday's and Wednesday's, overdue, in the
+ * catch-up.
+ */
+const updateRecurring = asyncHandler(async (req, res) => {
+  if (!access.isValidId(req.params.id)) bad(res, 'That schedule is gone.', 404);
+  const schedule = await RecurringTask.findById(req.params.id);
+  if (!schedule) bad(res, 'That schedule is gone.', 404);
+  if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to change.', 403);
+
+  const b = parseBody(req);
+  const now = new Date();
+  let reshaped = false;
+
+  if (b.isActive !== undefined) {
+    const on = b.isActive === true || b.isActive === 'true' || b.isActive === '1';
+    if (on && !schedule.isActive) schedule.mintFrom = now;
+    schedule.isActive = on;
+  }
+  if (b.title !== undefined) {
+    const t = String(b.title).trim();
+    if (!t) bad(res, 'A task needs a title.');
+    schedule.title = t;
+  }
   if (b.description !== undefined) schedule.description = String(b.description).trim();
   if (b.category !== undefined) schedule.category = String(b.category).trim();
   if (b.priority !== undefined) {
@@ -311,11 +612,13 @@ const updateRecurring = asyncHandler(async (req, res) => {
     const p = Number(b.points);
     if (Number.isFinite(p) && p >= 0) schedule.points = Math.min(MAX_TASK_POINTS, Math.round(p));
   }
+  if (b.requiresApproval !== undefined) {
+    schedule.requiresApproval = !(b.requiresApproval === false
+      || b.requiresApproval === 'false' || b.requiresApproval === '0');
+  }
   if (b.assignees !== undefined) {
     const ids = (b.assignees || []).map(String).filter(mongoose.Types.ObjectId.isValid);
     if (!ids.length) bad(res, 'A schedule needs at least one person on it.');
-    // The direction rule applies here exactly as it does on a one-off: a
-    // schedule must not be a way to set recurring work on your own manager.
     await access.resolveAssignmentKind(req.user, ids);
     schedule.assignees = ids;
   }
@@ -323,30 +626,49 @@ const updateRecurring = asyncHandler(async (req, res) => {
     schedule.loopUsers = (b.loopUsers || []).map(String).filter(mongoose.Types.ObjectId.isValid);
   }
   if (b.reminders !== undefined) schedule.reminders = cleanReminders(b.reminders);
-  if (b.frequency !== undefined && FREQUENCIES.includes(b.frequency)) schedule.frequency = b.frequency;
-  if (b.weekdays !== undefined) {
-    schedule.weekdays = (b.weekdays || []).map(Number)
-      .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+  if (b.links !== undefined) schedule.links = cleanLinks(b.links);
+
+  const shape = scheduleFields(b);
+  const SHAPE_KEYS = ['frequency', 'interval', 'weekdays', 'monthlyMode', 'nthWeek', 'weekday',
+    'monthDay', 'month', 'time', 'startDate', 'leadDays'];
+  for (const [k, v] of Object.entries(shape)) {
+    const was = schedule[k];
+    const same = Array.isArray(v)
+      ? JSON.stringify([...(was || [])]) === JSON.stringify(v)
+      : String(was ?? '') === String(v ?? '');
+    if (!same && SHAPE_KEYS.includes(k)) reshaped = true;
+    schedule[k] = v === null ? undefined : v;
   }
-  if (b.monthDay !== undefined) schedule.monthDay = Number(b.monthDay) || undefined;
-  if (b.month !== undefined) schedule.month = Number(b.month) || undefined;
-  if (b.time !== undefined && /^\d{1,2}:\d{2}$/.test(String(b.time))) schedule.time = b.time;
-  if (b.until !== undefined) {
-    const u = b.until ? new Date(b.until) : null;
-    schedule.until = u && !Number.isNaN(u.getTime()) ? u : undefined;
+  // A frequency change resets the lead to that shape's default unless sent.
+  if (shape.frequency && shape.leadDays === undefined && reshaped) {
+    schedule.leadDays = DEFAULT_LEAD_DAYS[shape.frequency] ?? 0;
   }
+  assertShape(schedule);
+  if (reshaped) schedule.mintFrom = now;
+
+  const voice = await storeVoiceNote(req.files, schedule._id, req.user, b.voiceDurationMs);
+  if (voice) schedule.voiceNote = voice;
 
   await schedule.save();
-  res.json({ schedule });
+
+  // Something may now be due to appear (switched on, or moved to today).
+  if (schedule.isActive) {
+    await recurrence.runSchedule(schedule.toObject(), now).catch((e) => console.error('recurring run failed:', e.message));
+  }
+
+  const fresh = await RecurringTask.findById(schedule._id)
+    .populate('assignees', 'firstName lastName photo')
+    .populate('loopUsers', 'firstName lastName')
+    .lean();
+  const stats = await statsFor([schedule._id]);
+  res.json({ schedule: present(fresh, stats.get(String(schedule._id))) });
 });
 
 /** DELETE /api/tasks/recurring/:id — stop it. Past occurrences stay. */
 const deleteRecurring = asyncHandler(async (req, res) => {
   const schedule = await RecurringTask.findById(req.params.id);
   if (!schedule) bad(res, 'That schedule is already gone.', 404);
-  if (String(schedule.createdBy || '') !== String(req.user._id) && !access.seesEverything(req.user)) {
-    bad(res, 'That schedule is not yours to remove.', 403);
-  }
+  if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to remove.', 403);
   // Switched off rather than deleted: the tasks it already raised point at it,
   // and a dangling reference is how a list row loses its "Weekly" label.
   schedule.isActive = false;
@@ -354,13 +676,11 @@ const deleteRecurring = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
-/** POST /api/tasks/recurring/:id/run — mint the next one now, for testing. */
+/** POST /api/tasks/recurring/:id/run — raise whatever is due to appear now. */
 const runRecurringNow = asyncHandler(async (req, res) => {
   const schedule = await RecurringTask.findById(req.params.id).lean();
   if (!schedule) bad(res, 'That schedule is gone.', 404);
-  if (String(schedule.createdBy || '') !== String(req.user._id) && !access.seesEverything(req.user)) {
-    bad(res, 'That schedule is not yours to run.', 403);
-  }
+  if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to run.', 403);
   const made = await recurrence.runSchedule(schedule);
   res.json({ raised: made.length, tasks: made.map((t) => ({ _id: t._id, code: t.code, dueDate: t.dueDate })) });
 });
@@ -373,6 +693,8 @@ module.exports = {
   deleteTemplate,
   prefillFromTemplate,
   listRecurring,
+  getRecurring,
+  createRecurring,
   updateRecurring,
   deleteRecurring,
   runRecurringNow,

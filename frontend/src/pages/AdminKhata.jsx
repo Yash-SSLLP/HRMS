@@ -101,14 +101,30 @@ const STATUS_STYLES = {
 // 'AwaitingApproval' is accurate and unreadable; say who it is actually with.
 const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 
+/**
+ * THE TABS (2026-09-27), in the user's order for the queues: *"Reimburse,
+ * Advance, Approval, People, Ledger — with a badge if anything is pending"*.
+ *
+ *   reimburse  claims to pay back — somebody spent past their advance
+ *   advance    the CEO/MD's sanction queue (for those who may decide it) and
+ *              the approved advances waiting to be paid out
+ *   approval   everything else waiting on the accounts team — cash handed back,
+ *              payouts over an operator's limit, and the expenses and refunds to
+ *              confirm
+ *
+ * Overview and Accounts stay on the web, which has the width for them.
+ * `sanctions` and `approvals` are the old ids — a saved link still lands.
+ */
 const TABS = [
   ['overview', 'Overview'],
+  ['reimburse', 'Reimburse'],
+  ['advance', 'Advance'],
+  ['approval', 'Approval'],
   ['people', 'People'],
   ['ledger', 'Ledger'],
-  ['sanctions', 'Advance approvals'],
-  ['approvals', 'Approvals'],
   ['accounts', 'Accounts'],
 ];
+const TAB_ALIASES = { sanctions: 'advance', approvals: 'approval' };
 
 const ENTRY_TYPES = [
   ['advance', 'Advance given'],
@@ -381,7 +397,8 @@ export default function AdminKhata() {
   // route above the module gate (PATCH /khata/khatas/:id/reopen).
   const mayReopen = canReopenBook(user);
 
-  const [tab, setTab] = useTabParam('overview', TABS.map(([k]) => k));
+  const [rawTab, setTab] = useTabParam('overview', [...TABS.map(([k]) => k), ...Object.keys(TAB_ALIASES)]);
+  const tab = TAB_ALIASES[rawTab] || rawTab;
   const [ov, setOv] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [rows, setRows] = useState([]);   // one per employee, each with their khatas[]
@@ -390,10 +407,31 @@ export default function AdminKhata() {
   const [pending, setPending] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [expenses, setExpenses] = useState([]);   // auto-approved, awaiting review
+  /**
+   * THE PAY-OUT QUEUE, split three ways by what it is (2026-09-27) — claims to
+   * reimburse, advances to pay out, and the rest — each ticked on its own, so
+   * "Approve 3" on one tab never includes rows sitting on another.
+   */
+  const reimburseRows = useMemo(() => pending.filter((e) => e.type === 'reimbursement'), [pending]);
+  const advanceRows = useMemo(() => pending.filter((e) => e.type === 'advance'), [pending]);
+  const otherRows = useMemo(
+    () => pending.filter((e) => e.type !== 'reimbursement' && e.type !== 'advance'),
+    [pending]
+  );
   // What is ticked on each approval list: several at once, 2026-09-26.
   const expensePick = useSelection(expenses);
-  const pendingPick = useSelection(pending);
+  const reimbursePick = useSelection(reimburseRows);
+  const advancePick = useSelection(advanceRows);
+  const otherPick = useSelection(otherRows);
   const sanctionPick = useSelection(sanctions);
+  // The pay-out slice on screen — what the bulk bar and the approve modal act on.
+  const pendingPick = tab === 'reimburse' ? reimbursePick : tab === 'advance' ? advancePick : otherPick;
+  /** Each queue tab's red count — counted from the very rows it draws. */
+  const tabCounts = {
+    reimburse: reimburseRows.length,
+    advance: (isApprover ? sanctions.length : 0) + advanceRows.length,
+    approval: otherRows.length + expenses.length,
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -691,6 +729,89 @@ export default function AdminKhata() {
       action: 'reject', ids: rows.map((x) => x._id), note: note.trim() || undefined,
     }, pendingPick);
   };
+
+  /**
+   * One slice of the pay-out queue (2026-09-27) — the same card on every tab
+   * that shows one (Reimburse, the second half of Advance, Approval), ticked
+   * on its own through `pendingPick`, which follows the tab.
+   */
+  const renderPayouts = (list, empty) => (
+    <div className="bg-white shadow rounded-lg overflow-hidden">
+      {list.length === 0 ? (
+        <div className="px-4 py-10 text-center">
+          <p className="text-gray-700 font-medium">{empty.title}</p>
+          <p className="text-gray-500 text-xs mt-1">{empty.hint}</p>
+        </div>
+      ) : (
+        <>
+        {!viewOnly && (
+          <SelectionBar sel={pendingPick} total={list.length}>
+            <button type="button" disabled={saving}
+              onClick={() => setApproveModal({
+                entries: pendingPick.selected,
+                cashAccount: accounts.filter((a) => a.canApprove).length === 1
+                  ? accounts.find((a) => a.canApprove)._id : '',
+                note: '',
+              })}
+              className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+              {tab === 'reimburse' ? 'Pay back' : 'Approve'} {pendingPick.selected.length}
+            </button>
+            <button type="button" onClick={declineTicked} disabled={saving}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
+              Decline {pendingPick.selected.length}
+            </button>
+          </SelectionBar>
+        )}
+        <ul className="divide-y divide-gray-100">
+          {list.map((e) => (
+            <li key={e._id} className="px-4 py-3">
+              <div className="flex flex-wrap justify-between items-start gap-3">
+                {!viewOnly && <PickBox sel={pendingPick} entry={e} />}
+                <div className="min-w-0 grow basis-64">
+                  <p className="font-medium text-gray-900">
+                    {e.employee?.name || 'Employee'} · {money(e.amount)}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {e.khataName ? `${e.khataName} · ` : ''}
+                    {e.direction === 'to_employee'
+                      ? (e.type === 'reimbursement' ? 'Claim to pay back'
+                        : e.type === 'refund' ? 'Refund to confirm' : 'Advance to pay out')
+                      : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
+                    {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'}
+                    {' · '}{fmtDate(e.date)}
+                  </p>
+                  {/* Sanctioned already: say so, or an operator has no way to
+                      tell an approved advance from an unvetted one. */}
+                  {e.execApprovedAt && (
+                    <p className="text-xs text-violet-700 mt-0.5">
+                      Approved by {e.execApprovedBy?.name || 'an executive'}
+                      {e.execApprovedBy?.role ? ` (${e.execApprovedBy.role})` : ''} on {fmtDate(e.execApprovedAt)}
+                      {e.execNote ? ` — ${e.execNote}` : ''}
+                    </p>
+                  )}
+                  {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
+                  <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
+                </div>
+                {!viewOnly && (
+                <div className="ml-auto flex gap-2 shrink-0">
+                  <button onClick={() => setApproveModal({ entry: e, cashAccount: e.cashAccount || '', note: '' })}
+                    className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
+                    {e.type === 'reimbursement' ? 'Pay back' : 'Approve'}
+                  </button>
+                  <button onClick={() => reject(e)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                    Decline
+                  </button>
+                </div>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+        </>
+      )}
+    </div>
+  );
 
   /** Confirm every ticked expense or refund — each is then locked. */
   const confirmTicked = async () => {
@@ -1074,17 +1195,18 @@ export default function AdminKhata() {
           strip and Layout's top bar already carry. */}
       <div className="topbar-scroll flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
         {TABS
-          .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'sanctions' || isApprover))
+          .filter(([k]) => (k !== 'accounts' || isSuperAdmin))
           .map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
+              className={`inline-flex items-center px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
                 tab === key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
               {label}
-              {key === 'approvals' && pending.length > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs">{pending.length}</span>
-              )}
-              {key === 'sanctions' && sanctions.length > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 text-xs">{sanctions.length}</span>
+              {/* A RED count on every queue with something in it (2026-09-27) —
+                  the same signal as the sidebar and the top bar. */}
+              {tabCounts[key] > 0 && (
+                <span className="nav-count ml-1.5 grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
+                  {tabCounts[key] > 99 ? '99+' : tabCounts[key]}
+                </span>
               )}
             </button>
           ))}
@@ -1537,15 +1659,31 @@ export default function AdminKhata() {
         </div>
       )}
 
-      {/* ---------------- Advance approvals (SuperAdmin / CEO / MD) ----------------
-          The executives' queue. Sanctioning decides WHETHER somebody should have
-          the money; it moves none — an approved request drops into the accounts
-          team's queue below, where the account it comes out of is chosen. */}
-      {tab === 'sanctions' && isApprover && (
-        <div>
+      {/* ---------------- Reimburse (2026-09-27) ----------------
+          Claims to pay back: somebody spent past their advance and asked for it. */}
+      {tab === 'reimburse' && renderPayouts(reimburseRows, {
+        title: 'No claims to pay back',
+        hint: 'When somebody has spent past their advance and asks to be paid back, the claim waits here.',
+      })}
+
+      {/* ---------------- Advance ----------------
+          The executives' sanction queue first (SuperAdmin / CEO / MD).
+          Sanctioning decides WHETHER somebody should have the money; it moves
+          none — an approved request drops into the list below, where the
+          accounts team chooses the account it comes out of. */}
+      {tab === 'advance' && isApprover && (
+        <div className="mb-6">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+            Waiting on the CEO/MD
+            {sanctions.length > 0 && (
+              <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
+                {sanctions.length}
+              </span>
+            )}
+          </h3>
           <div className="bg-white shadow rounded-lg overflow-hidden">
             {sanctions.length === 0 ? (
-              <div className="px-4 py-10 text-center">
+              <div className="px-4 py-8 text-center">
                 <p className="text-gray-700 font-medium">No advance requests waiting</p>
                 <p className="text-gray-500 text-xs mt-1">
                   When somebody asks for an advance, it waits here for your decision before the accounts team sees it.
@@ -1605,84 +1743,36 @@ export default function AdminKhata() {
           </div>
         </div>
       )}
-
-      {/* ---------------- Approvals ---------------- */}
-      {tab === 'approvals' && (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
-          {pending.length === 0 ? (
-            <div className="px-4 py-10 text-center">
-              <p className="text-gray-700 font-medium">Nothing waiting</p>
-              <p className="text-gray-500 text-xs mt-1">
-                Approved advances to pay out, expenses to confirm, and payouts above an operator&apos;s limit
-                land here.
-              </p>
-            </div>
-          ) : (
-            <>
-            {!viewOnly && (
-              <SelectionBar sel={pendingPick} total={pending.length}>
-                <button type="button" disabled={saving}
-                  onClick={() => setApproveModal({
-                    entries: pendingPick.selected,
-                    cashAccount: accounts.filter((a) => a.canApprove).length === 1
-                      ? accounts.find((a) => a.canApprove)._id : '',
-                    note: '',
-                  })}
-                  className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                  Approve {pendingPick.selected.length}
-                </button>
-                <button type="button" onClick={declineTicked} disabled={saving}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
-                  Decline {pendingPick.selected.length}
-                </button>
-              </SelectionBar>
+      {tab === 'advance' && (
+        <div>
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+            Approved — to pay out
+            {advanceRows.length > 0 && (
+              <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
+                {advanceRows.length}
+              </span>
             )}
-            <ul className="divide-y divide-gray-100">
-              {pending.map((e) => (
-                <li key={e._id} className="px-4 py-3">
-                  <div className="flex flex-wrap justify-between items-start gap-3">
-                    {!viewOnly && <PickBox sel={pendingPick} entry={e} />}
-                    <div className="min-w-0 grow basis-64">
-                      <p className="font-medium text-gray-900">
-                        {e.employee?.name || 'Employee'} · {money(e.amount)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {e.khataName ? `${e.khataName} · ` : ''}
-                        {e.direction === 'to_employee' ? (e.type === 'reimbursement' ? 'Settlement to pay back' : 'Advance to pay out')
-                          : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
-                        {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'}
-                        {' · '}{fmtDate(e.date)}
-                      </p>
-                      {/* Sanctioned already: say so, or an operator has no way to
-                          tell an approved advance from an unvetted one. */}
-                      {e.execApprovedAt && (
-                        <p className="text-xs text-violet-700 mt-0.5">
-                          Approved by {e.execApprovedBy?.name || 'an executive'}
-                          {e.execApprovedBy?.role ? ` (${e.execApprovedBy.role})` : ''} on {fmtDate(e.execApprovedAt)}
-                          {e.execNote ? ` — ${e.execNote}` : ''}
-                        </p>
-                      )}
-                      {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
-                      <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
-                    </div>
-                    {!viewOnly && (
-                    <div className="ml-auto flex gap-2 shrink-0">
-                      <button onClick={() => setApproveModal({ entry: e, cashAccount: e.cashAccount || '', note: '' })}
-                        className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
-                        Approve
-                      </button>
-                      <button onClick={() => reject(e)}
-                        className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                        Decline
-                      </button>
-                    </div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            </>
-          )}
+          </h3>
+          {renderPayouts(advanceRows, {
+            title: 'No advances to pay out',
+            hint: isApprover
+              ? 'Once you approve a request above, it waits here for the accounts team to pay it.'
+              : 'An advance lands here once the CEO/MD has approved it. Choose the account and pay it out.',
+          })}
+        </div>
+      )}
+
+      {/* ---------------- Approval ----------------
+          Everything else waiting on the accounts team: cash handed back,
+          payouts over an operator's limit — and, below, the expenses and
+          refunds to confirm. */}
+      {tab === 'approval' && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-gray-700">To confirm or pay</h3>
+          {renderPayouts(otherRows, {
+            title: 'Nothing waiting',
+            hint: 'Cash handed back and payouts above an operator’s limit land here.',
+          })}
         </div>
       )}
 
@@ -1690,7 +1780,7 @@ export default function AdminKhata() {
           holding the record only made the wallet lie about what was left. So
           this is a review queue rather than an approval one: everything here has
           already counted, and the action is to reject what should not stand. */}
-      {tab === 'approvals' && (
+      {tab === 'approval' && (
         <div className="mt-6">
           <h3 className="text-sm font-semibold text-gray-700 mb-1">Expenses and refunds to confirm</h3>
           <p className="text-xs text-gray-500 mb-2">

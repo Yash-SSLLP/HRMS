@@ -58,7 +58,7 @@ import {
   FiAlertCircle, FiGitBranch, FiImage, FiLink, FiMessageSquare, FiPaperclip, FiRepeat,
   FiRotateCcw,
   FiSend, FiSlash, FiTag, FiThumbsDown, FiThumbsUp, FiTrash2, FiTrendingUp, FiUser,
-  FiUserCheck, FiUsers, FiX, FiXCircle,
+  FiUserCheck, FiUsers, FiX, FiXCircle, FiLock, FiArrowRight,
 } from 'react-icons/fi';
 
 import { confirmDialog, promptDialog } from '../dialogs';
@@ -70,6 +70,7 @@ import {
 } from './TaskChips';
 import ChildTaskList from './ChildTaskList';
 import ExtensionModal from './ExtensionModal';
+import NudgeBell from './NudgeBell';
 import DelegateModal from './DelegateModal';
 import TransferModal from './TransferModal';
 import { accentFor, accentStyle, priorityColor, tintStyle, useIsDark } from './taskColors';
@@ -543,9 +544,13 @@ export default function TaskDetailBody({
   const patch = useCallback(async (body, field) => {
     setSavingField(field);
     try {
-      await T.updateTask(task._id, body);
+      const res = await T.updateTask(task._id, body);
+      // Every change lands in the edit trail and reaches the people on it
+      // (2026-09-27) — said once, so nobody wonders whether they were told.
+      const n = (res?.changes || []).length;
+      if (n) toast.success(`Saved — ${n} change${n === 1 ? '' : 's'} added to the edit history. They have been told.`);
       await refresh();
-      return true;
+      return res || {};
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Could not save that change.');
       return false;
@@ -581,9 +586,12 @@ export default function TaskDetailBody({
     // sent when they actually changed — a no-op PATCH of the same figure still
     // writes an EDITED row into everybody's feed.
     if (!isRequest && Number(draft.points) !== Number(task.points)) body.points = Number(draft.points);
-    if (await patch(body, 'details')) {
+    const res = await patch(body, 'details');
+    if (res) {
       setEditing(false);
-      toast.success('Saved.');
+      // patch() has already said what changed — a second "Saved." stacked a
+      // toast on top of it. Speak only when nothing did.
+      if (!(res.changes || []).length) toast.info('Nothing to save — it was already like that.');
     }
   }, [draft, task, isRequest, patch]);
 
@@ -640,10 +648,12 @@ export default function TaskDetailBody({
     }
     if (can.canTransfer) add('transfer', 'Transfer', FiUsers, 'ghost', () => setTransferring(true), 'It went to the wrong person');
     if (can.canClaim) add('claim', 'Claim', FiUserCheck, 'go', claim, 'Nobody is named on this piece');
+    // A routine (daily) task's one move (2026-09-27).
+    if (can.canDone) add('done', 'Mark done', FiCheckCircle, 'go', () => ask(answerFor(STATUS.COMPLETED)), 'Today’s routine is finished');
 
     const covered = new Set();
     if (can.canSubmit) covered.add(STATUS.SUBMITTED);
-    if (can.canApprove) covered.add(STATUS.COMPLETED);
+    if (can.canApprove || can.canDone) covered.add(STATUS.COMPLETED);
     if (can.canReject || can.canAccept) covered.add(STATUS.IN_PROGRESS);
     for (const move of can.transitions || []) {
       if (covered.has(move.to)) continue;
@@ -715,6 +725,19 @@ export default function TaskDetailBody({
     ),
     [task]
   );
+
+  /**
+   * THE EDIT TRAIL (2026-09-27) — every change the setter made before the task
+   * was taken on, newest first, each field before → after (the server words
+   * them, models/TaskUpdate.changes). The user's "a trail of what edits were
+   * done".
+   */
+  const edits = useMemo(
+    () => updates.filter((u) => u.kind === 'EDITED' && (u.changes || []).length > 0),
+    [updates]
+  );
+  // The bell's gate, restarted by a press here before the refetch lands.
+  const [nudgedAt, setNudgedAt] = useState(null);
 
   const openFile = useCallback(async (fileId) => {
     try {
@@ -879,6 +902,18 @@ export default function TaskDetailBody({
               {typeof task.progress === 'number' && task.progress > 0 && (
                 <ProgressBar task={task} className="min-w-[7rem]" />
               )}
+              {/* The reminder bell (2026-09-27): the setter chasing the work, or
+                  the doer chasing the review — whichever the server says. */}
+              {!viewOnly && (
+                <span className="ml-auto">
+                  <NudgeBell
+                    task={{ ...task, can }}
+                    override={nudgedAt}
+                    labelled
+                    onNudged={(_id, at) => { setNudgedAt(at); refresh(); }}
+                  />
+                </span>
+              )}
             </div>
           </div>
         </section>
@@ -902,8 +937,61 @@ export default function TaskDetailBody({
             {can.canAccept && (
               <p className="mt-2 text-xs text-gray-500">
                 {task.createdByName || 'Somebody'} is waiting to hear. Accepting starts the work.
+                {edits.length > 0 && (
+                  <strong className="text-gray-700">
+                    {' '}It was edited {edits.length === 1 ? 'once' : `${edits.length} times`} after it was sent — see the edit history.
+                  </strong>
+                )}
               </p>
             )}
+            {can.canEdit && (
+              <p className="mt-2 text-xs text-gray-500">
+                Not accepted yet — you can still edit it. Every change is kept as a trail, and they are told.
+              </p>
+            )}
+            {/* Edit went away the moment it was taken on — say why, where it was. */}
+            {!can.canEdit && can.editLocked && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-gray-500">
+                <FiLock size={12} className="mt-0.5 shrink-0 text-gray-400" /> {can.editLocked}
+              </p>
+            )}
+          </section>
+        )}
+
+        {/* ── Edit history (2026-09-27) ───────────────────────────── */}
+        {edits.length > 0 && (
+          <section className={`${CARD} px-4 py-3 sm:px-5`}>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                <FiEdit2 size={14} className="text-gray-400" /> Edit history
+              </h2>
+              <span className="text-xs text-gray-400">{edits.length} edit{edits.length === 1 ? '' : 's'}</span>
+            </div>
+            <ol className="space-y-3">
+              {edits.map((u) => (
+                <li key={u._id} className="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+                  <p className="text-xs text-gray-500">
+                    <span className="font-semibold text-gray-800">{u.byName || 'Somebody'}</span>
+                    {' · '}
+                    {new Date(u.createdAt).toLocaleString('en-IN', {
+                      day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+                    })}
+                  </p>
+                  <ul className="mt-1.5 space-y-1.5">
+                    {(u.changes || []).map((c, i) => (
+                      <li key={`${u._id}-${c.field}-${i}`} className="rounded-xl bg-gray-50 px-3 py-2">
+                        <p className="text-[10.5px] font-bold uppercase tracking-wider text-gray-400">{c.label}</p>
+                        <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+                          <span className="min-w-0 break-words text-gray-400 line-through">{c.before || '—'}</span>
+                          <FiArrowRight size={12} className="shrink-0 self-center text-gray-400" />
+                          <span className="min-w-0 break-words font-medium text-gray-900">{c.after || '—'}</span>
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
           </section>
         )}
 

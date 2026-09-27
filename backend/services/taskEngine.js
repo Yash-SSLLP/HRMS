@@ -1149,6 +1149,9 @@ async function decideExtension({ taskId, requestId, user, approve, note = '' }) 
     task.dueDate = req.toDate;
     task.extensionCount = (task.extensionCount || 0) + 1;
     task.firedReminders = [];
+    // …and the "it is overdue now" notice (2026-09-27): missing the NEW date is
+    // news again.
+    task.overdueNotifiedAt = undefined;
   }
   task.updateCount = (task.updateCount || 0) + 1;
   await task.save();

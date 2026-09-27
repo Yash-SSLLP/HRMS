@@ -119,6 +119,15 @@ export const declineTask = (id, reason) =>
   api.post(`/tasks/${id}/decline`, { reason }).then((r) => r.data);
 
 /**
+ * THE REMINDER BELL (2026-09-27). Whoever set it chases the people still doing
+ * it; somebody who handed it in chases the reviewer — the server works out who
+ * (`can.nudgeTo`). Once per task per 30 minutes: a second press inside that is
+ * a 429 whose body carries `nextAt`.
+ */
+export const nudgeTask = (id, note) =>
+  api.post(`/tasks/${id}/nudge`, note ? { note } : {}).then((r) => r.data);
+
+/**
  * Pass your own piece to somebody else.
  *
  * Not the same as reassigning (`updateTask`): this is the DOER handing their
@@ -278,8 +287,21 @@ export const deleteTemplate = (id) => api.delete(`/tasks/templates/${id}`).then(
 
 // ===== Repeating schedules =====
 
-export const listRecurring = () => api.get('/tasks/recurring').then((r) => r.data);
-export const updateRecurring = (id, body) => api.patch(`/tasks/recurring/${id}`, body).then((r) => r.data);
+/**
+ * THE RECURRING TAB (2026-09-27). A schedule is set up on its own; the server
+ * raises each occurrence into the doer's Tasks list when it is due to appear
+ * (9 am on its day, a monthly one two days early).
+ */
+export const listRecurring = (params = {}) => api.get('/tasks/recurring', { params }).then((r) => r.data);
+export const getRecurring = (id) => api.get(`/tasks/recurring/${id}`).then((r) => r.data);
+export const createRecurring = (body, upload) => {
+  const { data } = toFormData(body, upload);
+  return api.post('/tasks/recurring', data).then((r) => r.data);
+};
+export const updateRecurring = (id, body, upload) => {
+  const { data } = toFormData(body, upload);
+  return api.patch(`/tasks/recurring/${id}`, data).then((r) => r.data);
+};
 export const deleteRecurring = (id) => api.delete(`/tasks/recurring/${id}`).then((r) => r.data);
 
 /* PATCH /tasks/templates/:id and POST /tasks/recurring/:id/run answer on the

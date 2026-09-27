@@ -1402,22 +1402,11 @@ const recordMyExpense = asyncHandler(async (req, res) => {
 
   const wallet = await ledger.getOrCreateWallet(req.user._id);
 
-  await notifyMany(await khataApproverIds(), {
-    type: 'general',
-    audience: 'all',
-    title: 'Expense recorded against an advance',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-      + ` spent ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}. `
-      + 'It has come off their advance; reject it if it should not stand.',
-    link: '/admin/khata',
-  });
-
-  // A collaborator filing into somebody else's book. The money came out of the
-  // POSTER's wallet — the owner's balance has not moved an inch — but the book's
-  // total has, and that total is what the owner is answerable for.
-  await notifyBookOwner(khata, req.user, 'A new entry on your book',
-    `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-    + ` recorded ₹${amount.toLocaleString('en-IN')} on "${khata.name}" — ${purpose}.`);
+  // NO NOTIFICATION (user rule, 2026-09-27): *"for cashbook, notifications
+  // don't need to be sent for every expense they do — send only for
+  // reimbursement and advance requests"*. Expenses are routine and many; they
+  // wait in the Approval tab under its red count instead (both clients), and
+  // the collaborator's book owner sees the entry on the book itself.
 
   res.status(201).json({
     entry: publicEntry(entry, req.user),
@@ -1488,19 +1477,8 @@ const recordMyRefund = asyncHandler(async (req, res) => {
 
   const wallet = await ledger.getOrCreateWallet(req.user._id);
 
-  await notifyMany(await khataApproverIds(), {
-    type: 'general',
-    audience: 'all',
-    title: 'Refund recorded against a book',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-      + ` put ₹${amount.toLocaleString('en-IN')} back on "${khata.name}" — ${purpose}. `
-      + 'It has gone back onto their advance; reject it if it should not stand.',
-    link: '/admin/khata',
-  });
-
-  await notifyBookOwner(khata, req.user, 'Money back on your book',
-    `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-    + ` recorded a ₹${amount.toLocaleString('en-IN')} refund on "${khata.name}" — ${purpose}.`);
+  // No notification — the same rule as an expense (2026-09-27): only advance
+  // and reimbursement requests notify. It waits in the Approval tab.
 
   res.status(201).json({
     entry: publicEntry(entry, req.user),
@@ -1617,16 +1595,9 @@ const updateMyExpense = asyncHandler(async (req, res) => {
     entry, changes, req.user, { asEmployee: true }
   );
 
-  if (changed) {
-    await notifyMany(await khataApproverIds(), {
-      type: 'general',
-      audience: 'all',
-      title: 'Expense corrected before confirmation',
-      body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
-        + ` changed ${saved.code || 'an expense'} — ${summary}. It is still waiting to be confirmed.`,
-      link: '/admin/khata',
-    });
-  }
+  // No notification (2026-09-27): an expense corrected before it is confirmed
+  // is still just an expense — only advance and reimbursement requests notify.
+  // The row in the Approval tab carries "Edited: …" for whoever confirms it.
 
   res.json({
     entry: publicEntry(saved),
@@ -1759,13 +1730,8 @@ const declareSettlement = asyncHandler(async (req, res) => {
 
   await attachReceipt(entry, req.file);
 
-  await notifyMany(await khataApproverIds(), {
-    type: 'general',
-    audience: 'all',
-    title: 'Cash returned by employee',
-    body: `${req.user.firstName} ${req.user.lastName || ''}`.trim() + ` says they returned ₹${amount.toLocaleString('en-IN')} — confirm to update their wallet`,
-    link: '/admin/khata',
-  });
+  // No notification (2026-09-27, user rule: only advance and reimbursement
+  // requests notify). It waits in the Approval tab under its red count.
 
   res.status(201).json({ entry: publicEntry(entry), message: 'Sent for confirmation' });
 });
@@ -2964,20 +2930,19 @@ const approveEntry = asyncHandler(async (req, res) => {
     note: req.body.note,
   });
 
-  await notify({
-    recipient: saved.employee,
-    type: 'general',
-    audience: 'employee',
-    // `type` is the company's view of the cash ('in'/'out'); the person's view
-    // of the event is `movement`. Reading `type` here was always false, so a
-    // confirmed expense was announced with the generic wording.
-    title: saved.movement === 'expense' ? 'Expense confirmed' : 'Cashbook entry approved',
-    body: saved.movement === 'expense'
-      ? `₹${saved.amount.toLocaleString('en-IN')} on "${khata?.name || 'your book'}" was confirmed. `
-        + `You have ₹${Math.abs(wallet.balance).toLocaleString('en-IN')} in hand.`
-      : `₹${saved.amount.toLocaleString('en-IN')} has been posted to your cashbook (${saved.code || 'entry'}).`,
-    link: '/employee/khata',
-  });
+  // An EXPENSE or refund confirmed says nothing (2026-09-27 — only advance and
+  // reimbursement requests notify); money actually paid out still does.
+  if (!ledger.BOOK_MOVEMENTS.includes(saved.movement)) {
+    await notify({
+      recipient: saved.employee,
+      type: 'general',
+      audience: 'employee',
+      title: saved.movement === 'advance' ? 'Advance paid'
+        : saved.movement === 'reimbursement' ? 'Reimbursement paid' : 'Cashbook entry approved',
+      body: `₹${saved.amount.toLocaleString('en-IN')} has been posted to your cashbook (${saved.code || 'entry'}).`,
+      link: '/employee/khata',
+    });
+  }
 
   res.json({
     entry: publicEntry(saved),
@@ -3108,16 +3073,9 @@ const confirmEntry = asyncHandler(async (req, res) => {
 
   const saved = await ledger.confirmExpense(entry, req.user, req.body.note);
 
-  await notify({
-    recipient: saved.employee,
-    type: 'general',
-    audience: 'employee',
-    title: 'Expense confirmed',
-    body: `₹${saved.amount.toLocaleString('en-IN')} (${saved.code || 'your expense'}) has been checked and accepted`
-      + `${req.body.note ? `: ${String(req.body.note).slice(0, 200)}` : '.'}`
-      + ' It can no longer be edited.',
-    link: '/employee/khata',
-  });
+  // No notification (2026-09-27): confirming is the routine end of every
+  // expense, and the user's rule is that only advance and reimbursement
+  // requests notify. The row shows Confirmed in the employee's cashbook.
 
   res.json({ entry: publicEntry(saved), message: 'Confirmed. It is now locked.' });
 });
@@ -3316,11 +3274,8 @@ const bulkDecide = asyncHandler(async (req, res) => {
   if (action === 'confirm') {
     verb = 'confirmed';
     result = await decideEach(req, res, (entry) => ledger.confirmExpense(entry, req.user, note));
-    await notifyEachEmployee(result.done, (mine, total) => ({
-      title: mine.length === 1 ? 'Expense confirmed' : 'Expenses confirmed',
-      body: `${howMany(mine, total)} ${mine.length === 1 ? 'has' : 'have'} been checked and accepted`
-        + `${note ? `: ${note}` : '.'} ${mine.length === 1 ? 'It' : 'They'} can no longer be edited.`,
-    }));
+    // No notification — see confirmEntry (2026-09-27 rule: only advance and
+    // reimbursement requests notify).
   } else if (action === 'reverse') {
     verb = 'rejected';
     result = await decideEach(req, res, async (entry, rowRes) => {

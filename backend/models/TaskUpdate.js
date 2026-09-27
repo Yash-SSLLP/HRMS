@@ -73,6 +73,24 @@ const taskUpdateSchema = new mongoose.Schema(
     // task is not theirs.
     mentions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
 
+    /**
+     * WHAT AN EDIT CHANGED, field by field (2026-09-27) — the user's *"a trail
+     * of what edits were done"*. On an EDITED row only: `field` is the model's
+     * name, `label` the words both clients show, and `before` / `after` are the
+     * values already written out for reading (a deadline as "28 Sep, 6:00 PM",
+     * a list of people as their names), so a phone and a browser print the same
+     * sentence and neither has to know how to format a reminder rule.
+     */
+    changes: {
+      type: [new mongoose.Schema({
+        field: { type: String, trim: true },
+        label: { type: String, trim: true },
+        before: { type: String, trim: true, maxlength: 600 },
+        after: { type: String, trim: true, maxlength: 600 },
+      }, { _id: false })],
+      default: undefined,
+    },
+
     // Set by the system rather than a person — a reminder that fired, an
     // occurrence that was minted. Rendered quieter, and never notified on.
     system: { type: Boolean, default: false },

@@ -601,8 +601,209 @@ async function testOnBehalf() {
   ok('the person it was set for does', doc.audience().includes(String(C)), true);
 }
 
+// ===== 2026-09-27: edit lock + trail, the bell, routine dailies, recurring shapes =====
+
+function testEditLock() {
+  console.log('\nEditing — only until it is taken on (2026-09-27)');
+  const setter = { _id: C, role: 'Employee', permissions: [] };
+  const base = { createdBy: C, status: 'PENDING', assignees: [{ user: B, status: 'PENDING', acceptance: 'AWAITING', name: 'Bina' }] };
+  ok('unanswered: the terms are open', c.termsOpen(base), true);
+  ok('…and the setter may edit', access.capabilitiesFor(setter, base).canEdit, true);
+  ok('…with no lock reason', access.capabilitiesFor(setter, base).editLocked, null);
+
+  const accepted = { ...base, status: 'IN_PROGRESS', assignees: [{ user: B, status: 'IN_PROGRESS', acceptance: 'ACCEPTED', name: 'Bina' }] };
+  ok('accepted: locked', c.termsOpen(accepted), false);
+  ok('…so no Edit', access.capabilitiesFor(setter, accepted).canEdit, false);
+  ok('…and the reason names who took it', /Bina has accepted/.test(access.capabilitiesFor(setter, accepted).editLocked), true);
+
+  // Accepted but not started is impossible now (accepting starts it), but an
+  // old row can say so — still locked.
+  const acceptedPending = { ...base, assignees: [{ user: B, status: 'PENDING', acceptance: 'ACCEPTED' }] };
+  ok('accepted-but-pending (legacy): locked', c.termsOpen(acceptedPending), false);
+
+  const refused = { ...base, assignees: [{ user: B, status: 'PENDING', acceptance: 'REJECTED' }] };
+  ok('refused: open — the setter has to fix it', c.termsOpen(refused), true);
+
+  const mixed = { ...base, assignees: [
+    { user: B, status: 'PENDING', acceptance: 'AWAITING' },
+    { user: A, status: 'IN_PROGRESS', acceptance: 'ACCEPTED' },
+  ] };
+  ok('one of two took it: locked for both', c.termsOpen({ ...mixed, status: 'IN_PROGRESS' }), false);
+  ok('a legacy ASSIGNED row is still open', c.termsOpen({ ...base, status: 'ASSIGNED', assignees: [{ user: B, status: 'ASSIGNED' }] }), true);
+  ok('a doer never edits', access.capabilitiesFor({ _id: B, role: 'Employee', permissions: [] }, base).canEdit, false);
+
+  let threw = null;
+  try { access.assertCanEdit(setter, accepted); } catch (e) { threw = e.status; }
+  ok('the server refuses a locked edit with 409', threw, 409);
+  threw = null;
+  try { access.assertCanEdit({ _id: A, role: 'Employee', permissions: [] }, base); } catch (e) { threw = e.status; }
+  ok('…and a stranger with 403', threw, 403);
+}
+
+function testNudge() {
+  console.log('\nThe reminder bell (2026-09-27)');
+  const setter = { _id: C, role: 'Employee', permissions: [] };
+  const doer = { _id: B, role: 'Employee', permissions: [] };
+  const pending = { createdBy: C, status: 'PENDING', assignees: [{ user: B, status: 'PENDING', acceptance: 'AWAITING' }] };
+  ok('not accepted: the setter can ring the doer', access.nudgeTargets(setter, pending), { kind: 'DOER', to: [String(B)] });
+  ok('…the doer cannot ring anyone', access.nudgeTargets(doer, pending), null);
+  const going = { ...pending, status: 'IN_PROGRESS', assignees: [{ user: B, status: 'IN_PROGRESS', acceptance: 'ACCEPTED' }] };
+  ok('in progress: the setter can ring', access.capabilitiesFor(setter, going).nudgeTo, 'doers');
+  const late = { ...going, dueDate: new Date(Date.now() - 3600e3) };
+  ok('overdue: still can', access.capabilitiesFor(setter, late).canNudge, true);
+  const review = { createdBy: C, status: 'SUBMITTED', assignees: [{ user: B, status: 'SUBMITTED', acceptance: 'ACCEPTED' }] };
+  ok('in review: the doer rings the approver', access.nudgeTargets(doer, review), { kind: 'REVIEW', to: [String(C)] });
+  ok('…the setter has nobody to ring', access.nudgeTargets(setter, review), null);
+  const delegated = { ...review, approver: A };
+  ok('after a delegation it rings the delegator', access.nudgeTargets(doer, delegated).to, [String(A)]);
+  ok('done: no bell', access.nudgeTargets(setter, { ...going, status: 'COMPLETED' }), null);
+  const refused = { ...pending, assignees: [{ user: B, status: 'PENDING', acceptance: 'REJECTED' }] };
+  ok('nobody rings a person who refused', access.nudgeTargets(setter, refused), null);
+  ok('own task: no bell', access.nudgeTargets(setter, { createdBy: C, status: 'PENDING', assignees: [{ user: C, status: 'PENDING' }] }), null);
+
+  const now = new Date('2026-09-27T10:00:00Z');
+  ok('never rung: ready now', c.nudgeReadyAt({}, now), null);
+  ok('rung 10 min ago: ready in 20',
+    c.nudgeReadyAt({ lastNudgeAt: new Date(now - 10 * 60e3) }, now).toISOString(), '2026-09-27T10:20:00.000Z');
+  ok('rung 31 min ago: ready now', c.nudgeReadyAt({ lastNudgeAt: new Date(now - 31 * 60e3) }, now), null);
+  // Per direction: the setter's reminder does not block the doer's review ping.
+  const rang = { lastNudgeAt: new Date(now - 5 * 60e3), nudgeAt: { DOER: new Date(now - 5 * 60e3) } };
+  ok('the doer-chase gate is shut…', Boolean(c.nudgeReadyAt(rang, now, 'DOER')), true);
+  ok('…the review-chase gate is open', c.nudgeReadyAt(rang, now, 'REVIEW'), null);
+}
+
+function testRoutine() {
+  console.log('\nA daily occurrence is routine — only Done (2026-09-27)');
+  const doer = { _id: B, role: 'Employee', permissions: [] };
+  const setter = { _id: C, role: 'Employee', permissions: [] };
+  const task = {
+    routine: true, createdBy: C, status: 'IN_PROGRESS', requiresApproval: false, dueDate: new Date(Date.now() + 3600e3),
+    assignees: [{ user: B, status: 'IN_PROGRESS', acceptance: 'ACCEPTED' }], kind: 'TASK',
+  };
+  const can = access.capabilitiesFor(doer, task);
+  ok('the doer may mark it done', can.canDone, true);
+  ok('…and that is the only move', can.transitions.map((t) => t.to), ['COMPLETED']);
+  ok('no accept / decline / delegate / split / review / more time',
+    [can.canAccept, can.canDecline, can.canDelegate, can.canSplit, can.canSubmit, can.canRequestExtension, can.canTransfer],
+    [false, false, false, false, false, false, false]);
+  const boss = access.capabilitiesFor(setter, task);
+  ok('the setter may still call it off', boss.transitions.map((t) => t.to).includes('CANCELLED'), true);
+  ok('…and ring the doer', boss.canNudge, true);
+  ok('daily is routine; weekly is not', [c.isRoutineFrequency('DAILY'), c.isRoutineFrequency('WEEKLY')], [true, false]);
+}
+
+function testRecurrenceShapes() {
+  console.log('\nRecurring shapes, in IST (2026-09-27)');
+  const s = (o) => ({ time: '18:00', startDate: new Date('2026-09-01T00:00:00+05:30'), ...o });
+  ok('due time is IST 6 pm, whatever the server zone', r.atIST('2026-09-27', '18:00').toISOString(), '2026-09-27T12:30:00.000Z');
+  ok('the key of 11:59 pm IST is still that day', r.occurrenceKeyFor(new Date('2026-09-27T18:29:00Z')), '2026-09-27');
+  ok('…and 12:01 am IST is the next', r.occurrenceKeyFor(new Date('2026-09-27T18:31:00Z')), '2026-09-28');
+
+  const alt = s({ frequency: 'DAILY', interval: 2 });
+  ok('alternate days: the start', r.fallsOn(alt, '2026-09-01'), true);
+  ok('…not the day after', r.fallsOn(alt, '2026-09-02'), false);
+  ok('…the day after that', r.fallsOn(alt, '2026-09-03'), true);
+  ok('every 3 days: 1st, 4th, 7th', ['2026-09-04', '2026-09-05', '2026-09-07'].map((k) => r.fallsOn(s({ frequency: 'DAILY', interval: 3 }), k)), [true, false, true]);
+  ok('nothing before the start', r.fallsOn(alt, '2026-08-30'), false);
+
+  const firstMon = s({ frequency: 'MONTHLY', monthlyMode: 'WEEKDAY', nthWeek: 1, weekday: 1 });
+  ok('first Monday of Oct 2026 is the 5th', r.fallsOn(firstMon, '2026-10-05'), true);
+  ok('…the 12th is not', r.fallsOn(firstMon, '2026-10-12'), false);
+  const lastFri = s({ frequency: 'MONTHLY', monthlyMode: 'WEEKDAY', nthWeek: -1, weekday: 5 });
+  ok('last Friday of Oct 2026 is the 30th', r.fallsOn(lastFri, '2026-10-30'), true);
+  ok('…the 23rd is not', r.fallsOn(lastFri, '2026-10-23'), false);
+  const thirdWed = s({ frequency: 'MONTHLY', monthlyMode: 'WEEKDAY', nthWeek: 3, weekday: 3 });
+  ok('third Wednesday of Sep 2026 is the 16th', r.fallsOn(thirdWed, '2026-09-16'), true);
+
+  const monthly15 = s({ frequency: 'MONTHLY', monthDay: 15 });
+  ok('a monthly task appears 2 days early, at 9 am',
+    r.appearAt({ ...monthly15, leadDays: 2 }, '2026-10-15').toISOString(), '2026-10-13T03:30:00.000Z');
+  ok('…a daily one at 9 am on its day', r.appearAt(s({ frequency: 'DAILY' }), '2026-10-15').toISOString(), '2026-10-15T03:30:00.000Z');
+  ok('…a daily one due 9:30 am an hour before',
+    r.appearAt(s({ frequency: 'DAILY', time: '09:30' }), '2026-10-15').toISOString(), '2026-10-15T03:00:00.000Z');
+  ok('default lead: monthly 2, daily 0', [r.leadDaysOf({ frequency: 'MONTHLY' }), r.leadDaysOf({ frequency: 'DAILY' })], [2, 0]);
+
+  const created7pm = new Date('2026-09-27T13:30:00Z'); // 7 pm IST
+  const daily6 = s({ frequency: 'DAILY', mintFrom: created7pm });
+  ok('set up at 7 pm for 6 pm: starts tomorrow, not overdue',
+    r.nextOccurrence(daily6, created7pm).key, '2026-09-28');
+  ok('the next first Monday after 5 Oct is 2 Nov', r.nextOccurrence(firstMon, new Date('2026-10-06T00:00:00+05:30')).key, '2026-11-02');
+
+  ok('labels: alternate days', c.patternLabel(alt), 'Alternate days · 6:00 PM');
+  ok('labels: first Monday', c.patternLabel(firstMon), 'Monthly on the first Monday · 6:00 PM');
+  ok('labels: last Friday', c.patternLabel(lastFri), 'Monthly on the last Friday · 6:00 PM');
+  ok('labels: weekly', c.patternLabel(s({ frequency: 'WEEKLY', weekdays: [3, 1] })), 'Weekly on Mon, Wed · 6:00 PM');
+  ok('labels: the 15th', c.patternLabel(monthly15), 'Monthly on the 15th · 6:00 PM');
+}
+
+function testRepeatReminder() {
+  console.log('\n"Every 2 hours until done" (2026-09-27)');
+  const rule = { channel: 'APP', amount: 2, unit: 'HOURS', when: 'EVERY' };
+  const anchor = new Date('2026-09-27T03:30:00Z').getTime(); // 9 am IST
+  ok('nothing before the first beat', c.repeatSlot(rule, anchor, anchor + 60 * 60e3), null);
+  ok('beat 1 at 11 am', c.repeatSlot(rule, anchor, anchor + 2 * 3600e3 + 5 * 60e3).index, 1);
+  ok('beat 3 at 3 pm', new Date(c.repeatSlot(rule, anchor, anchor + 6.2 * 3600e3).at).toISOString(), '2026-09-27T09:30:00.000Z');
+  ok('never faster than 30 min', c.repeatEveryMinutes({ amount: 5, unit: 'MINUTES', when: 'EVERY' }), 30);
+  ok('its label', c.reminderLabel(rule), 'Every 2 hours until done');
+  const worker = require('../services/taskReminderWorker');
+  ok('3 pm IST speaks', worker.inActiveHours(new Date('2026-09-27T09:30:00Z').getTime()), true);
+  ok('11 pm IST is quiet', worker.inActiveHours(new Date('2026-09-27T17:30:00Z').getTime()), false);
+  const { cleanReminders } = require('../controllers/taskController');
+  const cleaned = cleanReminders([rule, { ...rule, amount: 3 }, { channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' }]);
+  ok('only one repeating rule is kept', cleaned.filter((x) => x.when === 'EVERY').length, 1);
+  ok('…alongside the others', cleaned.length, 2);
+
+  // ===== The SHAPES (2026-09-27: "these options should be for sending
+  // notifications too" — hourly on the clock, daily, weekly, monthly) =====
+  const IST = (s) => new Date(`${s}+05:30`).getTime();
+  const iso = (b) => (b ? new Date(b.at).toISOString() : null);
+  const t9 = IST('2026-09-27T09:00:00'); // a Sunday, when the task appeared
+  ok('hourly: nothing within 30 min of it appearing', iso(worker.latestBeat(rule, t9, IST('2026-09-27T09:40:00'))), null);
+  ok('hourly: on the clock — 11 am', iso(worker.latestBeat(rule, t9, IST('2026-09-27T11:05:00'))), '2026-09-27T05:30:00.000Z');
+  const win = { ...rule, pattern: 'HOURLY', amount: 3, from: '10:00', to: '18:00' };
+  ok('hourly in a 10–6 window, every 3 hours: 4 pm', iso(worker.latestBeat(win, t9, IST('2026-09-27T17:00:00'))), '2026-09-27T10:30:00.000Z');
+  ok('…its label', c.reminderLabel(win), 'Every 3 hours, 10:00 AM – 6:00 PM, until done');
+  ok('hourly stops at the end of the due day', new Date(worker.beatsStopAt(rule, IST('2026-09-27T18:00:00'))).toISOString(), '2026-09-27T15:30:00.000Z');
+
+  const alt = { channel: 'APP', when: 'EVERY', pattern: 'DAILY', amount: 2, unit: 'DAYS', at: '10:00' };
+  ok('alternate days: the day it appeared', iso(worker.latestBeat(alt, t9, IST('2026-09-27T10:05:00'))), '2026-09-27T04:30:00.000Z');
+  ok('…not the day between', worker.latestBeat(alt, t9, IST('2026-09-28T10:05:00')).at < IST('2026-09-28T00:00:00'), true);
+  ok('…the day after that', iso(worker.latestBeat(alt, t9, IST('2026-09-29T10:05:00'))), '2026-09-29T04:30:00.000Z');
+  ok('…its label', c.reminderLabel(alt), 'Alternate days at 10:00 AM until done');
+  ok('a day-shaped one goes on a week past the deadline',
+    new Date(worker.beatsStopAt(alt, IST('2026-09-27T18:00:00'))).toISOString(), '2026-10-04T12:30:00.000Z');
+
+  const monThu = { channel: 'APP', when: 'EVERY', pattern: 'WEEKLY', weekdays: [4, 1], at: '09:30' };
+  ok('weekly Mon + Thu: Monday 9:30', iso(worker.latestBeat(monThu, t9, IST('2026-09-28T09:40:00'))), '2026-09-28T04:00:00.000Z');
+  ok('…nothing new on Tuesday', worker.latestBeat(monThu, t9, IST('2026-09-29T09:40:00')).at < IST('2026-09-29T00:00:00'), true);
+  ok('…its label', c.reminderLabel(monThu), 'Every Mon, Thu at 9:30 AM until done');
+
+  const firstMon = { channel: 'APP', when: 'EVERY', pattern: 'MONTHLY', monthlyMode: 'WEEKDAY', nthWeek: 1, weekday: 1, at: '11:00' };
+  ok('monthly, the first Monday: 5 Oct', iso(worker.latestBeat(firstMon, t9, IST('2026-10-05T11:10:00'))), '2026-10-05T05:30:00.000Z');
+  ok('…not the second Monday', worker.latestBeat(firstMon, t9, IST('2026-10-12T11:10:00')), null);
+  ok('…its label', c.reminderLabel(firstMon), 'Monthly on the first Monday at 11:00 AM until done');
+
+  const shaped = cleanReminders([
+    { channel: 'APP', when: 'EVERY', pattern: 'WEEKLY', weekdays: [5, 1, 1, 9], at: '9:05' },
+  ])[0];
+  ok('weekly cleaned: days deduped, sorted, in range; time padded',
+    JSON.stringify([shaped.weekdays, shaped.at]), JSON.stringify([[1, 5], '09:05']));
+  ok('a weekly one with no day ticked is dropped',
+    cleanReminders([{ channel: 'APP', when: 'EVERY', pattern: 'WEEKLY', weekdays: [] }]).length, 0);
+  ok('hourly: never slower than every 12 hours',
+    cleanReminders([{ channel: 'APP', when: 'EVERY', pattern: 'HOURLY', amount: 30, unit: 'HOURS' }])[0].amount, 12);
+  ok('an older "every 1 day" reads as daily at 10 am',
+    c.reminderLabel(cleanReminders([{ channel: 'APP', when: 'EVERY', amount: 1, unit: 'DAYS' }])[0]),
+    'Every day at 10:00 AM until done');
+}
+
 async function run() {
   console.log('Task module — rules');
+  testEditLock();
+  testNudge();
+  testRoutine();
+  testRecurrenceShapes();
+  testRepeatReminder();
   testVocabulary();
   testLifecycle();
   testReminders();

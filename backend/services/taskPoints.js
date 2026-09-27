@@ -59,10 +59,15 @@ async function taskSettings() {
         }))
         : [],
       dailyDigestAt: s?.tasks?.dailyDigestAt || '',
+      // Default ON: a document written before the field existed has none, and
+      // the user's rule for now is that a swipe needs a remark.
+      swipeRemarkRequired: s?.tasks?.swipeRemarkRequired !== false,
     };
   } catch (err) {
     console.error('taskSettings failed, using defaults:', err.message);
-    return { defaultPoints: 100, pointsToPool: false, defaultReminders: [], dailyDigestAt: '' };
+    return {
+      defaultPoints: 100, pointsToPool: false, defaultReminders: [], dailyDigestAt: '', swipeRemarkRequired: true,
+    };
   }
 }
 

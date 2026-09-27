@@ -101,7 +101,12 @@ router.delete('/templates/:id', tpl.deleteTemplate);
    ============================================================ */
 
 router.get('/recurring', tpl.listRecurring);
-router.patch('/recurring/:id', tpl.updateRecurring);
+// The Recurring tab (2026-09-27): a schedule is set up on its own — nothing is
+// raised until an occurrence is due to appear. Multipart, for the voice note
+// every occurrence carries.
+router.post('/recurring', taskUpload.any(), tpl.createRecurring);
+router.get('/recurring/:id', tpl.getRecurring);
+router.patch('/recurring/:id', taskUpload.any(), tpl.updateRecurring);
 router.delete('/recurring/:id', tpl.deleteRecurring);
 router.post('/recurring/:id/run', tpl.runRecurringNow);
 
@@ -148,6 +153,13 @@ router.post('/:id/status', taskUpload.any(), task.changeStatus);
 router.post('/:id/accept', task.acceptTask);
 router.post('/:id/decline', task.declineTask);
 router.post('/:id/delegate', task.delegateTask);
+
+/* --- The reminder bell (2026-09-27) ------------------------------------
+   Whoever set it chases the people still doing it (not accepted / in progress
+   / overdue); somebody who handed it in chases the reviewer. Once per task per
+   30 minutes — the scheduled reminders are not held to that. Gated by
+   identity inside the handler (taskAccess.nudgeTargets). */
+router.post('/:id/nudge', task.nudgeTask);
 
 /* --- Handing it in, and the two answers to that ------------------------
    Added 2026-09-22. All three are the ONE status endpoint underneath; they

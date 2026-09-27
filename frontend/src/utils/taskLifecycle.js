@@ -203,18 +203,10 @@ export const FREQUENCY_LABELS = {
 export const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-/** "Weekly · every Fri", for a list row. */
+/** "Weekly on Fri", for a list row — the same words as the schedule's own label. */
 export function repeatLabel(repeat) {
   if (!repeat || !repeat.frequency || repeat.frequency === 'ONCE') return '';
-  const base = FREQUENCY_LABELS[repeat.frequency] || repeat.frequency;
-  if (repeat.frequency === 'WEEKLY' && repeat.weekdays?.length) {
-    const days = repeat.weekdays.map((d) => WEEKDAY_NAMES[d]?.slice(0, 3)).filter(Boolean);
-    return `${base} · every ${days.join(', ')}`;
-  }
-  if (repeat.frequency === 'MONTHLY' && repeat.monthDay) {
-    return `${base} · on the ${ordinal(repeat.monthDay)}`;
-  }
-  return base;
+  return patternLabel({ ...repeat, time: undefined });
 }
 
 const ordinal = (n) => {
@@ -222,6 +214,119 @@ const ordinal = (n) => {
   const v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
+
+// ===== The Recurring tab (2026-09-27) — mirrors backend config/tasks =====
+
+/** The shapes a schedule can take, in the order the form offers them. */
+export const RECUR_FREQUENCIES = ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'];
+export const NTH_WEEKS = [
+  { key: 1, label: 'First' }, { key: 2, label: 'Second' }, { key: 3, label: 'Third' },
+  { key: 4, label: 'Fourth' }, { key: -1, label: 'Last' },
+];
+export const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+/** How early each shape appears in the doer's list — the server's defaults. */
+export const DEFAULT_LEAD_DAYS = { DAILY: 0, WEEKLY: 0, MONTHLY: 2, YEARLY: 2 };
+
+/** "18:00" → "6:00 PM" — the portal-wide twelve-hour rule. */
+export function time12(hhmm) {
+  const [h, m] = String(hhmm || '').split(':').map((n) => parseInt(n, 10));
+  if (!Number.isFinite(h)) return '';
+  return `${((h + 11) % 12) + 1}:${String(Number.isFinite(m) ? m : 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/**
+ * A schedule in one line — the SAME words as the server's patternLabel, so the
+ * form's live preview and the list below it never disagree.
+ */
+export function patternLabel(s = {}) {
+  const at = s.time ? ` · ${time12(s.time)}` : '';
+  const short = (d) => WEEKDAY_NAMES[d]?.slice(0, 3);
+  switch (s.frequency) {
+    case 'DAILY': {
+      const n = Math.max(1, Number(s.interval) || 1);
+      if (n === 1) return `Every day${at}`;
+      if (n === 2) return `Alternate days${at}`;
+      return `Every ${n} days${at}`;
+    }
+    case 'WEEKLY': {
+      const days = (s.weekdays || []).slice().sort((a, b) => a - b).map(short).filter(Boolean);
+      if (days.length === 7) return `Every day of the week${at}`;
+      return `Weekly${days.length ? ` on ${days.join(', ')}` : ''}${at}`;
+    }
+    case 'MONTHLY': {
+      if (s.monthlyMode === 'WEEKDAY' && Number.isInteger(Number(s.weekday))) {
+        const nth = (NTH_WEEKS.find((n) => n.key === Number(s.nthWeek ?? 1)) || NTH_WEEKS[0]).label;
+        return `Monthly on the ${nth.toLowerCase()} ${WEEKDAY_NAMES[Number(s.weekday)]}${at}`;
+      }
+      return `Monthly on the ${ordinal(Number(s.monthDay) || 1)}${at}`;
+    }
+    case 'YEARLY':
+      return `Yearly on ${Number(s.monthDay) || 1} ${MONTH_NAMES[(Number(s.month) || 1) - 1] || ''}${at}`;
+    default:
+      return FREQUENCY_LABELS[s.frequency] || 'One time';
+  }
+}
+
+// ===== Swiping a row (2026-09-27) — touch screens =====
+
+/**
+ * What a swipe does on THIS row, for THIS person — the user's three pairs:
+ *
+ *   not accepted   right → Accept          left → Reject
+ *   in progress    right → Complete        left → Ask for more time
+ *   in review      right → Complete        left → Send it back
+ *
+ * …plus a routine (daily) task, whose only move is Done. Read off the server's
+ * `can`, exactly as the app's twin (mobile utils/taskStatus) reads it.
+ */
+export function swipeActionsFor(task) {
+  const can = task?.can || {};
+  const status = task?.status;
+  if (can.canApprove) {
+    return {
+      right: { key: 'approve', label: 'Complete', icon: 'FiCheckCircle', tone: 'green' },
+      left: can.canReject ? { key: 'sendBack', label: 'Send back', icon: 'FiRotateCcw', tone: 'red' } : null,
+    };
+  }
+  if (can.canDone) return { right: { key: 'done', label: 'Done', icon: 'FiCheckCircle', tone: 'green' }, left: null };
+  if (can.canAccept && status === STATUS.PENDING) {
+    return {
+      right: { key: 'accept', label: 'Accept', icon: 'FiThumbsUp', tone: 'green' },
+      left: can.canDecline ? { key: 'decline', label: 'Reject', icon: 'FiThumbsDown', tone: 'red' } : null,
+    };
+  }
+  const canComplete = (can.transitions || []).some((t) => t.to === STATUS.COMPLETED);
+  if (status === STATUS.IN_PROGRESS && (can.canSubmit || canComplete) && can.myAcceptance) {
+    return {
+      right: { key: can.canSubmit ? 'submit' : 'complete', label: 'Complete', icon: 'FiCheck', tone: 'green' },
+      left: can.canRequestExtension ? { key: 'extension', label: 'More time', icon: 'FiClock', tone: 'amber' } : null,
+    };
+  }
+  return { right: null, left: null };
+}
+
+// ===== The reminder bell (2026-09-27) =====
+
+/**
+ * The bell on a row: whether this person has one, who it reaches, and how long
+ * until it can be pressed again (the server's 30-minute gate). `override` is
+ * the moment a press in THIS tab reset the gate.
+ */
+export function nudgeState(task, override = null, now = Date.now()) {
+  const can = task?.can || {};
+  if (!can.canNudge) return { can: false };
+  const readyAt = [can.nudgeReadyAt || task.nudgeReadyAt, override].filter(Boolean)
+    .map((d) => new Date(d).getTime())
+    .reduce((a, b) => Math.max(a, b), 0);
+  const waitMs = readyAt > now ? readyAt - now : 0;
+  return {
+    can: true,
+    to: can.nudgeTo || 'doers',
+    readyAt: waitMs ? new Date(readyAt) : null,
+    waitMin: waitMs ? Math.ceil(waitMs / 60000) : 0,
+  };
+}
 
 // ===== Reminders =====
 
@@ -233,9 +338,84 @@ export const REMINDER_CHANNELS = [
 export const REMINDER_UNITS = ['MINUTES', 'HOURS', 'DAYS'];
 export const UNIT_LABELS = { MINUTES: 'minutes', HOURS: 'hours', DAYS: 'days' };
 
-/** "1 day before", "4 hours after" — the same wording the server uses. */
+/**
+ * THE SHAPES A REPEATING REMINDER CAN TAKE (2026-09-27) — the twin of backend
+ * config/tasks REMINDER_PATTERN. The user, of the Repeats builder: *"these
+ * options should be for sending notifications too"*.
+ */
+export const REMINDER_PATTERNS = [
+  { key: 'HOURLY', label: 'Hourly' },
+  { key: 'DAILY', label: 'Daily' },
+  { key: 'WEEKLY', label: 'Weekly' },
+  { key: 'MONTHLY', label: 'Monthly' },
+];
+export const DEFAULT_REMIND_AT = '10:00';
+export const DEFAULT_REMIND_WINDOW = { from: '09:00', to: '21:00' };
+export const MAX_REMIND_EVERY_HOURS = 12;
+
+/** Which shape a repeating rule is — an older one has none: hours → hourly, days → daily. */
+export function reminderPattern(rule) {
+  if (REMINDER_PATTERNS.some((p) => p.key === rule?.pattern)) return rule.pattern;
+  return rule?.unit === 'DAYS' ? 'DAILY' : 'HOURLY';
+}
+
+/** The window an hourly rule speaks in. */
+export function reminderWindow(rule) {
+  const ok = (v) => /^\d{2}:\d{2}$/.test(String(v || ''));
+  return ok(rule?.from) && ok(rule?.to) && rule.from < rule.to
+    ? { from: rule.from, to: rule.to }
+    : { ...DEFAULT_REMIND_WINDOW };
+}
+
+/** An hourly rule's beat in minutes — the server's floor of 30. */
+export function repeatEveryMinutes(rule) {
+  const n = Math.abs(Number(rule?.amount) || 0);
+  const per = rule?.unit === 'MINUTES' ? 1 : rule?.unit === 'DAYS' ? 1440 : 60;
+  return Math.max(30, n * per);
+}
+
+/** A repeating rule's rhythm, without "until done" — the server's repeatingReminderText. */
+export function repeatingReminderText(rule) {
+  const at = ` at ${time12(rule?.at || DEFAULT_REMIND_AT)}`;
+  switch (reminderPattern(rule)) {
+    case 'DAILY': {
+      const n = Math.max(1, Math.round(Number(rule?.amount) || 1));
+      if (n === 1) return `Every day${at}`;
+      return n === 2 ? `Alternate days${at}` : `Every ${n} days${at}`;
+    }
+    case 'WEEKLY': {
+      const days = [...new Set((rule?.weekdays || []).map(Number))]
+        .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        .sort((a, b) => a - b);
+      if (days.length === 7) return `Every day${at}`;
+      if (days.join() === '1,2,3,4,5') return `Every weekday${at}`;
+      return `Every ${days.map((d) => WEEKDAY_NAMES[d].slice(0, 3)).join(', ') || 'week'}${at}`;
+    }
+    case 'MONTHLY': {
+      if (rule?.monthlyMode === 'WEEKDAY' && Number.isInteger(Number(rule?.weekday))) {
+        const nth = (NTH_WEEKS.find((n) => n.key === Number(rule.nthWeek ?? 1)) || NTH_WEEKS[0]).label;
+        return `Monthly on the ${nth.toLowerCase()} ${WEEKDAY_NAMES[Number(rule.weekday)]}${at}`;
+      }
+      return `Monthly on the ${ordinal(Number(rule?.monthDay) || 1)}${at}`;
+    }
+    default: {
+      const mins = repeatEveryMinutes(rule);
+      let every = `Every ${mins} minutes`;
+      if (mins % 60 === 0) every = mins === 60 ? 'Every hour' : `Every ${mins / 60} hours`;
+      const w = reminderWindow(rule);
+      const custom = w.from !== DEFAULT_REMIND_WINDOW.from || w.to !== DEFAULT_REMIND_WINDOW.to;
+      return custom ? `${every}, ${time12(w.from)} – ${time12(w.to)}` : every;
+    }
+  }
+}
+
+/** "1 day before", "4 hours after", "Every 2 hours until done" — the server's words. */
 export function reminderLabel(rule) {
   if (!rule) return '';
+  if (rule.when === 'EVERY') {
+    const text = repeatingReminderText(rule);
+    return `${text}${text.includes(' – ') ? ',' : ''} until done`;
+  }
   const n = Math.abs(Number(rule.amount) || 0);
   const unit = String(rule.unit || 'MINUTES').toLowerCase().replace(/s$/, '');
   const when = rule.when === 'AFTER' ? 'after' : 'before';
@@ -477,8 +657,12 @@ export function statusActions(task) {
   if (can.canSubmit) {
     out.push({ key: 'submit', label: 'In Review', hint: 'Hand it in for the assigner to check', tone: 'violet', icon: 'FiSend' });
   }
+  // A routine (daily) task's one move, in its own words (2026-09-27).
+  if (can.canDone) {
+    out.push({ key: 'done', label: 'Mark done', hint: 'Today’s routine is finished', tone: 'green', icon: 'FiCheckCircle' });
+  }
   const canComplete = (can.transitions || []).some((t) => t.to === STATUS.COMPLETED);
-  if (canComplete && !can.canApprove) {
+  if (canComplete && !can.canApprove && !can.canDone) {
     out.push({ key: 'complete', label: 'Completed', hint: 'Mark it done', tone: 'green', icon: 'FiCheck' });
   }
   return out;
@@ -495,6 +679,8 @@ export function statusBadge(task) {
   if (task.declined) return { label: 'Declined', key: 'DECLINED' };
   if (task.status === STATUS.SUBMITTED && task.can?.canApprove) return { label: 'Needs your review', key: STATUS.SUBMITTED };
   if (task.status === STATUS.PENDING && task.awaitingAcceptance) return { label: 'Not accepted', key: STATUS.PENDING };
+  // A routine (daily) task is never "accepted" — it is to do, or done.
+  if (task.routine && task.status === STATUS.IN_PROGRESS) return { label: 'To do', key: STATUS.PENDING };
   return { label: statusLabel(task.status, task.kind), key: task.status };
 }
 

@@ -355,8 +355,23 @@ step before the server would have allowed it.
 
 ## Deciding several at once
 
-The Approvals and Sanctions tabs (web and app) tick rows — one by one or
-**Select all** — and decide them together:
+The queue tabs (web and app) tick rows — one by one or **Select all** — and
+decide them together. Since 2026-09-27 the queues are split by what they are,
+each tab with a red count of what waits on it (the user's *"Reimburse, Advance,
+Approval, People, Ledger — with a badge if anything is pending"*):
+
+| tab | holds |
+|---|---|
+| **Reimburse** | claims to pay back (`movement: 'reimbursement'`) |
+| **Advance** | requests waiting on the CEO/MD (for an approver), then sanctioned advances to pay out |
+| **Approval** | the rest of the pay-out queue (a settlement to confirm…), then expenses and refunds to confirm |
+| People · Ledger | as before |
+
+Each tab ticks its own rows, so "Approve 3" on one never includes a row sitting
+on another. The web keeps Overview and Accounts as tabs; the app reaches
+Accounts from a chip in its action row, beside New entry, Export and Remind,
+under four compact figures (icon on the left, the detail on the right). Old
+links (`?tab=sanctions`, `?tab=approvals`) still land on Advance and Approval.
 
 | Route | Who | Does |
 |---|---|---|
@@ -371,7 +386,19 @@ stop the rest; the reply is `{ done: [ids], failed: [{ id, code, message }],
 message }`. Each row runs against a stand-in response, because `bad()` sets the
 status before it throws and would otherwise leave the batch's reply carrying one
 row's 400. At most 100 ids. Each employee gets **one** notification per batch,
-not one per row.
+not one per row — and `confirm` sends none at all (below).
+
+### Who is told (2026-09-27)
+
+*"Don't send a notification for every expense they do — only for reimbursement
+and advance requests."* So recording, correcting or refunding an expense,
+declaring a settlement, and confirming an expense (one or many) are **silent**.
+What still speaks: an advance or reimbursement **request** (to the people who
+decide it), the CEO/MD's sanction or decline, money actually **paid out or
+approved** on the pay-out queue (`approveEntry` notifies only for movements that
+are not book spending — "Advance paid", "Reimbursement paid"), a request
+**declined**, and the company **reversing or correcting** somebody's entry —
+the employee must hear when their own figures are changed by somebody else.
 
 ---
 
