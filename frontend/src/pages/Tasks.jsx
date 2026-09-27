@@ -33,6 +33,7 @@
  * rows instead, so a filter change never collapses the page under the reader.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'react-toastify';
 import {
   FiPlus, FiFilter, FiSearch, FiX, FiBookmark, FiBarChart2, FiChevronLeft, FiChevronRight,
@@ -370,8 +371,28 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
   // ===== Render =====
 
+  // ONE way to add, on both tabs, as on the app (user, 2026-09-27: "for both
+  // tab Tasks and Recurring to add new task should be same … make floating
+  // button for both"): Assign task on Tasks, New recurring task on Recurring.
+  const fab = !viewOnly && (view === 'list' || view === 'recurring');
+
   return (
-    <div className="tasks-page">
+    <div className={`tasks-page${fab ? ' pb-20' : ''}`}>
+      {/* Portalled to <body>: the page wrapper animates in with a transform,
+          and a transformed ancestor captures position:fixed — the button sat
+          under the page instead of on the screen. */}
+      {fab && createPortal(
+        <button
+          type="button"
+          onClick={view === 'recurring'
+            ? () => openRecurringForm(null)
+            : () => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
+          className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full bg-green-600 px-5 text-sm font-semibold text-white shadow-lg shadow-green-900/20 transition hover:bg-green-700 min-h-[48px] sm:bottom-6 sm:right-6 print:hidden"
+        >
+          <FiPlus size={18} /> {view === 'recurring' ? 'New recurring task' : 'Assign task'}
+        </button>,
+        document.body,
+      )}
       <PageHeader title="Tasks" subtitle="Hand work over, and know where it has got to.">
         <button
           type="button"
@@ -401,15 +422,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
         >
           <FiBookmark size={15} /> <span className="hidden sm:inline">Templates</span>
         </button>
-        {!viewOnly && (
-          <button
-            type="button"
-            onClick={() => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
-            className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 min-h-[40px]"
-          >
-            <FiPlus size={16} /> Assign task
-          </button>
-        )}
       </PageHeader>
 
       {/* ── Tasks | Recurring (2026-09-27) ──────────────────── */}
@@ -440,7 +452,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
           viewOnly={viewOnly}
           isAdmin={isAdmin}
           refreshKey={recurringKey}
-          onNew={() => openRecurringForm(null)}
           onEdit={(row) => openRecurringForm(row)}
         />
       )}

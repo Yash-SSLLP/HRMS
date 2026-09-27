@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
-  FiPlus, FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiStopCircle, FiCheckCircle,
+  FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiStopCircle, FiCheckCircle,
 } from 'react-icons/fi';
 import ToggleSwitch from '../ToggleSwitch';
 import { confirmDialog } from '../dialogs';
@@ -34,7 +34,9 @@ const whenText = (d) => {
   return `${when.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
 };
 
-export default function TaskRecurring({ viewOnly = false, isAdmin = false, onNew, onEdit, refreshKey = 0 }) {
+// Adding one is the Tasks page's floating button (2026-09-27 — the same one the
+// Tasks tab has), not a button of this tab's own.
+export default function TaskRecurring({ viewOnly = false, isAdmin = false, onEdit, refreshKey = 0 }) {
   const me = useAuthStore((s) => s.user?._id);
   const [rows, setRows] = useState(null);
   const [scope, setScope] = useState('mine');
@@ -88,15 +90,6 @@ export default function TaskRecurring({ viewOnly = false, isAdmin = false, onNew
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        {!viewOnly && (
-          <button
-            type="button"
-            onClick={onNew}
-            className="inline-flex items-center gap-2 rounded-xl bg-green-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-green-700 min-h-[40px]"
-          >
-            <FiPlus size={16} /> New recurring task
-          </button>
-        )}
         <p className="min-w-0 flex-1 text-xs text-gray-500">
           Set it up once — each time it comes round it lands in their Tasks on its own. Daily ones are only marked done.
         </p>
