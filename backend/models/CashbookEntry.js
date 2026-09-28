@@ -78,7 +78,21 @@ const cashbookEntrySchema = new mongoose.Schema(
     description: { type: String, trim: true, maxlength: 500 },
     party: { type: String, trim: true, maxlength: 120 },      // payee / payer
     referenceNo: { type: String, trim: true, maxlength: 60 }, // voucher / bill no
+    /**
+     * THE BILLS. Since 2026-09-28 an entry may carry several (the user: "give
+     * option to select multiple images and capture multiple images in a single
+     * expense") — `attachments`, in the order they were added, is the list.
+     *
+     * `attachment` stays, and is kept equal to the FIRST of them: every older
+     * reader — an app build already on somebody's phone, the "View bill" route
+     * without an index — reads that one field, and still finds a bill. A row
+     * from before 2026-09-28 has `attachment` alone and no list; read both
+     * through utils/bills.billsOf, never one field on its own.
+     *
+     * `default: undefined` so a row with no bills stores no empty array.
+     */
     attachment: { type: attachmentSchema, default: null },
+    attachments: { type: [attachmentSchema], default: undefined },
     status: { type: String, enum: ENTRY_STATUS, default: 'Approved', index: true },
 
     // Employee-submitted petty-cash voucher (starts Pending, no balance effect

@@ -712,6 +712,44 @@ const setTaskProxyAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke "set up recurring tasks" (2026-09-28): the Recurring Tasks
+ * page and every /api/tasks/recurring route. Schedules already set up keep
+ * running either way — this decides who may see and change them.
+ * @route PATCH /api/admin/users/:id/task-recurring-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, taskRecurringAccess}}
+ */
+const setTaskRecurringAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.taskRecurringAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, taskRecurringAccess: user.taskRecurringAccess });
+});
+
+/**
+ * Grant or revoke "set a task's reminders" (2026-09-28). Without it the assign
+ * form hides the Reminders section and the server ignores any sent, so the
+ * task gets the company's default reminders.
+ * @route PATCH /api/admin/users/:id/task-reminder-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, taskReminderAccess}}
+ */
+const setTaskReminderAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.taskReminderAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, taskReminderAccess: user.taskReminderAccess });
+});
+
+/**
  * Give somebody a role in ONE incentive tab — or take it away.
  *
  * Not a switch: the Incentive section holds several incentives and each is run
@@ -924,8 +962,9 @@ const orgSettingsPayload = (s) => {
   return {
     includeExecutivesInLists: !!s.includeExecutivesInLists,
     chatEnabled: !!s.chatEnabled,
-    // (The CEO/MD sanction on a cash advance is no longer a setting — it is
-    // always required since 2026-09-26; see khataController.requestAdvance.)
+    // Does an employee's cash advance need a CEO/MD sanction first? A setting
+    // again since 2026-09-28 (always-on 2026-09-26 → 28). Default ON.
+    khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
     // The contact strip on the khata statement PDF. Always sent as a pair so the
     // form can render two empty inputs rather than guess at a missing shape.
     documentFooter: {
@@ -1185,7 +1224,9 @@ const updateBrandingSettings = asyncHandler(async (req, res) => {
  * @route PUT /api/admin/org-settings  (SuperAdmin)
  * @param {boolean} [req.body.includeExecutivesInLists]
  * @param {boolean} [req.body.chatEnabled]
- * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean}}
+ * @param {boolean} [req.body.khataAdvanceApprovalRequired] - the CEO/MD sanction on cash advances
+ * @returns {{includeExecutivesInLists: boolean, chatEnabled: boolean, khataAdvanceApprovalRequired: boolean,
+ *   advancesMoved?: number}}
  */
 // PUT /api/admin/org-settings  (SuperAdmin)
 const updateOrgSettings = asyncHandler(async (req, res) => {
@@ -1197,8 +1238,16 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   if (req.body.chatEnabled !== undefined) {
     s.chatEnabled = !!req.body.chatEnabled;
   }
-  // `khataAdvanceApprovalRequired` is ignored if an older app still sends it:
-  // the CEO/MD sanction on a cash advance is no longer switchable.
+  // THE CEO/MD SANCTION ON CASH ADVANCES — a toggle again since 2026-09-28
+  // (user: "give this a toggle in permission so that we can set is it CEO/MD
+  // approval mandatory for any advance or not"). What a flip does to requests
+  // already in flight is decided after the save, below.
+  let advanceFlip = null;
+  if (req.body.khataAdvanceApprovalRequired !== undefined) {
+    const on = !!req.body.khataAdvanceApprovalRequired;
+    if (on !== (s.khataAdvanceApprovalRequired !== false)) advanceFlip = on ? 'on' : 'off';
+    s.khataAdvanceApprovalRequired = on;
+  }
   // Each half is settable on its own, and an empty string is a real value —
   // clearing the helpline is how you take the number off the document.
   if (req.body.documentFooter && typeof req.body.documentFooter === 'object') {
@@ -1207,7 +1256,34 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
     if (f.note !== undefined) s.documentFooter.note = String(f.note).trim().slice(0, 120);
   }
   await s.save();
-  res.json(orgSettingsPayload(s));
+
+  /**
+   * Requests in flight follow the switch, both ways, and moving them moves no
+   * money: ON sends advances that reached the cashbook manager unsanctioned to
+   * the CEO/MD (the sweep, run now rather than on the next read); OFF hands the
+   * ones still waiting on the CEO/MD to the cashbook manager. Flipping back
+   * undoes either, for anything not yet paid.
+   */
+  let advancesMoved = 0;
+  if (advanceFlip) {
+    // Required here, not at the top: khataController is a large module the
+    // rest of this file has no use for.
+    const khata = require('./khataController');
+    try {
+      if (advanceFlip === 'on') {
+        khata.resetUnsanctionedSweep();
+        advancesMoved = await khata.sendUnsanctionedAdvancesToExecs();
+      } else {
+        advancesMoved = await khata.releaseAdvancesFromExecs();
+      }
+    } catch (e) {
+      // The switch itself is saved; the next queue read re-runs the ON sweep.
+      console.error('[org-settings] advance switch follow-up failed:', e.message);
+    }
+  }
+  // `advancesMoved` only when the switch actually flipped, so the page can say
+  // "3 requests moved to …" — and nothing when an unrelated setting was saved.
+  res.json({ ...orgSettingsPayload(s), ...(advanceFlip ? { advancesMoved: advancesMoved || 0 } : {}) });
 });
 
 
@@ -1618,6 +1694,8 @@ module.exports = {
   setLoansAccess,
   setTrainingAccess,
   setTaskProxyAccess,
+  setTaskRecurringAccess,
+  setTaskReminderAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,

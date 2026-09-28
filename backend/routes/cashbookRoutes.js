@@ -12,9 +12,12 @@ const { protect, protectMedia, requirePermission } = require('../middleware/auth
 
 const router = express.Router();
 
-// 5 MB receipts; images or PDF only.
+// 5 MB receipts; images or PDF only. Several per entry since 2026-09-28 —
+// `.array` still takes an older client's single `receipt` part.
+const { BILL_FIELD, MAX_BILLS } = require('../utils/bills');
+
 const receiptUpload = createUpload({
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024, files: MAX_BILLS },
   fileFilter: (req, file, cb) => {
     // Extension as well as MIME: an Android file provider that cannot identify a
     // PDF sends application/octet-stream, and matching on the type alone
@@ -36,7 +39,7 @@ router.use(protect);
 // GET /me — current user's submitted vouchers; protected.
 router.get('/me', ctrl.listMyVouchers);
 // POST /me — submit a voucher; protected + multer single 'receipt' (5MB image/PDF).
-router.post('/me', receiptUpload.single('receipt'), ctrl.submitVoucher);
+router.post('/me', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.submitVoucher);
 router.get('/me/categories', ctrl.listCategories); // GET /me/categories — category options for the voucher form; protected.
 
 // ----- Finance (Account Manager / HR / Admin) — everything below requires 'cashbook.manage' -----
@@ -64,7 +67,7 @@ router.put('/categories/:id', ctrl.updateCategory);
 // GET /entries — list ledger entries; protected, requires 'cashbook.manage'.
 router.get('/entries', ctrl.listEntries);
 // POST /entries — create a ledger entry; protected, requires 'cashbook.manage' + multer single 'receipt'.
-router.post('/entries', receiptUpload.single('receipt'), ctrl.createEntry);
+router.post('/entries', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.createEntry);
 // PUT /entries/:id — update a ledger entry; protected, requires 'cashbook.manage'.
 router.put('/entries/:id', ctrl.updateEntry);
 // DELETE /entries/:id — delete a ledger entry; protected, requires 'cashbook.manage'.

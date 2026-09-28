@@ -24,7 +24,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import {
   FiChevronDown, FiCheckCircle, FiThumbsUp, FiRotateCcw, FiThumbsDown, FiGitBranch,
-  FiRepeat, FiSend, FiCheck, FiUserPlus, FiExternalLink,
+  FiRepeat, FiSend, FiCheck, FiUserPlus, FiExternalLink, FiEdit2,
 } from 'react-icons/fi';
 import { statusActions, statusBadge, statusStyle } from '../../utils/taskLifecycle';
 
@@ -67,6 +67,10 @@ export default function TaskStatusMenu({ task, onAction, onOpen, viewOnly = fals
 
   const badge = statusBadge(task);
   const actions = viewOnly ? [] : statusActions(task);
+  // Editing is not a status, so it sits with "Open task" below the moves — on
+  // every row whose terms are still open to this reader (2026-09-28: "in any
+  // task give option to edit that before accept"). The server's `can.canEdit`.
+  const canEdit = !viewOnly && Boolean(task?.can?.canEdit);
   // A declined task keeps the chip colours of the status it is stuck at, but a
   // red dot, so "Declined" and "Pending" are not the same amber at a glance.
   const chipClass = badge.key === 'DECLINED'
@@ -216,6 +220,20 @@ export default function TaskStatusMenu({ task, onAction, onOpen, viewOnly = fals
           })}
 
           <div className="my-1 border-t border-gray-100" />
+          {canEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => pick('edit')}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium text-gray-700 outline-none transition hover:bg-gray-50 focus:bg-gray-50 min-h-[40px]"
+            >
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700">
+                <FiEdit2 size={14} />
+              </span>
+              Edit task
+              <span className="ml-auto text-[11px] font-normal text-gray-400">before it is accepted</span>
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"

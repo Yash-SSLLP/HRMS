@@ -672,6 +672,13 @@ function NotificationBell({ isAdmin, portal }) {
               </button>
             ))}
           </div>
+          {/* The server's retention sweep (notificationCleanupWorker, 24 h since
+              2026-09-28) — said here so a read alert going is not a surprise. */}
+          {items.length > 0 && (
+            <div className="px-4 py-2 border-t border-gray-100 text-[10px] text-gray-400">
+              Read notifications clear themselves 24 hours after you open them.
+            </div>
+          )}
         </div>
       )}
     </div>

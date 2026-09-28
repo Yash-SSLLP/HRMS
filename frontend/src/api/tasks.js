@@ -53,6 +53,37 @@ function toFormData(body = {}, { voice, files } = {}) {
 /** The list, its counters, and the paging — one call. */
 export const listTasks = (params = {}) => api.get('/tasks', { params }).then((r) => r.data);
 
+/**
+ * The list as an Excel report (2026-09-28): GET /tasks/export with the list's
+ * own params, saved as whatever the server names it. A refusal arrives as a
+ * Blob (the response type is fixed before the status is known), so its JSON
+ * message is read back out — that sentence is the one worth showing.
+ * @throws {Error} carrying the server's message
+ */
+export async function exportTasks(params = {}) {
+  let res;
+  try {
+    res = await api.get('/tasks/export', { params, responseType: 'blob' });
+  } catch (err) {
+    let msg = 'Could not export the tasks.';
+    try {
+      const text = err.response?.data instanceof Blob ? await err.response.data.text() : null;
+      if (text) msg = JSON.parse(text).message || msg;
+    } catch { /* keep the fallback */ }
+    throw new Error(msg);
+  }
+  const cd = res.headers['content-disposition'] || '';
+  const match = /filename="?([^";]+)"?/i.exec(cd);
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = match ? match[1] : 'Tasks.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /** The counters alone, for a badge — or beside a board with a tile filter on. */
 export const taskCounters = (params = {}) => api.get('/tasks/counters', { params }).then((r) => r.data);
 

@@ -302,16 +302,22 @@ export function RangeChips({ ranges, value, onChange }) {
  * true when a filter, a search or a figure is narrowing the pile, where the
  * useful next step is loosening it rather than assigning something.
  */
-export function EmptyTasks({ scope, onAssign, filtered = false, olderHint = true }) {
+export function EmptyTasks({
+  scope, onAssign, filtered = false, olderHint = true, completedHint = false,
+}) {
   // Said of the default "This month" window: open work always shows, so an
   // empty pile means nothing is open — and finished work from other months is
   // one chip away.
   const older = olderHint ? ' Finished work from other months is under Due: All time.' : '';
+  // Total lists open work only (2026-09-28), so a pile of finished tasks opens
+  // empty — say where they went rather than "nothing assigned to you".
+  const done = completedHint ? ' Finished tasks are under Completed.' : '';
   const lines = {
-    mine: ['Nothing assigned to you', `Tasks people set for you — and the ones you set yourself — land here.${older}`],
-    delegated: ['Nothing you assigned is open', `Hand something over and it will show up here.${older}`],
-    loop: ['Nothing to follow', `When somebody keeps you in the loop on a task, it shows up here.${older}`],
-    all: ['No open tasks', `Nothing is waiting on anybody.${older}`],
+    mine: [completedHint ? 'Nothing open on your plate' : 'Nothing assigned to you',
+      `Tasks people set for you — and the ones you set yourself — land here.${done || older}`],
+    delegated: ['Nothing you assigned is open', `Hand something over and it will show up here.${done || older}`],
+    loop: ['Nothing to follow', `When somebody keeps you in the loop on a task, it shows up here.${done || older}`],
+    all: ['No open tasks', `Nothing is waiting on anybody.${done || older}`],
   };
   const [title, body] = filtered
     ? ['Nothing matches', 'Try a wider due date, another figure, or clear the filters.']

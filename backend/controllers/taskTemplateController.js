@@ -513,8 +513,10 @@ const createRecurring = asyncHandler(async (req, res) => {
   pts = Math.min(MAX_TASK_POINTS, Math.round(pts));
 
   // A daily task is chased every two hours until done unless the form says
-  // otherwise — the user's own example.
-  const reminders = body.reminders !== undefined
+  // otherwise — the user's own example. What the form says counts only from
+  // somebody holding the reminder grant (2026-09-28); anybody else's schedule
+  // gets these defaults, the same rule as a one-off (taskController.createTask).
+  const reminders = body.reminders !== undefined && access.canSetReminders(req.user)
     ? cleanReminders(body.reminders)
     : (isRoutineFrequency(shape.frequency)
       ? [{ channel: 'APP', amount: 2, unit: 'HOURS', when: REMINDER_WHEN.EVERY }]
@@ -625,7 +627,10 @@ const updateRecurring = asyncHandler(async (req, res) => {
   if (b.loopUsers !== undefined) {
     schedule.loopUsers = (b.loopUsers || []).map(String).filter(mongoose.Types.ObjectId.isValid);
   }
-  if (b.reminders !== undefined) schedule.reminders = cleanReminders(b.reminders);
+  // The reminder grant's (2026-09-28); from anybody else they stay as they were.
+  if (b.reminders !== undefined && access.canSetReminders(req.user)) {
+    schedule.reminders = cleanReminders(b.reminders);
+  }
   if (b.links !== undefined) schedule.links = cleanLinks(b.links);
 
   const shape = scheduleFields(b);

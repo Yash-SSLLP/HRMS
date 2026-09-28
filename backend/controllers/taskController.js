@@ -733,6 +733,212 @@ const listTasks = asyncHandler(async (req, res) => {
   });
 });
 
+// ===== The report (2026-09-28) =====
+
+/** What each pile, window and figure is called on the page, for the report's own words. */
+const EXPORT_PILES = {
+  mine: 'Assigned to me', delegated: 'Assigned by me', loop: 'In the loop', all: 'All tasks',
+};
+const EXPORT_RANGES = {
+  today: 'Today', yesterday: 'Yesterday', week: 'This week', month: 'This month',
+  nextWeek: 'Next week', all: 'All time',
+};
+const EXPORT_FIGURES = {
+  total: 'Total (open work)', pending: 'Not Accepted Yet', overdue: 'Overdue',
+  inProgress: 'In Progress', inReview: 'Under Review', completed: 'Completed',
+};
+/** More than a report anybody reads; the sheet says when it stopped. */
+const EXPORT_MAX_ROWS = 5000;
+const IST_OFFSET_MS = 330 * 60 * 1000;
+
+/**
+ * An instant as the portal's wall clock, for a spreadsheet cell.
+ *
+ * Excel has no time zones: exceljs writes a Date as its UTC fields, so a task
+ * due 6 PM IST would read 12:30 PM in the sheet. Shifting by IST's offset makes
+ * the UTC fields BE the Indian wall clock, and the cell stays a real date that
+ * sorts and filters, rather than a string that only looks like one.
+ */
+const istCell = (d) => {
+  if (!d) return null;
+  const t = new Date(d).getTime();
+  return Number.isNaN(t) ? null : new Date(t + IST_OFFSET_MS);
+};
+
+/** "28 Sept 2026, 6:05 PM" — the IST stamp the summary sheet prints. */
+const istStamp = (d = new Date()) => new Date(d).toLocaleString('en-IN', {
+  timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric',
+  hour: 'numeric', minute: '2-digit', hour12: true,
+});
+
+/** Where a row stands, in the words the list's status button uses. */
+function exportStatus(row) {
+  if (row.declined) return 'Declined';
+  if (row.routine && row.status === STATUS.IN_PROGRESS) return 'To do';
+  if (row.status === STATUS.PENDING && row.awaitingAcceptance) return 'Not accepted yet';
+  return statusLabel(row.status, row.kind);
+}
+
+/**
+ * GET /api/tasks/export — the list as an Excel report (user request 2026-09-28:
+ * "give option to export for task as a report").
+ *
+ * EXACTLY WHAT IS ON SCREEN: the same query as GET /tasks — pile, due window,
+ * department, people, priority, search, the figure clicked, the order — built by
+ * the same `buildQuery`, so the report cannot hold a row the page would not, or
+ * leave one out. Every page of it, not the fifty on screen. The second sheet
+ * restates the filters and the pile's figures, so a file forwarded on its own
+ * still says what it is.
+ *
+ * No capability: it is the caller's own list, walled exactly as the list is.
+ */
+const exportTasks = asyncHandler(async (req, res) => {
+  const ExcelJS = require('exceljs');
+  const filter = await buildQuery(req);
+  const { sort, key: sortKey, dir: sortDir } = resolveSort(req.query);
+
+  const FIGURES_IGNORE = { status: '', overdue: '', late: '', q: '' };
+  const [rows, total, counters] = await Promise.all([
+    sortedRows(filter, sort, sortKey, 0, EXPORT_MAX_ROWS),
+    Task.countDocuments(filter),
+    countersFor(await buildQuery(req, FIGURES_IGNORE)),
+  ]);
+
+  // Two things a list row does not carry: the task's details, and the names
+  // of the people kept in the loop (stored as ids).
+  const extra = new Map((await Task.find({ _id: { $in: rows.map((r) => r._id) } })
+    .select('description').lean()).map((t) => [String(t._id), t]));
+  const loopIds = [...new Set(rows.flatMap((r) => (r.loopUsers || []).map(String)))];
+  const loopNames = await namesOf(loopIds);
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+
+  // ── Sheet 1: the tasks ────────────────────────────────────────────────
+  const ws = wb.addWorksheet('Tasks');
+  ws.columns = [
+    { header: '#', key: 'serial', width: 6 },
+    { header: 'Code', key: 'code', width: 16 },
+    { header: 'Task', key: 'title', width: 42 },
+    { header: 'Status', key: 'status', width: 18 },
+    { header: 'Overdue', key: 'overdue', width: 10 },
+    { header: 'Priority', key: 'priority', width: 11 },
+    { header: 'Category', key: 'category', width: 18 },
+    { header: 'Assigned by', key: 'by', width: 24 },
+    { header: 'Assigned to', key: 'to', width: 32 },
+    { header: 'Assigned on', key: 'assignedOn', width: 14, style: { numFmt: 'dd-mmm-yyyy' } },
+    { header: 'Due', key: 'due', width: 20, style: { numFmt: 'dd-mmm-yyyy hh:mm AM/PM' } },
+    { header: 'Completed on', key: 'completedOn', width: 20, style: { numFmt: 'dd-mmm-yyyy hh:mm AM/PM' } },
+    { header: 'On time?', key: 'onTime', width: 11 },
+    { header: 'Progress %', key: 'progress', width: 11 },
+    { header: 'Points', key: 'points', width: 9 },
+    { header: 'Pieces done', key: 'pieces', width: 12 },
+    { header: 'Repeats', key: 'repeats', width: 18 },
+    { header: 'Kept in the loop', key: 'loop', width: 26 },
+    { header: 'Details', key: 'details', width: 60 },
+  ];
+
+  rows.forEach((raw, i) => {
+    const row = decorate(raw);
+    const byName = row.createdByName || personName(row.createdBy) || '';
+    const sentBy = row.onBehalf?.byName ? ` (sent by ${row.onBehalf.byName})` : '';
+    const done = row.status === STATUS.COMPLETED;
+    ws.addRow({
+      serial: i + 1,
+      code: row.code || '',
+      title: row.title || '',
+      status: exportStatus(row),
+      overdue: row.overdue ? 'Yes' : '',
+      priority: row.priority || '',
+      category: row.category || '',
+      by: `${byName}${sentBy}`,
+      to: row.isOpenPiece ? 'Nobody yet (open piece)'
+        : (row.assignees || []).map((a) => a.name || personName(a.user)).filter(Boolean).join(', '),
+      assignedOn: istCell(row.assignedAt || row.createdAt),
+      due: istCell(row.dueDate),
+      completedOn: done ? istCell(row.completedAt) : null,
+      onTime: done ? (row.completedLate ? 'Delayed' : 'In time') : '',
+      progress: Math.max(0, Math.min(100, Number(row.progress) || 0)),
+      points: Number(row.effectivePoints) || 0,
+      pieces: row.subtaskCount ? `${row.subtasksDone}/${row.subtaskCount}` : '',
+      repeats: row.repeatLabel || '',
+      loop: (row.loopUsers || []).map((u) => loopNames.get(String(u))).filter(Boolean).join(', '),
+      details: extra.get(String(row._id))?.description || '',
+    });
+  });
+
+  const head = ws.getRow(1);
+  head.font = { bold: true };
+  head.alignment = { vertical: 'middle', wrapText: true };
+  head.height = 22;
+  head.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
+  });
+  ws.getColumn('details').alignment = { wrapText: true, vertical: 'top' };
+  ws.getColumn('title').alignment = { wrapText: true, vertical: 'top' };
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  if (rows.length) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
+
+  // ── Sheet 2: what this report is ─────────────────────────────────────
+  const q = req.query;
+  const scope = EXPORT_PILES[q.scope] ? q.scope : 'all';
+  const range = q.range === 'custom'
+    ? `${q.from || '…'} – ${q.to || '…'}`
+    : (EXPORT_RANGES[q.range] || 'All time');
+  const people = await namesOf([...listParam(q.assignedTo), ...listParam(q.assignedBy)]);
+  const say = (ids) => listParam(ids).map((id) => people.get(id)).filter(Boolean).join(', ');
+
+  const sum = wb.addWorksheet('Summary');
+  sum.columns = [{ key: 'k', width: 26 }, { key: 'v', width: 48 }];
+  const line = (k, v, bold = false) => {
+    const r = sum.addRow({ k, v: v === undefined || v === null ? '' : v });
+    if (bold) r.font = { bold: true };
+    return r;
+  };
+  const title = sum.addRow({ k: 'Tasks report' });
+  title.font = { bold: true, size: 14 };
+  line('Generated on', `${istStamp()} (IST)`);
+  line('Generated by', personName(req.user));
+  sum.addRow({});
+  line('Filters', '', true);
+  line('Pile', EXPORT_PILES[scope]);
+  line('Figure', EXPORT_FIGURES[q.figure] || (q.status || q.overdue ? 'Filtered by status' : 'Every status'));
+  line('Due', range);
+  if (q.department) line('Department', listParam(q.department).join(', '));
+  if (q.priority) line('Priority', listParam(q.priority).join(', '));
+  if (say(q.assignedTo)) line('Assigned to', say(q.assignedTo));
+  if (say(q.assignedBy)) line('Assigned by', say(q.assignedBy));
+  if (q.q) line('Search', q.q);
+  line('Order', `${SORTS[sortKey]?.label || sortKey}, ${sortDir === 'asc' ? 'ascending' : 'descending'}`);
+  line('Rows in this report', total > rows.length
+    ? `${rows.length} (the first ${EXPORT_MAX_ROWS} of ${total} — narrow the filters for the rest)`
+    : rows.length);
+  sum.addRow({});
+  line(`${EXPORT_PILES[scope]} — the figures`, '', true);
+  const open = Math.max(0, counters.total - counters.completed - counters.cancelled);
+  [
+    ['Total (open work)', open],
+    ['Not Accepted Yet', counters.pending],
+    ['Overdue', counters.overdue],
+    ['In Progress', counters.inProgress],
+    ['Under Review', counters.inReview],
+    ['Completed', counters.completed],
+    ['  of which in time', counters.inTime],
+    ['  of which delayed', counters.delayed],
+    ['Cancelled', counters.cancelled],
+  ].forEach(([k, v]) => line(k, v));
+  sum.getColumn('v').alignment = { horizontal: 'left' };
+
+  const stamp = new Date(Date.now() + IST_OFFSET_MS).toISOString();
+  const file = `Tasks_${EXPORT_PILES[scope].replace(/\s+/g, '-')}_${stamp.slice(0, 10)}_${stamp.slice(11, 16).replace(':', '')}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${file}"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
 /** GET /api/tasks/counters — the figures alone, for a badge. */
 const taskCounters = asyncHandler(async (req, res) => {
   res.json(await countersFor(await buildQuery(req)));
@@ -1175,6 +1381,13 @@ const createTask = asyncHandler(async (req, res) => {
 
   const repeat = cleanRepeat(body.repeat);
   const recurring = repeat.frequency !== FREQUENCY.ONCE;
+  // Only an app from before the Recurring tab still sends a Repeat here, and a
+  // repeating task is the recurring grant's since 2026-09-28. Refused rather
+  // than quietly made a one-off: the person asked for "every day" and must not
+  // get "once" without being told.
+  if (recurring && !access.canManageRecurring(req.user)) {
+    bad(res, 'Repeating tasks need a permission only a Super Admin can give. Set it as a one-off task instead.', 403);
+  }
   // On a repeating task the date the assigner picked is the START, and the
   // first occurrence's deadline is computed from the schedule — the brief's
   // "this due date gets converted to a start date".
@@ -1191,7 +1404,11 @@ const createTask = asyncHandler(async (req, res) => {
   // before") can never go on a DAILY task — each one only appears at 9 AM on its
   // day — so a daily one gets what the Recurring tab gives it (2026-09-27): every
   // two hours until done.
-  const reminders = body.reminders !== undefined
+  //
+  // SETTING reminders is a grant since 2026-09-28 (User.taskReminderAccess).
+  // Without it whatever the form sent is ignored, not refused — an older app
+  // always sends the defaults it was given — and the task gets the company's.
+  const reminders = body.reminders !== undefined && access.canSetReminders(req.user)
     ? cleanReminders(body.reminders)
     : (recurring && isRoutineFrequency(repeat.frequency)
       ? [{ channel: 'APP', amount: 2, unit: 'HOURS', when: REMINDER_WHEN.EVERY, pattern: REMINDER_PATTERN.HOURLY }]
@@ -1467,7 +1684,9 @@ const updateTask = asyncHandler(async (req, res) => {
     }
   }
 
-  if (body.reminders !== undefined) {
+  // Reminders are the reminder grant's (2026-09-28) — from anybody else they are
+  // left exactly as they were, the same "ignore, don't refuse" as on create.
+  if (body.reminders !== undefined && access.canSetReminders(req.user)) {
     const next = cleanReminders(body.reminders);
     const words = (list) => (list || []).map(reminderLabel).join(', ') || 'None';
     if (words(task.reminders) !== words(next)) {
@@ -2264,6 +2483,12 @@ const taskMeta = asyncHandler(async (req, res) => {
     // Draws "On behalf of" on the assign form (User.taskProxyAccess, or a
     // Super Admin). The server refuses the field without it regardless.
     canAssignOnBehalf: access.canAssignOnBehalf(req.user),
+    // The two Super Admin grants of 2026-09-28. `canRecur` opens the Recurring
+    // Tasks page (and its menu row); `canSetReminders` draws the Reminders
+    // section on every assign form. Both are enforced on the server whatever a
+    // client draws — recurring routes refuse, reminders are ignored.
+    canRecur: access.canManageRecurring(req.user),
+    canSetReminders: access.canSetReminders(req.user),
     team,
     hasTeam,
     departments,
@@ -2601,6 +2826,7 @@ const deleteCategory = asyncHandler(async (req, res) => {
 
 module.exports = {
   listTasks,
+  exportTasks,
   boardTasks,
   taskCounters,
   getTask,

@@ -46,9 +46,13 @@ const { requireCashOutCategoryEditor } = require('../services/cashOutCategories'
 
 const router = express.Router();
 
-// 5 MB receipts; images or PDF only — same limits as the cashbook.
+// 5 MB receipts; images or PDF only — same limits as the cashbook. Up to
+// MAX_BILLS of them per entry since 2026-09-28 (several bills, one expense):
+// `.array` also takes an older client's single `receipt` part unchanged.
+const { BILL_FIELD, MAX_BILLS } = require('../utils/bills');
+
 const receiptUpload = createUpload({
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024, files: MAX_BILLS },
   fileFilter: (req, file, cb) => {
     // Extension as well as MIME: an Android file provider that cannot identify a
     // PDF sends application/octet-stream, and matching on the type alone
@@ -105,15 +109,15 @@ router.get('/me/books/:id', ctrl.getMyBook);
 // POST /me/request — ask for an advance into my wallet (always parks); protected.
 router.post('/me/request', ctrl.requestAdvance);
 // POST /me/expense — log what I spent the advance on, against one of my books; protected + multer single 'receipt'.
-router.post('/me/expense', receiptUpload.single('receipt'), ctrl.recordMyExpense);
+router.post('/me/expense', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.recordMyExpense);
 // POST /me/refund — log money that came BACK into one of my books; protected + multer single 'receipt' (required).
-router.post('/me/refund', receiptUpload.single('receipt'), ctrl.recordMyRefund);
+router.post('/me/refund', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.recordMyRefund);
 // PUT /me/expenses/:id — correct an expense of mine the company has not confirmed yet; protected + multer single 'receipt'.
-router.put('/me/expenses/:id', receiptUpload.single('receipt'), ctrl.updateMyExpense);
+router.put('/me/expenses/:id', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.updateMyExpense);
 // POST /me/reimbursement — claim back what the company owes me, when I have spent past my advance; protected.
 router.post('/me/reimbursement', ctrl.requestReimbursement);
 // POST /me/settle — declare unspent cash returned to the company (always parks); protected + multer single 'receipt'.
-router.post('/me/settle', receiptUpload.single('receipt'), ctrl.declareSettlement);
+router.post('/me/settle', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.declareSettlement);
 // POST /me/khatas — open an expense book on my own account; protected.
 router.post('/me/khatas', ctrl.createMyKhata);
 
@@ -200,7 +204,7 @@ router.put('/khatas/:khataId', ctrl.updateKhataSettings);
 // GET /entries — ledger across all employees; requires 'khata.manage'.
 router.get('/entries', ctrl.listEntries);
 // POST /entries — give an advance, record a settlement, or file an expense; requires 'khata.manage' + operator rights on the account + multer single 'receipt'.
-router.post('/entries', receiptUpload.single('receipt'), ctrl.createEntry);
+router.post('/entries', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.createEntry);
 // GET /pending — what the accounts team must act on; requires 'khata.manage'.
 router.get('/pending', ctrl.listPending);
 // PATCH /entries/:id/approve — release a parked entry; requires 'khata.manage' + canApprove on the account.
@@ -208,7 +212,7 @@ router.patch('/entries/:id/approve', ctrl.approveEntry);
 // PATCH /entries/:id/reject — decline a parked entry; requires 'khata.manage'.
 router.patch('/entries/:id/reject', ctrl.rejectEntry);
 // PUT /entries/:id — correct an unconfirmed expense on the employee's behalf; requires 'khata.manage' + multer single 'receipt'.
-router.put('/entries/:id', receiptUpload.single('receipt'), ctrl.updateEntry);
+router.put('/entries/:id', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.updateEntry);
 // PATCH /entries/:id/confirm — accept a self-posted expense, which locks it against further edits; requires 'khata.manage'.
 router.patch('/entries/:id/confirm', ctrl.confirmEntry);
 // POST /entries/:id/reverse — cancel a posted entry with a mirror row (never a delete); requires 'khata.manage' + canApprove.

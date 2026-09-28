@@ -66,8 +66,16 @@ export default function PublicBill() {
   // A photographed bill is the overwhelmingly common case and an <img> is the
   // right element for it — it scales to the page and the browser's own zoom and
   // save-image work on it. A PDF invoice needs a viewer, so it gets the iframe.
-  const isPdf = String(meta?.mime || '').includes('pdf')
-    || /\.pdf$/i.test(String(meta?.fileName || ''));
+  const isPdf = (f) => String(f?.mime || '').includes('pdf')
+    || /\.pdf$/i.test(String(f?.fileName || ''));
+
+  // EVERY BILL ON THE ENTRY (2026-09-28 — one expense may carry several). The
+  // meta lists them; each streams with `?i=`. A meta that failed (see above) or
+  // came from a server without the list still shows the first, as before.
+  const files = meta?.files?.length
+    ? meta.files
+    : [{ i: 0, fileName: meta?.fileName || '', mime: meta?.mime || '' }];
+  const fileUrl = (f) => (files.length > 1 ? `${url}?i=${f.i}` : url);
 
   const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtDate = (d) => (d
@@ -79,7 +87,9 @@ export default function PublicBill() {
       <div className="w-full max-w-3xl bg-white shadow-lg rounded-2xl p-6 sm:p-8 border border-gray-100">
         <div className="flex flex-col items-center text-center mb-5">
           <BrandLockup variant="stacked" />
-          <h1 className="text-xl font-bold text-gray-900 mt-4">Bill from {COMPANY_NAME}</h1>
+          <h1 className="text-xl font-bold text-gray-900 mt-4">
+            {files.length > 1 ? `${files.length} bills` : 'Bill'} from {COMPANY_NAME}
+          </h1>
         </div>
 
         {loading ? (
@@ -110,27 +120,38 @@ export default function PublicBill() {
               </div>
             )}
 
-            <div className="flex flex-wrap justify-center gap-2 mb-4">
-              <a href={url} target="_blank" rel="noreferrer"
-                className="bg-gray-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-gray-700">
-                Open full size
-              </a>
-              {/* Plain anchor, not a blob click — the server's
-                  Content-Disposition supplies the filename, and this keeps
-                  working in mail browsers that block programmatic downloads. */}
-              <a href={url} download={meta?.fileName || ''}
-                className="border border-gray-300 text-gray-700 px-5 py-2.5 rounded-lg font-medium hover:bg-gray-50">
-                ⬇ Download
-              </a>
-            </div>
+            <div className="space-y-8">
+              {files.map((f, n) => (
+                <section key={f.i ?? n}>
+                  {files.length > 1 && (
+                    <p className="mb-2 text-center text-sm font-semibold text-gray-700">
+                      Bill {n + 1} of {files.length}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap justify-center gap-2 mb-4">
+                    <a href={fileUrl(f)} target="_blank" rel="noreferrer"
+                      className="bg-gray-900 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-gray-700">
+                      Open full size
+                    </a>
+                    {/* Plain anchor, not a blob click — the server's
+                        Content-Disposition supplies the filename, and this keeps
+                        working in mail browsers that block programmatic downloads. */}
+                    <a href={fileUrl(f)} download={f.fileName || ''}
+                      className="border border-gray-300 text-gray-700 px-5 py-2.5 rounded-lg font-medium hover:bg-gray-50">
+                      ⬇ Download
+                    </a>
+                  </div>
 
-            {isPdf ? (
-              <iframe title="Bill" src={url}
-                className="w-full h-[70vh] rounded-lg border border-gray-200" />
-            ) : (
-              <img src={url} alt={meta?.purpose || 'Bill'}
-                className="w-full max-h-[75vh] object-contain rounded-lg border border-gray-200 bg-gray-50" />
-            )}
+                  {isPdf(f) ? (
+                    <iframe title={`Bill ${n + 1}`} src={fileUrl(f)}
+                      className="w-full h-[70vh] rounded-lg border border-gray-200" />
+                  ) : (
+                    <img src={fileUrl(f)} alt={meta?.purpose ? `${meta.purpose} — bill ${n + 1}` : `Bill ${n + 1}`}
+                      className="w-full max-h-[75vh] object-contain rounded-lg border border-gray-200 bg-gray-50" />
+                  )}
+                </section>
+              ))}
+            </div>
           </>
         )}
       </div>

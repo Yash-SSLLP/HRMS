@@ -75,6 +75,9 @@ const AdminProjects = lazy(() => import('./pages/AdminProjects.jsx'));
 // they open — see pages/Tasks.jsx.
 const Tasks = lazy(() => import('./pages/Tasks.jsx'));
 const TaskDetail = lazy(() => import('./pages/TaskDetail.jsx'));
+// The recurring schedules — a page of their own since 2026-09-28 (it was a tab
+// inside Tasks), behind a Super Admin's switch. Both portals, like Tasks.
+const RecurringTasks = lazy(() => import('./pages/RecurringTasks.jsx'));
 const AdminRecruitment = lazy(() => import('./pages/AdminRecruitment.jsx'));
 // One page for both sides of the HR consultancy flow: the agency adds its
 // candidates and takes Round 1 there; HR, CEO/MD and the Backend follow them.
@@ -305,6 +308,7 @@ export default function App() {
         {/* The same detail page both portals use; `base` keeps a link inside
             the portal it was followed from. */}
         <Route path="tasks/:id" element={<TaskDetail base="/admin/tasks" />} />
+        <Route path="recurring-tasks" element={<RecurringTasks tasksBase="/admin/tasks" />} />
         <Route path="recruitment" element={<AdminRecruitment />} />
         <Route path="consultancy" element={<ConsultancyCandidates />} />
         <Route path="consultancy-jobs" element={<ConsultancyJobs />} />
@@ -387,6 +391,7 @@ export default function App() {
         <Route path="documents" element={<EmployeeDocuments />} />
         <Route path="tasks" element={<Tasks base="/employee/tasks" />} />
         <Route path="tasks/:id" element={<TaskDetail base="/employee/tasks" />} />
+        <Route path="recurring-tasks" element={<RecurringTasks tasksBase="/employee/tasks" />} />
         <Route path="assets" element={<EmployeeAssets />} />
         {/* Asset register for holders of the standalone Assets grant who have
             no admin portal — the same page /admin/assets serves, mounted here.

@@ -797,8 +797,50 @@ function testRepeatReminder() {
     'Every day at 10:00 AM until done');
 }
 
+// ===== 2026-09-28: two Super Admin grants, and editing a task you are also on =====
+
+function testSeptember28() {
+  console.log('\nRecurring + reminders are grants; edit any task before it is accepted (2026-09-28)');
+  const emp = (extra = {}) => ({ _id: A, role: 'Employee', permissions: [], ...extra });
+  ok('recurring: a Super Admin by role', access.canManageRecurring({ _id: A, role: 'SuperAdmin' }), true);
+  ok('recurring: an employee with the switch', access.canManageRecurring(emp({ taskRecurringAccess: true })), true);
+  ok('recurring: not without it', access.canManageRecurring(emp()), false);
+  // An HR Manager with no list holds every catalogued capability — and still
+  // not this: it is an explicit list, not a capability.
+  ok('recurring: not implied by holding every capability', access.canManageRecurring({ _id: A, role: 'HRManager' }), false);
+  ok('recurring: nor by being CEO', access.canManageRecurring({ _id: A, role: 'CEO' }), false);
+  ok('reminders: a Super Admin by role', access.canSetReminders({ _id: A, role: 'SuperAdmin' }), true);
+  ok('reminders: an employee with the switch', access.canSetReminders(emp({ taskReminderAccess: true })), true);
+  ok('reminders: the recurring switch is not this one', access.canSetReminders(emp({ taskRecurringAccess: true })), false);
+  ok('reminders: not implied by holding every capability', access.canSetReminders({ _id: A, role: 'HRManager' }), false);
+
+  // "In any task give option to edit that before accept" — the setter's own
+  // task used to be uneditable, because being a doer won.
+  const me = emp();
+  const selfOnly = { createdBy: A, status: 'PENDING', assignees: [{ user: A, status: 'PENDING', acceptance: 'AWAITING', name: 'Asha' }] };
+  ok('my own task, not yet accepted: I may edit it', access.capabilitiesFor(me, selfOnly).canEdit, true);
+  const selfTaken = { ...selfOnly, status: 'IN_PROGRESS', assignees: [{ user: A, status: 'IN_PROGRESS', acceptance: 'ACCEPTED', name: 'Asha' }] };
+  ok('…once I take it on, locked', access.capabilitiesFor(me, selfTaken).canEdit, false);
+  ok('…and the reason speaks to me', access.capabilitiesFor(me, selfTaken).editLocked,
+    'You have accepted this task, so it can no longer be edited.');
+  const withOthers = { createdBy: A, status: 'PENDING', assignees: [
+    { user: A, status: 'PENDING', acceptance: 'AWAITING' }, { user: B, status: 'PENDING', acceptance: 'AWAITING' },
+  ] };
+  ok('set for me and a colleague: I may edit it', access.capabilitiesFor(me, withOthers).canEdit, true);
+  ok('…my colleague may not', access.capabilitiesFor({ _id: B, role: 'Employee', permissions: [] }, withOthers).canEdit, false);
+  ok('…I still get the doer\'s Accept', access.capabilitiesFor(me, withOthers).canAccept, true);
+  // Holding the wide view does not let a DOER rewrite what they were given.
+  const hr = { _id: B, role: 'HRManager' };
+  const givenToHr = { createdBy: C, status: 'PENDING', assignees: [{ user: B, status: 'PENDING', acceptance: 'AWAITING' }] };
+  ok('tasks.manage + doing it: no edit', access.capabilitiesFor(hr, givenToHr).canEdit, false);
+  ok('tasks.manage + not on it: edit, as before', access.capabilitiesFor(hr, { ...givenToHr, assignees: [{ user: A, status: 'PENDING', acceptance: 'AWAITING' }] }).canEdit, true);
+  const delegatedBack = { createdBy: C, approver: A, status: 'PENDING', assignees: [{ user: A, status: 'PENDING', acceptance: 'AWAITING' }] };
+  ok('the approver who is also on it may edit', access.capabilitiesFor(me, delegatedBack).canEdit, true);
+}
+
 async function run() {
   console.log('Task module — rules');
+  testSeptember28();
   testEditLock();
   testNudge();
   testRoutine();

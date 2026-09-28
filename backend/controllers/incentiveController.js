@@ -1305,14 +1305,102 @@ const getSettings = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Work days ALREADY recorded out again at a rate just changed, from a date the
+ * manager chose.
+ *
+ * Every day freezes the figures it was saved with, so a changed rate only ever
+ * filled in NEW days. That is right for a rate that changes going forward and
+ * wrong for one that was set wrongly: QC went from 4 to 0.4 a sheet (2026-09-28)
+ * and every QC day already recorded still read 4. So the settings form can now
+ * ask for the change to reach back to a date — explicitly, never by default.
+ *
+ * PLANNED BEFORE ANYTHING IS WRITTEN, so it can be refused whole. A lower rate
+ * takes points away, and somebody already paid for that month must never be
+ * left paid more than they earned — the rule payPoints enforces (refused, not
+ * clamped). Only the figures changed in this request move; the rupee value a
+ * day froze is left as it was. Walled like every other read of these days.
+ * @param {import('express').Request} req
+ * @param {Date} from - local noon of the first day to work out again
+ * @param {{team: Object, qc: Object}} changes - field -> new value, per kind of day
+ * @returns {Promise<{docs: Array<{day: Object, change: Object}>, over: Object[],
+ *   counts: {teamDays: number, qcDays: number}, billingUnavailable: boolean}>}
+ *   `docs` pairs each day to re-rate with its change — nothing is applied yet
+ */
+async function planReRate(req, from, changes) {
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const and = [entryScopeFilter(req), { date: { $gte: from } }].filter((f) => Object.keys(f).length);
+  const kinds = [
+    ['teamDays', IncentiveEntry, changes.team],
+    ['qcDays', IncentiveQcDay, changes.qc],
+  ].filter(([, , change]) => Object.keys(change).length);
+
+  const docs = [];
+  const counts = { teamDays: 0, qcDays: 0 };
+  // `employee|YYYY-MM` -> how much what they earned that month moves.
+  const delta = new Map();
+  const bump = (p, month, sign) => {
+    const key = `${String(p.employee)}|${month}`;
+    delta.set(key, round2((delta.get(key) || 0) + sign * (p.sharePoints || 0)));
+  };
+  for (const [countKey, Model, change] of kinds) {
+    const days = await Model.find({ $and: and });
+    for (const day of days) {
+      // Already at the new figure — nothing to work out again.
+      if (Object.entries(change).every(([field, value]) => Number(day[field]) === value)) continue;
+      const month = IncentivePayment.monthKey(day.date);
+      IncentiveEntry.payees(day).forEach((p) => bump(p, month, -1));
+      // Worked out on a COPY: the day itself is only changed once the whole
+      // plan has passed the check below.
+      const plain = typeof day.toObject === 'function' ? day.toObject() : { ...day };
+      const trial = IncentiveEntry.recalc({ ...plain, ...change });
+      IncentiveEntry.payees(trial).forEach((p) => bump(p, month, 1));
+      docs.push({ day, change });
+      counts[countKey] += 1;
+    }
+  }
+
+  // Only somebody LOSING points in a month they were already paid for can end
+  // up overpaid, so the month's full roll-up is only read when that happens.
+  const over = [];
+  let billingUnavailable = false;
+  const losing = [...delta.entries()].filter(([, d]) => d < 0);
+  const months = [...new Set(losing.map(([key]) => key.split('|')[1]))];
+  for (const month of months) {
+    const period = IncentivePayment.monthStart(month);
+    const paid = await paidByEmployee(req, period, period);
+    const hit = losing
+      .filter(([key]) => key.endsWith(`|${month}`))
+      .map(([key, d]) => [key.split('|')[0], d])
+      .filter(([id]) => (paid.get(id) || 0) > 0);
+    if (!hit.length) continue;
+    const { earned, who, billing } = await earnedInMonth(req, period);
+    if ((billing.failed || []).length) billingUnavailable = true;
+    for (const [id, d] of hit) {
+      const nowEarned = round2((earned.get(id) || 0) + d);
+      if (paid.get(id) > nowEarned) {
+        over.push({ employee: id, name: who.get(id)?.name || '', month, paid: paid.get(id), earned: nowEarned });
+      }
+    }
+  }
+  return { docs, over, counts, billingUnavailable };
+}
+
+/**
  * Set what a point is worth, and what a sheet yields.
  *
  * Defaults only — entries already recorded keep the figures they were saved
- * with, so re-valuing a point never restates last month.
+ * with, so re-valuing a point never restates last month. UNLESS `applyFrom` is
+ * sent (2026-09-28): then whatever per-sheet or deduction figure changed here
+ * is also applied to the days already recorded on or after that date — see
+ * planReRate for the guard that refuses it when it would leave anybody paid
+ * more than they earned.
  * @route PUT /api/incentives/settings
  * @param {number} [req.body.rupeePerPoint] - company-wide, every incentive
  * @param {number} [req.body.pointsPerSheet] - the Boys incentive's per-sheet yield
- * @returns {{settings: Object}}
+ * @param {string} [req.body.applyFrom] - 'YYYY-MM-DD': also work out again the
+ *   days recorded from this date (the per-sheet and deduction figures only)
+ * @returns {{settings: Object, reRated?: {teamDays: number, qcDays: number}}};
+ *   409 RERATE_OVERPAID naming who, with nothing changed
  */
 const updateSettings = asyncHandler(async (req, res) => {
   const doc = await Setting.getSettings();
@@ -1325,34 +1413,77 @@ const updateSettings = asyncHandler(async (req, res) => {
     }
     return n;
   };
-  if (req.body.rupeePerPoint !== undefined && req.body.rupeePerPoint !== '') {
-    doc.incentive.rupeePerPoint = num(req.body.rupeePerPoint, 'Rupees per point');
-  }
-  if (req.body.pointsPerSheet !== undefined && req.body.pointsPerSheet !== '') {
-    doc.incentive.pointsPerSheet = num(req.body.pointsPerSheet, 'Points per sheet');
-  }
-  if (req.body.deductionPct !== undefined && req.body.deductionPct !== '') {
+  const sent = (key) => req.body[key] !== undefined && req.body[key] !== '';
+  // Validated into `next` first and written onto the document only once any
+  // re-rate below has passed its check — a refusal leaves nothing half-changed.
+  const next = {};
+  if (sent('rupeePerPoint')) next.rupeePerPoint = num(req.body.rupeePerPoint, 'Rupees per point');
+  if (sent('pointsPerSheet')) next.pointsPerSheet = num(req.body.pointsPerSheet, 'Points per sheet');
+  if (sent('deductionPct')) {
     const pct = num(req.body.deductionPct, 'Deduction');
     if (pct > 100) {
       res.status(400);
       throw new Error('The deduction cannot be more than 100% — the team would be left with less than nothing.');
     }
-    doc.incentive.deductionPct = pct;
+    next.deductionPct = pct;
   }
   // QC's own pair — same rules as the teams' two above.
-  if (req.body.qcPointsPerSheet !== undefined && req.body.qcPointsPerSheet !== '') {
-    doc.incentive.qcPointsPerSheet = num(req.body.qcPointsPerSheet, 'QC points per sheet');
-  }
-  if (req.body.qcDeductionPct !== undefined && req.body.qcDeductionPct !== '') {
+  if (sent('qcPointsPerSheet')) next.qcPointsPerSheet = num(req.body.qcPointsPerSheet, 'QC points per sheet');
+  if (sent('qcDeductionPct')) {
     const pct = num(req.body.qcDeductionPct, 'QC deduction');
     if (pct > 100) {
       res.status(400);
       throw new Error('The QC deduction cannot be more than 100% — QC would be left with less than nothing.');
     }
-    doc.incentive.qcDeductionPct = pct;
+    next.qcDeductionPct = pct;
   }
+
+  // Reaching back to days already recorded — only when asked, and only for the
+  // per-sheet and deduction figures this request changed (never the rupee value).
+  let reRate = null;
+  if (req.body.applyFrom !== undefined && req.body.applyFrom !== null && req.body.applyFrom !== '') {
+    const from = dayAt(req.body.applyFrom);
+    if (!from) {
+      res.status(400);
+      throw new Error('Say from which date the new figure should apply to the days already recorded.');
+    }
+    const changes = { team: {}, qc: {} };
+    if (next.pointsPerSheet !== undefined) changes.team.pointsPerSheet = next.pointsPerSheet;
+    if (next.deductionPct !== undefined) changes.team.deductionPct = next.deductionPct;
+    if (next.qcPointsPerSheet !== undefined) changes.qc.pointsPerSheet = next.qcPointsPerSheet;
+    if (next.qcDeductionPct !== undefined) changes.qc.deductionPct = next.qcDeductionPct;
+    reRate = await planReRate(req, from, changes);
+    if (reRate.over.length) {
+      const first = reRate.over[0];
+      const blind = reRate.billingUnavailable
+        ? ' The billing system could not be reached, so billing points are missing from what they earned.'
+        : '';
+      res.status(409);
+      return res.json({
+        code: 'RERATE_OVERPAID',
+        message: (reRate.over.length === 1 && first.name
+          ? `${first.name} has already been paid ${first.paid} points for ${first.month}, and the new figure would leave them with ${first.earned} earned.`
+          : `${reRate.over.length} people have already been paid more for their month than the new figure would leave them with.`)
+          + ' Nothing was changed — take back those payments first, or apply the new figure from a later date.' + blind,
+        people: reRate.over.slice(0, 20),
+      });
+    }
+  }
+
+  for (const [key, value] of Object.entries(next)) doc.incentive[key] = value;
   await doc.save();
-  res.json({ settings: await incentiveSettings() });
+  if (reRate) {
+    const actorName = req.user.fullName || `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim();
+    for (const { day, change } of reRate.docs) {
+      // Plain assignment runs the document's own path setters; the save hook
+      // works the day's figures out again.
+      Object.assign(day, change);
+      day.updatedBy = req.user._id;
+      day.updatedByName = actorName;
+      await day.save();
+    }
+  }
+  res.json({ settings: await incentiveSettings(), ...(reRate ? { reRated: reRate.counts } : {}) });
 });
 
 // -------------------------------------------------------------- excel -------
@@ -2377,41 +2508,19 @@ const updateLeaderboardSettings = asyncHandler(async (req, res) => {
 });
 
 /**
- * Pay somebody their points for a month — in full or in part.
+ * What everybody EARNED in one month — team-days, QC days, credited points and
+ * billing points — through the same roll-up the Per employee tab shows.
  *
- * The company settles with a PERSON, not with a day, and not always in one go:
- * 100 points outstanding may be paid 20 now and the rest later (user decision
- * 2026-09-10). So each call APPENDS payment rows rather than setting a flag, and
- * what is still owed is always `earned - sum(payments)`.
- *
- * More is refused rather than clamped: paying somebody 60 points when they have
- * earned 50 is a typo, and silently recording 50 would hide it.
- *
- * Gated by requireIncentivePayer (HR / CEO / MD / SuperAdmin), deliberately
- * narrower than the rest of the module — recording the work is a supervisor's
- * job, settling it is the company's.
- * @route POST /api/incentives/payments
- * @param {string} req.body.month - 'YYYY-MM', the month being settled
- * @param {Array<{employee: string, points: number}>} req.body.payments
- * @param {string} [req.body.note]
- * @returns {{paid: number, points: number}}; 400 naming anyone overpaid
+ * Shared by payPoints (is this payment more than they are owed?) and by the
+ * settings re-rate (would working the days out again leave somebody paid more
+ * than they earned?), so the two questions can never be answered from
+ * different figures. Lifted out of payPoints unchanged on 2026-09-28.
+ * @param {import('express').Request} req
+ * @param {Date} period - the month, as IncentivePayment.monthStart gives it
+ * @returns {Promise<{earned: Map<string, number>, who: Map<string, Object>, billing: Object}>}
+ *   `who` carries the name, code, department and company a payment row is filed under
  */
-const payPoints = asyncHandler(async (req, res) => {
-  const period = IncentivePayment.monthStart(req.body.month);
-  if (!period) {
-    res.status(400);
-    throw new Error('Say which month is being paid (YYYY-MM).');
-  }
-  const wanted = (Array.isArray(req.body.payments) ? req.body.payments : [])
-    .map((p) => ({ employee: String(p.employee || ''), points: Math.round((Number(p.points) || 0) * 100) / 100 }))
-    .filter((p) => p.employee && p.points > 0);
-  if (!wanted.length) {
-    res.status(400);
-    throw new Error('Nothing to pay — enter the points for at least one person.');
-  }
-
-  // What that month says they earned, and what they have had already. Read
-  // through the same roll-up the screen shows, so the two can never disagree.
+async function earnedInMonth(req, period) {
   const monthStart = new Date(period.getFullYear(), period.getMonth(), 1);
   const monthEnd = new Date(period.getFullYear(), period.getMonth() + 1, 0, 23, 59, 59, 999);
   const and = [entryScopeFilter(req), { date: { $gte: monthStart, $lte: monthEnd } }]
@@ -2468,6 +2577,46 @@ const payPoints = asyncHandler(async (req, res) => {
       });
     }
   }
+  return { earned, who, billing };
+}
+
+/**
+ * Pay somebody their points for a month — in full or in part.
+ *
+ * The company settles with a PERSON, not with a day, and not always in one go:
+ * 100 points outstanding may be paid 20 now and the rest later (user decision
+ * 2026-09-10). So each call APPENDS payment rows rather than setting a flag, and
+ * what is still owed is always `earned - sum(payments)`.
+ *
+ * More is refused rather than clamped: paying somebody 60 points when they have
+ * earned 50 is a typo, and silently recording 50 would hide it.
+ *
+ * Gated by requireIncentivePayer (HR / CEO / MD / SuperAdmin), deliberately
+ * narrower than the rest of the module — recording the work is a supervisor's
+ * job, settling it is the company's.
+ * @route POST /api/incentives/payments
+ * @param {string} req.body.month - 'YYYY-MM', the month being settled
+ * @param {Array<{employee: string, points: number}>} req.body.payments
+ * @param {string} [req.body.note]
+ * @returns {{paid: number, points: number}}; 400 naming anyone overpaid
+ */
+const payPoints = asyncHandler(async (req, res) => {
+  const period = IncentivePayment.monthStart(req.body.month);
+  if (!period) {
+    res.status(400);
+    throw new Error('Say which month is being paid (YYYY-MM).');
+  }
+  const wanted = (Array.isArray(req.body.payments) ? req.body.payments : [])
+    .map((p) => ({ employee: String(p.employee || ''), points: Math.round((Number(p.points) || 0) * 100) / 100 }))
+    .filter((p) => p.employee && p.points > 0);
+  if (!wanted.length) {
+    res.status(400);
+    throw new Error('Nothing to pay — enter the points for at least one person.');
+  }
+
+  // What that month says they earned, and what they have had already. Read
+  // through the same roll-up the screen shows, so the two can never disagree.
+  const { earned, who, billing } = await earnedInMonth(req, period);
   const already = await paidByEmployee(req, period, period);
 
   const over = [];

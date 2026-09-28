@@ -1258,8 +1258,11 @@ async function applyExpenseEdit(entry, changes, actor, opts = {}) {
   }
 
   // A replaced bill is handled by the caller (it owns the file storage), but it
-  // belongs in the same trail entry as the rest of the correction.
-  if (changes.receiptReplaced) lines.push('bill replaced');
+  // belongs in the same trail entry as the rest of the correction. Since
+  // 2026-09-28 the caller may say how ("bills 1 → 3"); `true` is the old word.
+  if (changes.receiptReplaced) {
+    lines.push(typeof changes.receiptReplaced === 'string' ? changes.receiptReplaced : 'bill replaced');
+  }
 
   if (lines.length) {
     entry.edits.push({

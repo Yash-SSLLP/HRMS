@@ -41,7 +41,7 @@ export default function TaskStatBar({ counters = {}, active = '', onPick, loadin
             type="button"
             aria-pressed={on}
             onClick={() => onPick?.(key === 'total' || active === key ? '' : key)}
-            title={key === 'total' ? 'Show every task in this pile' : `Show ${label.toLowerCase()} only`}
+            title={key === 'total' ? 'Show every open task in this pile — finished ones are under Completed' : `Show ${label.toLowerCase()} only`}
             style={on ? { backgroundColor: `color-mix(in srgb, ${colour} 7%, var(--surface))` } : undefined}
             className="relative flex min-w-0 flex-col gap-2 bg-white px-3 pb-3 pt-3 text-left transition hover:bg-gray-50 sm:px-4 sm:pt-4"
           >

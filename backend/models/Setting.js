@@ -29,11 +29,11 @@ const settingSchema = new mongoose.Schema(
     // "select an employee" pickers that opt in (?excludeExecutives=true). A
     // SuperAdmin can flip this on to make them selectable everywhere.
     includeExecutivesInLists: { type: Boolean, default: false },
-    // RETIRED 2026-09-26 — nothing reads it. It used to switch the CEO/MD
-    // sanction on an employee's cash-advance request on and off; the sanction
-    // is now always required (khataController.requestAdvance), so the switch
-    // is gone from Permissions and the org-settings route. Kept in the schema
-    // only so stored documents still describe themselves.
+    // Does an employee's cash-advance request need a CEO/MD sanction before the
+    // cashbook manager sees it? A Permissions toggle (Super Admin), default ON.
+    // Retired 2026-09-26 (always required) and brought BACK 2026-09-28 at the
+    // user's request — see khataController.advanceApprovalRequired, and the
+    // org-settings route for what flipping it does to requests in flight.
     khataAdvanceApprovalRequired: { type: Boolean, default: true },
 
     // Org-wide switch for the chat module. Off by default: the launcher, dock

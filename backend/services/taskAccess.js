@@ -393,6 +393,30 @@ function canAssignOnBehalf(user) {
 }
 
 /**
+ * May this caller set up and run RECURRING tasks (2026-09-28)?
+ *
+ * A Super Admin by role; anybody else only once a Super Admin has switched on
+ * User.taskRecurringAccess for them — the user's "Super Admin can decide who to
+ * give". Deliberately NOT implied by `tasks.manage`: every HR Manager without a
+ * `permissions` list holds that by default, and this is an explicit list.
+ */
+function canManageRecurring(user) {
+  return user?.role === 'SuperAdmin' || user?.taskRecurringAccess === true;
+}
+
+/**
+ * May this caller SET a task's reminders — its notifications (2026-09-28)?
+ *
+ * Same shape as the grant above (User.taskReminderAccess). Without it, the
+ * reminders a form sends are ignored rather than refused: an app build from
+ * before this change always sends them, and refusing would stop those people
+ * assigning anything at all. The task then gets the company's defaults.
+ */
+function canSetReminders(user) {
+  return user?.role === 'SuperAdmin' || user?.taskReminderAccess === true;
+}
+
+/**
  * The Mongo filter for "tasks this caller may see", before any UI filter.
  *
  * @param {import('express').Request} req
@@ -543,7 +567,26 @@ function canTransfer(user, task) {
  */
 function canEdit(user, task) {
   const { termsOpen } = require('../config/tasks');
-  return actorRoleOn(user, task) === 'assigner' && termsOpen(task);
+  return setsTerms(user, task) && termsOpen(task);
+}
+
+/**
+ * Is this caller one of the people who SET the task's terms?
+ *
+ * `actorRoleOn` answers "doer" first — right for the buttons, wrong here. The
+ * person who set a task for themselves, or for themselves and two others, is a
+ * doer on it AND the one who wrote it, and until 2026-09-28 that made their own
+ * task uneditable: the user's "in any task give option to edit that before
+ * accept". So the setter and the approver count whatever else they are; an
+ * admin (tasks.manage) still counts only when they are not doing it, as before
+ * — holding the wide view must not let a doer rewrite what they were given.
+ */
+function setsTerms(user, task) {
+  if (!task) return false;
+  const id = String(user._id);
+  if (String(task.createdBy?._id || task.createdBy || '') === id) return true;
+  if (String(task.approver?._id || task.approver || '') === id) return true;
+  return actorRoleOn(user, task) === 'assigner';
 }
 
 /**
@@ -553,10 +596,14 @@ function canEdit(user, task) {
  */
 function editLockReason(user, task) {
   const { termsOpen, isTerminal: terminal, ACCEPTANCE } = require('../config/tasks');
-  if (actorRoleOn(user, task) !== 'assigner' || termsOpen(task)) return null;
+  if (!setsTerms(user, task) || termsOpen(task)) return null;
   if (terminal(task.status)) return 'This task is closed, so it can no longer be edited.';
   const took = (task.assignees || []).find((a) => a.acceptance === ACCEPTANCE.ACCEPTED)
     || (task.assignees || []).find((a) => a.acceptance !== ACCEPTANCE.REJECTED);
+  // Your own task, taken on by you: nobody else to say anything to.
+  if (took && String(took.user?._id || took.user || '') === String(user._id)) {
+    return 'You have accepted this task, so it can no longer be edited.';
+  }
   const who = took?.name || 'The person on it';
   return `${who} has accepted this task, so it can no longer be edited. `
     + 'Say what should change in a remark — or they can ask for more time.';
@@ -806,6 +853,8 @@ module.exports = {
   assignableUserIds,
   seesEverything,
   canAssignOnBehalf,
+  canManageRecurring,
+  canSetReminders,
   visibleFilter,
   canSee,
   canSeeThroughParent,

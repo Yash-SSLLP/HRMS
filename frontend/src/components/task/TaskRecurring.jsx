@@ -36,7 +36,11 @@ const whenText = (d) => {
 
 // Adding one is the Tasks page's floating button (2026-09-27 — the same one the
 // Tasks tab has), not a button of this tab's own.
-export default function TaskRecurring({ viewOnly = false, isAdmin = false, onEdit, refreshKey = 0 }) {
+// `showIntro`: the one-line explainer. The Recurring Tasks page (2026-09-28)
+// says it in its own header, so it switches this one off.
+export default function TaskRecurring({
+  viewOnly = false, isAdmin = false, onEdit, refreshKey = 0, showIntro = true,
+}) {
   const me = useAuthStore((s) => s.user?._id);
   const [rows, setRows] = useState(null);
   const [scope, setScope] = useState('mine');
@@ -89,9 +93,9 @@ export default function TaskRecurring({ viewOnly = false, isAdmin = false, onEdi
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className={`flex flex-wrap items-center gap-3 ${!showIntro && !isAdmin ? 'hidden' : ''}`}>
         <p className="min-w-0 flex-1 text-xs text-gray-500">
-          Set it up once — each time it comes round it lands in their Tasks on its own. Daily ones are only marked done.
+          {showIntro ? 'Set it up once — each time it comes round it lands in their Tasks on its own. Daily ones are only marked done.' : ''}
         </p>
         {isAdmin && (
           <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1" role="tablist">

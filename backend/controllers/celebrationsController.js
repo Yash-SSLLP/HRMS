@@ -1,7 +1,8 @@
 /**
  * Celebrations controller — surfaces birthdays and work anniversaries (from
  * EmployeeProfile), builds a combined month calendar (holidays, festival
- * reminders, events, celebrations, the viewer's interviews), and lets colleagues send a wish.
+ * reminders, events, celebrations, interviews — the viewer's own, or every one
+ * booked for SuperAdmin and HR), and lets colleagues send a wish.
  *
  * A wish is delivered as an in-app NOTIFICATION and nothing else — plus a
  * celebratory email when, and only when, the sender is the Backend, the CEO or
@@ -20,6 +21,7 @@ const { hiddenUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
 const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
 const { festivalsInRange } = require('../utils/festivalFeed');
 const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
+const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
 
 // {month, day} of a date **in IST**, for recurring-date matching. Must not use
 // the server's local timezone: the deployed server runs UTC, where an IST-entered
@@ -40,6 +42,23 @@ function sameMonthDay(a, b) {
 // ends in a role default, and this is a fixed list, not a grantable capability.
 const WISH_EMAIL_ROLES = ['SuperAdmin', 'CEO', 'MD'];
 const wishGoesByEmail = (user) => !!user && WISH_EMAIL_ROLES.includes(user.role);
+
+/**
+ * Does this viewer's calendar show EVERY scheduled interview, not just the
+ * rounds they take? SuperAdmin always; otherwise whoever holds the interview or
+ * candidate capability — the HR desk that books the rounds. CEO/MD and the God
+ * account are left out on purpose (their calendar stays their own, and an exec
+ * in edit mode would otherwise see it change with the switch), as is the
+ * outside consultancy account.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+function seesEveryInterview(user) {
+  if (!user) return false;
+  if (user.role === 'SuperAdmin') return true;
+  if (isPortalViewer(user) || user.role === 'HRConsultancy') return false;
+  return hasPermission(user, 'recruitment.interviews') || hasPermission(user, 'recruitment.candidates');
+}
 
 // How long a wish stays on the recipient's dashboard card after the occasion.
 const WISH_VISIBLE_DAYS_AFTER = 2;
@@ -544,7 +563,8 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
 
 /**
  * Build a combined calendar for a month: holidays, custom events, recurring
- * birthdays/anniversaries, and interviews the viewer is assigned to take.
+ * birthdays/anniversaries, and interviews: the ones the viewer is assigned to
+ * take, or every scheduled round for SuperAdmin and HR (seesEveryInterview).
  * @route GET /api/celebrations/calendar?month=YYYY-MM
  * @param {string} [req.query.month] - YYYY-MM, defaults to the current month
  * @returns {{year, month, count, events: Object[]}} each {day, type, label, meta}, sorted by day
@@ -701,15 +721,31 @@ const monthCalendar = asyncHandler(async (req, res) => {
     });
   }
 
-  // --- Interviews the viewer is assigned to take (their own calendar) ---
-  // Interviews reference the interviewer as a User; the viewer is req.user.
+  // --- Interviews ---
+  // Everybody sees the rounds they are down to take. Whoever runs recruitment —
+  // SuperAdmin, and HR (or a Manager) holding the interview or candidate
+  // capability — sees EVERY round booked this month, whoever takes it: the HR
+  // calendar is where the day's interview load is planned. Walled to the jobs
+  // in the viewer's companies, like the pipeline itself.
   const Candidate = require('../models/Candidate');
-  const interviewCands = await Candidate.find({ 'rounds.interviewer': req.user._id })
+  const me = String(req.user._id);
+  const seesAll = seesEveryInterview(req.user);
+  // The pipeline's own wall (recruitmentController's `internals`), so the two
+  // can never disagree about which candidates this viewer may see.
+  const wallJobIds = seesAll ? await require('./recruitmentController').internals.allowedJobIds(req) : null;
+  const roundMatch = { scheduledAt: { $gte: monthStart, $lt: monthEnd } };
+  const interviewCands = await Candidate.find({
+    rounds: { $elemMatch: seesAll ? roundMatch : { ...roundMatch, interviewer: req.user._id } },
+  })
     .populate('job', 'title')
     .select('name job rounds resumeName resumePath');
   for (const c of interviewCands) {
+    // Job-less candidates are shared, like a company-less job.
+    const inWall = seesAll && (!wallJobIds || !c.job || wallJobIds.includes(String(c.job._id)));
     for (const r of c.rounds || []) {
-      if (!r.scheduledAt || String(r.interviewer) !== String(req.user._id)) continue;
+      if (!r.scheduledAt) continue;
+      const mine = !!r.interviewer && String(r.interviewer) === me;
+      if (!mine && !inWall) continue;
       // Place the interview on its IST calendar day (scheduledAt is stored UTC).
       const at = istParts(r.scheduledAt);
       if (at.y !== year || at.m !== month) continue;
@@ -729,6 +765,11 @@ const monthCalendar = asyncHandler(async (req, res) => {
           jobTitle: c.job?.title || '',
           hasResume: !!(c.resumeName || c.resumePath),
           meetingLink: r.meetingLink || '',
+          // Whose interview it is. `mine` also tells the client which résumé
+          // route to use: the interviewer's own (/my-interviews/:id/resume) or
+          // HR's (/candidates/:id/resume) — the first refuses anyone else.
+          mine,
+          interviewer: mine ? 'You' : (r.interviewerName || ''),
         },
       });
     }

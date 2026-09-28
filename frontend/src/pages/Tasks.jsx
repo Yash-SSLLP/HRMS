@@ -34,10 +34,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Navigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import {
   FiPlus, FiFilter, FiSearch, FiX, FiBookmark, FiBarChart2, FiChevronLeft, FiChevronRight,
-  FiArrowLeft, FiList, FiRepeat,
+  FiArrowLeft, FiDownload,
 } from 'react-icons/fi';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -55,16 +56,16 @@ import TransferModal from '../components/task/TransferModal';
 import { EmptyTasks } from '../components/task/TaskChips';
 import TaskTemplates from '../components/task/TaskTemplates';
 import TaskDashboard from '../components/task/TaskDashboard';
-import TaskRecurring from '../components/task/TaskRecurring';
 import ExtensionModal from '../components/task/ExtensionModal';
 import * as T from '../api/tasks';
-import { RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor } from '../utils/taskLifecycle';
+import { RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor, statQueryFor } from '../utils/taskLifecycle';
 
 /**
- * Everything `?tab=` has ever meant here. The three piles are the page; the
- * rest are old links (Kanban, Requests, Dashboard) and the two header places,
- * each sent somewhere sensible rather than to an empty screen. `recurring`
- * (2026-09-27) is the Recurring tab — the schedules, not the tasks.
+ * Everything `?tab=` has ever meant here. The piles are the page; the rest are
+ * old links (Kanban, Requests, Dashboard) and the two header places, each sent
+ * somewhere sensible rather than to an empty screen. `recurring` was the
+ * Recurring tab (2026-09-27); since 2026-09-28 the schedules are a page of
+ * their own and an old link to the tab is forwarded there.
  */
 const TAB_IDS = ['mine', 'delegated', 'loop', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests', 'recurring'];
 
@@ -77,6 +78,9 @@ export default function Tasks({ base = '/employee/tasks' }) {
   const isAdmin = Boolean(meta?.isAdmin);
   const meId = String(meta?.me || (meta?.people || []).find((p) => p.relation === 'self')?._id || '');
 
+  // Opens on "Assigned to me" — always, for everybody (user, 2026-09-28: "when
+  // anyone open the task tab … by default Assigned to me should be selected").
+  // Only a link that names another pile (`?tab=`) opens anywhere else.
   const [tab, setTab] = useTabParam('mine', TAB_IDS);
 
   /** Which pile the list shows. An old link to a retired tab lands on your own. */
@@ -84,10 +88,14 @@ export default function Tasks({ base = '/employee/tasks' }) {
     : tab === 'loop' ? 'loop'
     : tab === 'all' && (isAdmin || !meta) ? 'all'
       : 'mine';
-  /** The page itself, one of the two places reached from the header, or the Recurring tab. */
+  /**
+   * The page itself, or one of the two places reached from the header.
+   * 'moved' is an old link to the Recurring tab, forwarded below — nothing on
+   * this page loads for it.
+   */
   const view = tab === 'report' || tab === 'dashboard' ? 'report'
     : tab === 'templates' ? 'templates'
-      : tab === 'recurring' ? 'recurring'
+      : tab === 'recurring' ? 'moved'
         : 'list';
 
   // "All tasks" is tasks.manage's — somebody who followed an old link to it
@@ -123,16 +131,10 @@ export default function Tasks({ base = '/employee/tasks' }) {
   // ===== Dialogs =====
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignPrefill, setAssignPrefill] = useState(null);
-  /**
-   * What the assign form is for (2026-09-27): a one-off (null), a new
-   * recurring task (`{ recurring: true }`), or an existing schedule
-   * (`{ recurring: true, scheduleId }`).
-   */
-  const [assignMode, setAssignMode] = useState(null);
-  const [recurringKey, setRecurringKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  /** `{ id, to }` — the task opened over the list. */
+  /** `{ id, to, edit }` — the task opened over the list (`edit`: its editor already open). */
   const [openTask, setOpenTask] = useState(null);
+  const [exporting, setExporting] = useState(false);
   /** `{ key, task, swipe? }` — a status move waiting on its remark. */
   const [action, setAction] = useState(null);
   const [delegating, setDelegating] = useState(null);
@@ -159,7 +161,8 @@ export default function Tasks({ base = '/employee/tasks' }) {
    */
   const params = useMemo(() => {
     const f = filters;
-    const statQuery = STAT_BAR.find((s) => s.key === stat)?.query || {};
+    // No figure picked is "Total" — the open work, not every row (2026-09-28).
+    const statQuery = statQueryFor(stat);
     return {
       scope: pile,
       range: f.range,
@@ -213,6 +216,25 @@ export default function Tasks({ base = '/employee/tasks' }) {
     setTab(key);
   }, [setTab]);
 
+  // ===== The report (2026-09-28) =====
+
+  /**
+   * EXPORT — the list as an Excel report. Exactly what is on screen: the same
+   * query (pile, window, filters, search, the figure picked, the order), every
+   * page of it. `figure` only names the figure on the report's summary sheet.
+   */
+  const exportReport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const { page: _p, limit: _l, withScopes: _w, ...query } = params;
+      await T.exportTasks({ ...query, figure: stat || 'total' });
+    } catch (err) {
+      toast.error(err?.message || 'Could not export the tasks.');
+    } finally {
+      setExporting(false);
+    }
+  }, [params, stat]);
+
   // ===== The status dropdown =====
 
   const showTask = useCallback((task) => setOpenTask({ id: task._id }), []);
@@ -256,6 +278,9 @@ export default function Tasks({ base = '/employee/tasks' }) {
     }
     if (key === 'delegate') { setDelegating(task); return; }
     if (key === 'transfer') { setTransferring(task); return; }
+    // Straight into the task's editor (2026-09-28: "in any task give option to
+    // edit that before accept") — offered only while `can.canEdit` holds.
+    if (key === 'edit') { setOpenTask({ id: task._id, edit: true }); return; }
     setAction({ key, task });
   }, [refresh]);
 
@@ -301,12 +326,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
     [tasks, viewOnly]
   );
   const onNudged = useCallback((id, at) => setNudged((m) => ({ ...m, [id]: at })), []);
-
-  const openRecurringForm = useCallback((schedule = null) => {
-    setAssignPrefill(null);
-    setAssignMode({ recurring: true, scheduleId: schedule?._id || null });
-    setAssignOpen(true);
-  }, []);
 
   // ===== Filters, as chips under the toolbar =====
 
@@ -371,10 +390,15 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
   // ===== Render =====
 
-  // ONE way to add, on both tabs, as on the app (user, 2026-09-27: "for both
-  // tab Tasks and Recurring to add new task should be same … make floating
-  // button for both"): Assign task on Tasks, New recurring task on Recurring.
-  const fab = !viewOnly && (view === 'list' || view === 'recurring');
+  // An old link to the Recurring tab (2026-09-27) goes to the page the
+  // schedules have now (2026-09-28): `/admin/tasks` → `/admin/recurring-tasks`.
+  if (tab === 'recurring') {
+    return <Navigate to={base.replace(/tasks\/?$/, 'recurring-tasks')} replace />;
+  }
+
+  // ONE way to add a task: the floating button (user, 2026-09-27). The
+  // recurring schedules have their own page — and their own button — now.
+  const fab = !viewOnly && view === 'list';
 
   return (
     <div className={`tasks-page${fab ? ' pb-20' : ''}`}>
@@ -384,12 +408,10 @@ export default function Tasks({ base = '/employee/tasks' }) {
       {fab && createPortal(
         <button
           type="button"
-          onClick={view === 'recurring'
-            ? () => openRecurringForm(null)
-            : () => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
+          onClick={() => { setAssignPrefill(null); setAssignOpen(true); }}
           className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full bg-green-600 px-5 text-sm font-semibold text-white shadow-lg shadow-green-900/20 transition hover:bg-green-700 min-h-[48px] sm:bottom-6 sm:right-6 print:hidden"
         >
-          <FiPlus size={18} /> {view === 'recurring' ? 'New recurring task' : 'Assign task'}
+          <FiPlus size={18} /> Assign task
         </button>,
         document.body,
       )}
@@ -424,39 +446,10 @@ export default function Tasks({ base = '/employee/tasks' }) {
         </button>
       </PageHeader>
 
-      {/* ── Tasks | Recurring (2026-09-27) ──────────────────── */}
-      {/* The user: "a separate tab for recurring tasks, only to assign". The
-          schedules live on their own tab; what they raise lands in the Tasks
-          tab like any other task. */}
-      {(view === 'list' || view === 'recurring') && (
-        <div className="mb-4 inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1" role="tablist" aria-label="Tasks or recurring">
-          {[['list', 'Tasks', FiList], ['recurring', 'Recurring', FiRepeat]].map(([k, label, Icon]) => (
-            <button
-              key={k}
-              type="button"
-              role="tab"
-              aria-selected={view === k}
-              onClick={() => setTab(k === 'list' ? backTo : 'recurring')}
-              className={`inline-flex items-center gap-2 rounded-lg border px-4 text-sm font-semibold transition min-h-[36px] ${
-                view === k ? 'border-gray-200 bg-white text-gray-900 shadow-sm' : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Icon size={14} /> {label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {view === 'recurring' && (
-        <TaskRecurring
-          viewOnly={viewOnly}
-          isAdmin={isAdmin}
-          refreshKey={recurringKey}
-          onEdit={(row) => openRecurringForm(row)}
-        />
-      )}
-
       {/* ── The two places reached from the header ──────────── */}
+      {/* (The Tasks | Recurring switch that sat here went on 2026-09-28: the
+          schedules are their own page — "Recurring Tasks" in the sidebar —
+          behind a Super Admin's switch.) */}
       {(view === 'report' || view === 'templates') && (
         <>
           <button
@@ -471,7 +464,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
             <TaskTemplates
               meta={meta}
               viewOnly={viewOnly}
-              onUse={(prefill) => { setAssignPrefill(prefill); setAssignMode(null); setAssignOpen(true); }}
+              onUse={(prefill) => { setAssignPrefill(prefill); setAssignOpen(true); }}
             />
           )}
         </>
@@ -520,6 +513,20 @@ export default function Tasks({ base = '/employee/tasks' }) {
                   {filterCount}
                 </span>
               )}
+            </button>
+
+            {/* The list as an Excel report (2026-09-28) — what is on screen,
+                every page of it. Icon-only on a phone, where the row is full. */}
+            <button
+              type="button"
+              onClick={exportReport}
+              disabled={exporting || loading}
+              title="Export these tasks to Excel — the pile, filters and figure you have picked"
+              aria-label="Export to Excel"
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-gray-300 hover:text-blue-600 disabled:opacity-60 min-h-[40px]"
+            >
+              <FiDownload size={15} className={exporting ? 'animate-pulse' : ''} />
+              <span className="hidden sm:inline">{exporting ? 'Exporting…' : 'Export'}</span>
             </button>
           </div>
 
@@ -578,7 +585,8 @@ export default function Tasks({ base = '/employee/tasks' }) {
               scope={pile}
               filtered={narrowed}
               olderHint={['today', 'week', 'month'].includes(filters.range)}
-              onAssign={viewOnly || narrowed ? undefined : () => { setAssignPrefill(null); setAssignMode(null); setAssignOpen(true); }}
+              onAssign={viewOnly || narrowed ? undefined : () => { setAssignPrefill(null); setAssignOpen(true); }}
+              completedHint={!stat && Number(counters.completed) > 0}
             />
           ) : (
             <div className={`space-y-2.5 transition-opacity ${refreshing ? 'opacity-60' : ''}`}>
@@ -631,18 +639,13 @@ export default function Tasks({ base = '/employee/tasks' }) {
       )}
 
       {/* ── Dialogs ──────────────────────────────────────────── */}
+      {/* One-off tasks only: recurring ones are set up on Recurring Tasks. */}
       <AssignTaskModal
         open={assignOpen}
-        onClose={() => { setAssignOpen(false); setAssignMode(null); }}
-        onCreated={(_row, how) => {
-          // A recurring task raises nothing now — its list is what changed.
-          if (how?.recurring) setRecurringKey((n) => n + 1);
-          else refresh();
-        }}
+        onClose={() => setAssignOpen(false)}
+        onCreated={() => refresh()}
         meta={meta}
         prefill={assignPrefill}
-        recurring={Boolean(assignMode?.recurring)}
-        scheduleId={assignMode?.scheduleId || null}
       />
 
       <TaskFilters
@@ -697,6 +700,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
         onClose={() => setOpenTask(null)}
         onChanged={refresh}
         initialStatus={openTask?.to || null}
+        initialEdit={Boolean(openTask?.edit)}
       />
     </div>
   );

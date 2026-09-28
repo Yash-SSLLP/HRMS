@@ -167,6 +167,8 @@ export default function TaskDetailBody({
    * move, because the server will not take a silent one.
    */
   initialStatus = null,
+  /** Open with the editor out — "Edit task" was picked on a row (2026-09-28). */
+  initialEdit = false,
   /** Something was written. The list, the board or the badge behind us reloads. */
   onChanged,
   /** A piece was opened — the modal swaps to it, the page navigates to it. */
@@ -576,6 +578,19 @@ export default function TaskDetailBody({
     setEditing(true);
   }, [task]);
 
+  // "Edit task" from a row (2026-09-28): the editor, once the task is in — if
+  // the server still allows it (somebody may have accepted it since the list
+  // loaded). Declared BELOW openEditor on purpose: a hook's dependency list is
+  // read during render, and reading a `const` above its line is a TDZ crash.
+  const appliedEdit = useRef(false);
+  useEffect(() => { appliedEdit.current = false; }, [taskId]);
+  useEffect(() => {
+    if (!task || !initialEdit || appliedEdit.current || viewOnly) return;
+    appliedEdit.current = true;
+    if (can.canEdit) openEditor();
+    else toast.info(can.editLocked || 'This task can no longer be edited.');
+  }, [task, can, initialEdit, openEditor, viewOnly]);
+
   const saveEditor = useCallback(async () => {
     const body = {
       description: draft.description,
@@ -946,7 +961,11 @@ export default function TaskDetailBody({
             )}
             {can.canEdit && (
               <p className="mt-2 text-xs text-gray-500">
-                Not accepted yet — you can still edit it. Every change is kept as a trail, and they are told.
+                {/* Your own task has nobody else to tell. */}
+                {(task.assignees || []).length > 0
+                  && (task.assignees || []).every((a) => String(a.user?._id || a.user) === String(me))
+                  ? 'Not accepted yet — you can still edit it. Every change is kept as a trail.'
+                  : 'Not accepted yet — you can still edit it. Every change is kept as a trail, and they are told.'}
               </p>
             )}
             {/* Edit went away the moment it was taken on — say why, where it was. */}

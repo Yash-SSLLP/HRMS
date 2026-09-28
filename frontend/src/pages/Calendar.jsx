@@ -3,7 +3,8 @@
  *
  * Aggregates everything dated from GET /celebrations/calendar: holidays,
  * festival reminders (Holi, Diwali, Rakhi — informational, not days off), company
- * events, birthdays, work anniversaries, the viewer's interviews, their own
+ * events, birthdays, work anniversaries, interviews (the viewer's own; every
+ * scheduled one for SuperAdmin and HR), their own
  * reminders, reminders HR/Admin/CEO pushed to them, and task deadlines.
  * Reminders can be created, edited and deleted straight from the grid
  * (/api/reminders) — everyone for themselves, HR/Admin/CEO/MD for others too.
@@ -225,6 +226,9 @@ export default function Calendar() {
       if (m.durationMinutes) rows.push(['Duration', m.durationMinutes < 60 ? `${m.durationMinutes} min` : `${m.durationMinutes / 60} hr`]);
       if (m.round) rows.push(['Round', m.round]);
       if (m.jobTitle) rows.push(['Role', m.jobTitle]);
+      // SuperAdmin and HR see every round booked, not just their own, so the
+      // panel says whose it is ('You' on the viewer's own).
+      if (m.interviewer !== undefined) rows.push(['Interviewer', m.interviewer || 'Not assigned yet']);
       if (m.status) rows.push(['Status', m.status]);
     } else if (e.type === 'reminder' || e.type === 'hrReminder') {
       if (m.time) rows.push(['Time', m.time]);
@@ -255,12 +259,18 @@ export default function Calendar() {
   };
 
   // Open the candidate's resume in a new tab. The endpoint is token-protected,
-  // so fetch it as a blob (auth header attached) and open an object URL.
-  const openResume = async (candidateId) => {
+  // so fetch it as a blob (auth header attached) and open an object URL. The
+  // interviewer's own route refuses anyone else, so a round somebody else takes
+  // (on the SuperAdmin / HR calendar) goes through HR's candidate route.
+  const openResume = async (m) => {
+    const candidateId = m?.candidateId;
     if (!candidateId) return;
     setResumeBusy(true);
     try {
-      const res = await api.get(`/recruitment/my-interviews/${candidateId}/resume`, { responseType: 'blob' });
+      const path = m.mine === false
+        ? `/recruitment/candidates/${candidateId}/resume`
+        : `/recruitment/my-interviews/${candidateId}/resume`;
+      const res = await api.get(path, { responseType: 'blob' });
       const url = URL.createObjectURL(res.data);
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -675,7 +685,7 @@ export default function Calendar() {
               {isInterview && (m.hasResume || m.meetingLink) && (
                 <div className="px-5 pb-5 pt-1 flex items-center gap-2">
                   {m.hasResume && (
-                    <button type="button" onClick={() => openResume(m.candidateId)} disabled={resumeBusy}
+                    <button type="button" onClick={() => openResume(m)} disabled={resumeBusy}
                       className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60">
                       <FiFileText size={15} />
                       {resumeBusy ? 'Opening…' : 'Resume'}

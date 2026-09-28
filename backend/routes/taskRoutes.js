@@ -100,15 +100,29 @@ router.delete('/templates/:id', tpl.deleteTemplate);
    Repeating schedules
    ============================================================ */
 
-router.get('/recurring', tpl.listRecurring);
+/**
+ * PERMISSION-BASED since 2026-09-28 — the user: *"for Recurring … it should be
+ * as Permission based, Super Admin can decide who to give"*. A Super Admin by
+ * role, anybody else with User.taskRecurringAccess (services/taskAccess
+ * .canManageRecurring). Reading is gated too: the Recurring Tasks page is the
+ * grant's, and a list somebody cannot act on is not worth showing them.
+ * Schedules already running are untouched — the worker never asks.
+ */
+function requireRecurring(req, res, next) {
+  if (require('../services/taskAccess').canManageRecurring(req.user)) return next();
+  res.status(403);
+  return next(new Error('Recurring tasks need a permission only a Super Admin can give.'));
+}
+
+router.get('/recurring', requireRecurring, tpl.listRecurring);
 // The Recurring tab (2026-09-27): a schedule is set up on its own — nothing is
 // raised until an occurrence is due to appear. Multipart, for the voice note
-// every occurrence carries.
-router.post('/recurring', taskUpload.any(), tpl.createRecurring);
-router.get('/recurring/:id', tpl.getRecurring);
-router.patch('/recurring/:id', taskUpload.any(), tpl.updateRecurring);
-router.delete('/recurring/:id', tpl.deleteRecurring);
-router.post('/recurring/:id/run', tpl.runRecurringNow);
+// every occurrence carries. Its own page since 2026-09-28.
+router.post('/recurring', requireRecurring, taskUpload.any(), tpl.createRecurring);
+router.get('/recurring/:id', requireRecurring, tpl.getRecurring);
+router.patch('/recurring/:id', requireRecurring, taskUpload.any(), tpl.updateRecurring);
+router.delete('/recurring/:id', requireRecurring, tpl.deleteRecurring);
+router.post('/recurring/:id/run', requireRecurring, tpl.runRecurringNow);
 
 /* ============================================================
    The dashboard
@@ -128,6 +142,9 @@ router.get('/', task.listTasks);
 // The same filters as the list, grouped into the four board columns. Declared
 // BEFORE '/:id' or Express would read "board" as a task id.
 router.get('/board', task.boardTasks);
+// The list as an Excel report (2026-09-28) — the same query as GET /, every
+// page of it. Also before '/:id'.
+router.get('/export', task.exportTasks);
 // Not gated. See the docblock: assigning is not a privilege, direction is.
 router.post('/', taskUpload.any(), task.createTask);
 

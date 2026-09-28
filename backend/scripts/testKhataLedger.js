@@ -476,9 +476,65 @@ async function billAttachmentChecks() {
   const withoutBills = await P.renderReport(input);
   check('bills not asked for: one page, no jumps, the web link where there is one',
     await linksOf(withoutBills), [[[], 1]]);
+
+  // SEVERAL BILLS ON ONE ROW (2026-09-28): controllers/khataController
+  // .readBillsFor hands the renderer an ARRAY per row now. Two photos and a
+  // two-page PDF on one expense are four pages of that row's bill.
+  const several = await P.renderReport({
+    ...input,
+    entries: [row('a', 1)],
+    bills: new Map([['a', [PNG_1PX, PNG_1PX, twoPages]]]),
+  });
+  check('one row, three bills: every page of every bill is in the report',
+    (await PDFDocument.load(several)).getPageCount(), 1 + 1 + 1 + 2);
+}
+
+/**
+ * utils/bills (2026-09-28) — several bills per entry, and the first mirrored
+ * into `attachment` for every reader written before that.
+ */
+function billListChecks() {
+  console.log('\n--- several bills per entry (utils/bills.js) ---');
+  const U = require('../utils/bills');
+  const a = (p) => ({ storagePath: p, name: `${p}.jpg`, mime: 'image/jpeg', sizeBytes: 10 });
+
+  check('a row from before the change: its one attachment is the list',
+    U.billsOf({ attachment: a('old') }).map((b) => b.storagePath), ['old']);
+  check('a row with a list: the list, whatever the mirror says',
+    U.billsOf({ attachment: a('x'), attachments: [a('x'), a('y')] }).map((b) => b.storagePath), ['x', 'y']);
+  check('no bill at all: an empty list', [U.billsOf({}).length, U.billsOf(null).length, U.billCount({ attachment: null })], [0, 0, 0]);
+
+  const e = {};
+  U.setBills(e, [a('1'), a('2')]);
+  check('setBills writes the list AND mirrors the first into `attachment`',
+    [e.attachments.length, e.attachment.storagePath], [2, '1']);
+  U.setBills(e, []);
+  check('…and clears both when the list empties', [e.attachments, e.attachment], [undefined, null]);
+
+  const three = { attachments: [a('p'), a('q'), a('r')] };
+  check('billAt: the asked-for one; a bad index (an older client) is the first',
+    [U.billAt(three, '2').storagePath, U.billAt(three, undefined).storagePath, U.billAt(three, '9').storagePath],
+    ['r', 'p', 'p']);
+
+  check('keepBills: absent is null (an older form); "" and "[]" keep none; JSON or a comma list',
+    [U.parseKeep(undefined, 3), U.parseKeep('', 3), U.parseKeep('[]', 3), U.parseKeep('[2,0,0]', 3), U.parseKeep('1,7', 3)],
+    [null, [], [], [0, 2], [1]]);
+
+  const older = U.planEdit(three, null, [a('new')]);
+  check('an older form sending one file REPLACES every bill, as it always did',
+    [older.next.map((b) => b.storagePath), older.removed], [['new'], ['p', 'q', 'r']]);
+  check('an older form sending nothing keeps them all', U.planEdit(three, null, []).changed, false);
+  const mixed = U.planEdit(three, [0, 2], [a('s')]);
+  check('keep 1st and 3rd, add one: kept in order, then the new; the 2nd is removed',
+    [mixed.next.map((b) => b.storagePath), mixed.removed], [['p', 'r', 's'], ['q']]);
+  check('more than the cap is refused, not trimmed',
+    U.planEdit(three, [0, 1, 2], Array.from({ length: U.MAX_BILLS }, (_, i) => a(`n${i}`))).tooMany, true);
+  check('publicBills never says where a bill is stored',
+    JSON.stringify(U.publicBills(three)).includes('storagePath'), false);
 }
 
 (async () => {
+  billListChecks();
   await billAttachmentChecks();
   console.log(`\n${failures.length ? 'FAILED' : 'PASSED'} — ${passed} checks passed, ${failures.length} failed.`);
   if (failures.length) {

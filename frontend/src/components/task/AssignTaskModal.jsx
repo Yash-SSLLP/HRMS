@@ -200,6 +200,13 @@ export default function AssignTaskModal({
   // set up from the Recurring tab only (2026-09-27): the one-off form never
   // turns into a schedule, not from a link and not from a template's repeat.
   const recurringMode = Boolean(recurringProp);
+  /**
+   * SETTING REMINDERS IS A GRANT (2026-09-28 — "to set notification for a task
+   * it should be as Permission based"). Without it neither Reminders section is
+   * drawn and none are sent, so the server applies the company's defaults —
+   * which it would do anyway, ignoring anything sent by somebody not granted.
+   */
+  const canRemind = Boolean(meta?.canSetReminders);
   const [recur, setRecurState] = useState(emptyRecur);
   const setRecur = useCallback((patch) => setRecurState((r) => ({ ...r, ...patch })), []);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
@@ -433,7 +440,7 @@ export default function AssignTaskModal({
       toast.error('The end date is before the start date.');
       return;
     }
-    const every = recur.every;
+    const every = canRemind ? recur.every : null;
     if (every && reminderPattern(every) === 'WEEKLY' && !(every.weekdays || []).length) {
       toast.error('Pick at least one day for the reminder — or turn it off.');
       return;
@@ -457,13 +464,17 @@ export default function AssignTaskModal({
         ...pattern,
         startDate: recur.startDate,
         until: recur.until || null,
-        reminders: [
-          ...(every ? [every] : []),
-          ...recur.before.map((mins) => ({
-            channel: 'APP', when: 'BEFORE', ...(BEFORE_CHOICES.find((c) => c.mins === mins)?.rule || { amount: mins, unit: 'MINUTES' }),
-          })),
-          ...recur.otherReminders,
-        ],
+        // Only from somebody holding the reminder grant (2026-09-28); without
+        // it the server gives the schedule its defaults.
+        ...(canRemind ? {
+          reminders: [
+            ...(every ? [every] : []),
+            ...recur.before.map((mins) => ({
+              channel: 'APP', when: 'BEFORE', ...(BEFORE_CHOICES.find((c) => c.mins === mins)?.rule || { amount: mins, unit: 'MINUTES' }),
+            })),
+            ...recur.otherReminders,
+          ],
+        } : {}),
         ...(onBehalf && !scheduleId ? { onBehalfOf: onBehalf } : {}),
       };
       const res = scheduleId
@@ -477,7 +488,7 @@ export default function AssignTaskModal({
     } finally {
       setSaving(false);
     }
-  }, [form, recur, pattern, selfOnly, routine, onBehalf, scheduleId, voice, onCreated, onClose]);
+  }, [form, recur, pattern, selfOnly, routine, onBehalf, scheduleId, voice, onCreated, onClose, canRemind]);
 
   const submit = useCallback(async () => {
     if (recurringMode) { submitRecurring(); return; }
@@ -516,9 +527,11 @@ export default function AssignTaskModal({
         points: budget,
         requiresApproval: selfOnly ? false : form.requiresApproval !== false,
         dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : null,
-        // A one-off, always: repeating tasks are set up on the Recurring tab.
+        // A one-off, always: repeating tasks are set up on Recurring Tasks.
         repeat: { frequency: 'ONCE' },
-        reminders: form.reminders,
+        // The reminder grant's (2026-09-28): nothing sent without it, and the
+        // task gets the company's defaults.
+        ...(canRemind ? { reminders: form.reminders } : {}),
         links: form.links,
         ...(linkedTask ? { linkedTask } : {}),
         ...(onBehalf ? { onBehalfOf: onBehalf } : {}),
@@ -573,7 +586,7 @@ export default function AssignTaskModal({
       setSaving(false);
     }
   }, [form, selfOnly, onBehalf, onBehalfName, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose,
-    recurringMode, submitRecurring]);
+    recurringMode, submitRecurring, canRemind]);
 
   if (!open) return null;
 
@@ -1084,7 +1097,8 @@ export default function AssignTaskModal({
           {/* ── Reminders (recurring) — in the Repeats builder's own shapes: the
               user, of that builder, "these options should be for sending
               notifications too" (2026-09-27). ─────────────────────────── */}
-          {recurringMode && (
+          {/* Only for the reminder grant (2026-09-28). */}
+          {recurringMode && canRemind && (
             <div className="space-y-4 rounded-2xl border border-gray-200 p-4">
               <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400">Reminders</p>
 
@@ -1197,13 +1211,16 @@ export default function AssignTaskModal({
                   className={`${iconBtn} min-h-[40px] min-w-[40px]`}>
                   <FiImage size={16} />
                 </button>
-                <button type="button" onClick={() => setShowReminders((v) => !v)} title="Set reminders"
-                  className={`min-h-[40px] min-w-[40px] ${iconBtn} ${form.reminders.length ? 'accent-border accent-text' : ''}`}>
-                  <FiBell size={16} />
-                  {form.reminders.length > 0 && (
-                    <span className="ml-1 text-[11px] font-medium">{form.reminders.length}</span>
-                  )}
-                </button>
+                {/* The reminder grant's alone (2026-09-28). */}
+                {canRemind && (
+                  <button type="button" onClick={() => setShowReminders((v) => !v)} title="Set reminders"
+                    className={`min-h-[40px] min-w-[40px] ${iconBtn} ${form.reminders.length ? 'accent-border accent-text' : ''}`}>
+                    <FiBell size={16} />
+                    {form.reminders.length > 0 && (
+                      <span className="ml-1 text-[11px] font-medium">{form.reminders.length}</span>
+                    )}
+                  </button>
+                )}
               </>
             )}
             {/* Only the MIC lives in this row. VoiceRecorder ignores `compact`
@@ -1262,7 +1279,7 @@ export default function AssignTaskModal({
 
           {voice && <VoiceRecorder value={voice} onChange={setVoice} />}
 
-          {showReminders && (
+          {showReminders && canRemind && (
             <ReminderEditor
               value={form.reminders}
               onChange={(reminders) => set({ reminders })}

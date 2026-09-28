@@ -23,7 +23,9 @@ import {
 // — wrong for a company paid in rupees. Tabler's outline set matches Feather
 // visually (same stroke weight) and is already used elsewhere (AdminOverview).
 import { TbCashBanknote, TbReceipt, TbCurrencyRupee } from 'react-icons/tb';
-import { canOpenPermissions, canManageCashOutCategories, canUseAdminPortal } from './permissions';
+import {
+  canOpenPermissions, canManageCashOutCategories, canUseAdminPortal, canManageRecurringTasks,
+} from './permissions';
 
 // A group's `icon` is used when permissions leave it with a single visible item:
 // NavList then renders it as one plain section link, and without an icon that
@@ -204,8 +206,10 @@ export const adminNav = [
     { to: '/admin/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'conversion', 'incentive'] },
     { to: '/admin/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'daily team', 'incentive', 'paid', 'deduction'],
-      tabs: [{ id: 'entries', label: 'Daily teams' }, { id: 'summary', label: 'Per employee' },
+      keywords: ['rolling', 'rollings', 'rolling team', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points',
+        'daily team', 'incentive', 'paid', 'deduction', 'qc', 'points per sheet'],
+      // "Rolling Team" since 2026-09-28 (it was "Daily teams") — the user's name.
+      tabs: [{ id: 'entries', label: 'Rolling Team' }, { id: 'qc', label: 'QC' }, { id: 'summary', label: 'Per employee' },
         { id: 'points', label: 'Points per sheet' }] },
     // The billing team's incentive, which is counted in the billing system and
     // only READ here — no entry, no correction, no import (see the page). Listed
@@ -294,11 +298,21 @@ export const adminNav = [
       keywords: ['task', 'tasks', 'to do', 'todo', 'work', 'assignment', 'assign', 'delegate',
         'transfer', 'overdue', 'review', 'approve', 'reject', 'submit', 'completed',
         'assigned to me', 'assigned by me', 'assign myself', 'progress', 'piece', 'pieces',
-        'subtask', 'template', 'templates', 'recurring', 'repeat', 'reminder', 'voice note',
-        'report', 'dashboard', 'points'],
+        'subtask', 'template', 'templates', 'reminder', 'voice note',
+        'report', 'dashboard', 'points', 'export', 'excel'],
       tabs: [{ id: 'mine', label: 'Assigned to me' }, { id: 'delegated', label: 'Assigned by me' },
         { id: 'all', label: 'All tasks' }, { id: 'report', label: 'Report' },
         { id: 'templates', label: 'Templates' }] },
+    // ITS OWN PAGE since 2026-09-28 (it was a tab inside Tasks). The user:
+    // "the Task and Recurring both should be in very different tab", and
+    // "for Recurring … it should be as Permission based — Super Admin can
+    // decide who to give": a Super Admin, or whoever holds the switch on
+    // Permissions (User.taskRecurringAccess). The server refuses the routes to
+    // anybody else, so the row is hidden rather than left to 403.
+    { to: '/admin/recurring-tasks', label: 'Recurring Tasks', icon: FiRepeat,
+      access: canManageRecurringTasks,
+      keywords: ['recurring', 'repeat', 'repeating', 'schedule', 'daily task', 'weekly task',
+        'monthly task', 'routine', 'every day', 'every week'] },
     { to: '/admin/documents', label: 'Documents', icon: FiFile, perm: 'documents.manage', badge: 'docswap' },
     // Items employees asked to hand back from My Assets, waiting on an answer.
     { to: '/admin/assets', label: 'Assets', icon: FiPackage, perm: 'assets.manage',
@@ -485,7 +499,8 @@ export const employeeNav = [
     { to: '/employee/incentive-points', label: 'Point Rate', icon: TbCurrencyRupee, perm: 'incentive.manage',
       keywords: ['point', 'points', 'rupee per point', 'rate', 'value', 'incentive'] },
     { to: '/employee/boys-incentive', label: 'Boys Incentive', icon: FiRotateCw, perm: 'incentive.manage',
-      keywords: ['rolling', 'rollings', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points', 'incentive', 'paid', 'deduction'] },
+      keywords: ['rolling', 'rollings', 'rolling team', 'sheet', 'sheets', 'boys', 'picker', 'team leader', 'points',
+        'incentive', 'paid', 'deduction', 'qc', 'points per sheet'] },
     // The billing team's, read out of the billing system rather than recorded
     // here — the same page the admin portal mounts, for a grant holder with no
     // admin portal of their own.
@@ -515,8 +530,15 @@ export const employeeNav = [
     { to: '/employee/tasks', label: 'Tasks', icon: FiList,
       badge: 'taskApproval',
       keywords: ['task', 'tasks', 'to do', 'todo', 'my work', 'assignment', 'assign', 'submit',
-        'approve', 'reject', 'overdue', 'deadline', 'assigned to me', 'assigned by me', 'assign myself'],
+        'approve', 'reject', 'overdue', 'deadline', 'assigned to me', 'assigned by me', 'assign myself',
+        'export', 'excel', 'report'],
       tabs: [{ id: 'mine', label: 'Assigned to me' }, { id: 'delegated', label: 'Assigned by me' }] },
+    // Its own page since 2026-09-28, behind the Super Admin's switch — see the
+    // admin row above.
+    { to: '/employee/recurring-tasks', label: 'Recurring Tasks', icon: FiRepeat,
+      access: canManageRecurringTasks,
+      keywords: ['recurring', 'repeat', 'repeating', 'schedule', 'daily task', 'weekly task',
+        'monthly task', 'routine', 'every day', 'every week'] },
     { to: '/employee/documents', label: 'Documents', icon: FiFile },
     { to: '/employee/assets', label: 'Assets', icon: FiPackage },
     // The register, for holders of the standalone Assets grant with no admin

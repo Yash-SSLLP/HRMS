@@ -142,6 +142,28 @@ export const canOpenPermissions = (user) => !!user && (
   || canManageCashOutCategories(user)
 );
 
+/**
+ * May this account set up recurring tasks — the Recurring Tasks page (2026-09-28,
+ * "Super Admin can decide who to give")? A Super Admin by role, anybody else
+ * with the switch. Mirrors services/taskAccess.canManageRecurring; the server
+ * refuses every /tasks/recurring route without it. GET /tasks/meta also sends
+ * `canRecur`, which is fresher than a cached sign-in — prefer it where loaded.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canManageRecurringTasks = (user) => !!user
+  && (user.role === 'SuperAdmin' || user.taskRecurringAccess === true);
+
+/**
+ * May this account set a task's reminders (its notifications)? Same shape, the
+ * User.taskReminderAccess switch. Without it the assign form shows no Reminders
+ * section; the server ignores any sent and applies the company's defaults.
+ * @param {object|null} user
+ * @returns {boolean}
+ */
+export const canSetTaskReminders = (user) => !!user
+  && (user.role === 'SuperAdmin' || user.taskReminderAccess === true);
+
 
 /**
  * The incentive tabs a role can be assigned in, and the roles themselves.

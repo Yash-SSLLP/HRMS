@@ -148,7 +148,7 @@ const markRead = asyncHandler(async (req, res) => {
  * The phone's right swipe is a toggle (2026-09-25): an unread alert becomes
  * read, a read one becomes unread — "keep this in front of me" without having
  * to deal with it now. Clearing `readAt` also takes it out of the retention
- * sweep's read-a-week-ago rule (services/notificationCleanupWorker.js), which
+ * sweep's read-24-hours-ago rule (services/notificationCleanupWorker.js), which
  * is right: it is unread again, and unread alerts are never swept.
  *
  * Idempotent, like markRead: the phone flips the row before the server answers,
@@ -203,6 +203,34 @@ const deleteNotification = asyncHandler(async (req, res) => {
   res.json({ ok: true, id: String(notification._id) });
 });
 
+/**
+ * Take every READ notification off the caller's feed in one go — the phone's
+ * "Delete read" (2026-09-28). Unread ones are left alone: nobody has seen them.
+ *
+ * The same soft delete as a swipe (deleteNotification above) and for the same
+ * reason: a notification is the only record of a celebration wish, so the row
+ * survives with `deletedAt` (and `dismissedAt`, so a thrown-away wish does not
+ * come back as a dashboard card) until the retention sweep removes it. Scoped
+ * exactly like the list — portal audience, joining-date cutoff, outside-account
+ * types — so "delete read" means the read rows that were on screen.
+ * @route DELETE /api/notifications/read?audience=admin|employee
+ * @param {string} [req.query.audience] - portal scope: 'admin' or 'employee'
+ * @returns {{ok: boolean, deleted: number}}
+ */
+const deleteAllRead = asyncHandler(async (req, res) => {
+  const filter = {
+    recipient: req.user._id, readAt: { $ne: null }, deletedAt: null,
+    ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)), ...externalScope(req.user),
+  };
+  const now = new Date();
+  // dismissedAt only where it is not already set — a card dismissed last week
+  // keeps the date it was dismissed. Stamped first, while deletedAt still
+  // selects the same rows.
+  await Notification.updateMany({ ...filter, dismissedAt: null }, { $set: { dismissedAt: now } });
+  const result = await Notification.updateMany(filter, { $set: { deletedAt: now } });
+  res.json({ ok: true, deleted: result.modifiedCount || 0 });
+});
+
 module.exports = {
-  listNotifications, countNotifications, markAllRead, markRead, markUnread, deleteNotification,
+  listNotifications, countNotifications, markAllRead, markRead, markUnread, deleteNotification, deleteAllRead,
 };

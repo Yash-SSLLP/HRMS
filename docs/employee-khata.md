@@ -139,6 +139,34 @@ Find them under **Admin → Employee Cashbook → Approvals → Expenses to conf
 (they never reach `/pending`, having never been pending). Rows with no bill are
 flagged there, since that should not be possible through either client.
 
+## Several bills on one expense (2026-09-28)
+
+*"Give option to select multiple images and capture multiple images in single
+expense."* An expense (and a refund, a voucher, a cashbook entry) now carries up
+to **10** bills, 5 MB each:
+
+* **Stored as `attachments[]`**, with the FIRST one mirrored into the old
+  single `attachment` field, so every reader that predates the list (older app
+  builds, the PDF code paths, the public bill page) still finds a bill. The
+  helpers are `backend/utils/bills.js` — `billsOf`, `setBills`, `planEdit`,
+  `publicBills` — so no controller hand-rolls the pairing.
+* **Uploading**: the multipart field is still `receipt`, now repeated
+  (`upload.array('receipt', 10)`); an old client's single part is simply a list
+  of one. A replayed request (`idempotencyKey` → `duplicate`) never attaches
+  its files a second time.
+* **Correcting**: `keepBills` (JSON array of the indexes being kept) plus any
+  new files. Leaving it out keeps the old behaviour — a new file replaces the
+  bill. An expense or refund must keep at least one bill; more than 10 is
+  refused. Files taken off are deleted from storage only after the correction
+  saves, and the trail says `bills 3 → 2` (or `bill replaced`).
+* **Reading**: `GET …/receipt?i=N` serves the N-th (a bad index falls back to
+  the first); the public no-login page lists every file; the PDF embeds every
+  bill of every row (the page cap counts files).
+* **Clients**: web `BillPicker` (Take photos — the camera keeps shooting until
+  Done — and Upload files, both multi) and `BillGallery`; app `BillPicker`
+  (Camera / Gallery / Files; the in-app camera's multiple mode says "N kept —
+  photograph the next bill, or tap Done") and `BillListSheet`.
+
 ## Confirming an expense — and the editing window before it
 
 Posting on the spot puts a figure on the ledger before anybody has checked it.
@@ -314,18 +342,26 @@ decide it (a SuperAdmin can too, as the fallback — `requireAdvanceApprover`).
 Approving moves **no money**: it drops the request into the cashbook manager's
 queue. Declining closes it, with a reason the employee sees.
 
-**Always, since 2026-09-26 (user rule).** There used to be an org switch —
-*Permissions → CEO / MD approval for cash advances*
-(`Setting.khataAdvanceApprovalRequired`) — that sent requests straight to the
-accounts team. It is retired: nothing reads the field, the org-settings route
-neither returns nor accepts it, and both Permissions screens say in its place
-that the approval is always required. The one exception is an executive's own
-request (CEO, MD or SuperAdmin — `ADVANCE_SANCTIONERS`): there is nobody above
-them, so theirs parks as `Pending` for the cashbook manager.
+**A SuperAdmin switch again, since 2026-09-28 (user request).** It was always
+on from 2026-09-26 to 2026-09-28; it is back as *Permissions → Organisation →
+CEO / MD approval for cash advances* (`Setting.khataAdvanceApprovalRequired`,
+default ON), on the web and the app, through `PUT /admin/org-settings`
+(SuperAdmin only). `advanceApprovalRequired()` is the one reader: ON, an
+employee's request parks as `AwaitingApproval`; OFF, it goes straight to the
+cashbook manager as `Pending`. **Flipping it moves what is waiting**, in the
+same request, and the response says how many (`advancesMoved`, shown as a
+notice): OFF releases every `AwaitingApproval` employee request to the cashbook
+manager (`releaseAdvancesFromExecs` — nothing is paid, and a request already
+DECLINED is left declined); ON resets and runs the sweep below, so anything not
+yet paid goes back to the executives. `getMyKhata`, `GET /overview` and
+`GET /advance-approvals` carry `approvalRequired` so the screens word it right.
+The one exception either way is an executive's own request (CEO, MD or
+SuperAdmin — `ADVANCE_SANCTIONERS`): there is nobody above them, so theirs parks
+as `Pending` for the cashbook manager.
 
-> **Requests that skipped Gate A are sent back to it.** Rows filed while the
-> switch was off sit as `Pending` employee advances with no `execApprovedBy`.
-> `sendUnsanctionedAdvancesToExecs()` moves them to `AwaitingApproval`
+> **Requests that skipped Gate A are sent back to it — while the switch is ON.**
+> Rows filed while the switch was off sit as `Pending` employee advances with no
+> `execApprovedBy`. With it ON, `sendUnsanctionedAdvancesToExecs()` moves them to `AwaitingApproval`
 > (`execApprovalRequired: true`) and notifies the executives once. It runs once
 > per process — lazily, from `GET /overview`, `/pending`, `/advance-approvals`
 > and both pay-out paths (`PATCH /entries/:id/approve`, bulk `approve`) — so no

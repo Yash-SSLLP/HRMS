@@ -24,12 +24,19 @@ import { FiCamera, FiRefreshCw, FiCheck, FiX, FiRepeat } from 'react-icons/fi';
 
 /**
  * @param {object} props
- * @param {(file: File) => void} props.onCapture  Receives the captured JPEG.
- * @param {() => void} props.onClose              Dismiss without capturing.
+ * @param {(file: File) => void} props.onCapture  Receives the captured JPEG — once per photo kept.
+ * @param {() => void} props.onClose              Dismiss (every photo kept has already been handed over).
  * @param {string} [props.title]
  * @param {string} [props.fileName]               Base name for the File (no extension).
+ * @param {boolean} [props.multiple]              Several photos in one go (2026-09-28: a
+ *   cashbook expense can carry several bills) — "Use & take another" keeps the camera open.
+ * @param {number} [props.max]                    How many more may be taken; closes at the limit.
  */
-export default function CameraCapture({ onCapture, onClose, title = 'Take a photo', fileName = 'photo' }) {
+export default function CameraCapture({
+  onCapture, onClose, title = 'Take a photo', fileName = 'photo', multiple = false, max = Infinity,
+}) {
+  // Photos kept so far in this sitting (multiple mode).
+  const [taken, setTaken] = useState(0);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   // The captured still, held as an object URL so it can be reviewed (and
@@ -126,12 +133,30 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
   /** Swap lenses, restarting the preview on the other one. */
   const flip = () => start(facing === 'environment' ? 'user' : 'environment');
 
+  const asFile = () => {
+    // Milliseconds too: several photos inside one second must not share a name.
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 23);
+    return new File([shot.blob], `${fileName}-${stamp}.jpg`, { type: 'image/jpeg' });
+  };
+
   const accept = () => {
     if (!shot) return;
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    onCapture(new File([shot.blob], `${fileName}-${stamp}.jpg`, { type: 'image/jpeg' }));
+    onCapture(asFile());
     onClose();
   };
+
+  /** Keep this one and go straight back to the live camera for the next. */
+  const acceptAndNext = () => {
+    if (!shot) return;
+    onCapture(asFile());
+    const n = taken + 1;
+    setTaken(n);
+    if (n >= max) { onClose(); return; }
+    if (shot?.url) URL.revokeObjectURL(shot.url);
+    setShot(null);
+    start(facing);
+  };
+  const canTakeMore = multiple && taken + 1 < max;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-[70]">
@@ -169,19 +194,34 @@ export default function CameraCapture({ onCapture, onClose, title = 'Take a phot
         {error && (
           <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
         )}
+        {multiple && taken > 0 && (
+          <p className="mt-2 text-xs font-medium text-green-700">
+            {taken} photo{taken === 1 ? '' : 's'} added{shot ? '' : ' — take the next one, or press Done'}.
+          </p>
+        )}
 
         <div className="flex flex-wrap justify-end gap-2 pt-4">
+          {/* In multiple mode every photo kept is already handed over, so
+              closing is finishing — "Done" once there is at least one. */}
           <button type="button" onClick={onClose}
-            className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+            className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
+            {multiple && taken > 0 ? 'Done' : 'Cancel'}
+          </button>
           {shot ? (
             <>
               <button type="button" onClick={retake}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
                 <FiRefreshCw size={15} /> Retake
               </button>
+              {canTakeMore && (
+                <button type="button" onClick={acceptAndNext}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                  <FiCamera size={15} /> Use &amp; take another
+                </button>
+              )}
               <button type="button" onClick={accept}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
-                <FiCheck size={15} /> Use this photo
+                <FiCheck size={15} /> {multiple ? 'Use this photo & finish' : 'Use this photo'}
               </button>
             </>
           ) : (

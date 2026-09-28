@@ -75,7 +75,10 @@ function peopleOptions(rows, label) {
 // there is one. An admin login has none, which is exactly why it looked out of
 // place in a list of "Name (SSL nn)" rows.
 const personLabel = (p) => `${p.name}${p.employeeCode ? ` (${p.employeeCode})` : ''}`;
-import CameraCapture from '../components/CameraCapture';
+// Several bills per entry (2026-09-28): the picker holds the camera now.
+import BillPicker from '../components/BillPicker';
+import BillGallery, { openBill, openBillInTab } from '../components/BillGallery';
+import { billList, khataBillPath as billPath } from '../utils/bills';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import { toYMD } from '../utils/time';
 import { useAuthStore } from '../store/authStore';
@@ -464,10 +467,12 @@ export default function AdminKhata() {
   const [sanctionModal, setSanctionModal] = useState(null);
   const [khataModal, setKhataModal] = useState(null);       // { employee, name, note }
   // Correcting an expense that has posted but nobody has confirmed yet:
-  // { entry, data, khatas, file }. See the review queue below for why the
-  // company can edit these at all.
+  // { entry, data, khatas, files, keep } — `files` the new bills, `keep` which
+  // of the attached ones stay (several per entry since 2026-09-28). See the
+  // review queue below for why the company can edit these at all.
   const [expenseEdit, setExpenseEdit] = useState(null);
-  const [camera, setCamera] = useState(false);
+  // An entry with several bills opens them all in one window (BillGallery).
+  const [gallery, setGallery] = useState(null);
   // { employee, employeeName, khata, khataName, from, to } — the statement PDF
   // asks for its date range before it builds, the way the paper version is
   // always asked for ("the Tamilnadu trip", not "everything ever").
@@ -582,7 +587,8 @@ export default function AdminKhata() {
 
   const openEntry = (employeeId, direction = 'to_employee', khataId = '', type = null) => {
     setEntryModal({
-      file: null,
+      // The bills — several allowed since 2026-09-28 (components/BillPicker).
+      files: [],
       // The books this person holds, loaded on demand so the picker can offer
       // them. Empty until the employee is chosen.
       khatas: employeeId && detail?.employee?._id === employeeId ? (detail.khatas || []) : [],
@@ -658,7 +664,8 @@ export default function AdminKhata() {
       Object.entries({ ...data, affectsCompanyCash: !cashless }).forEach(([k, v]) => {
         if (v !== '' && v != null) fd.append(k, v);
       });
-      if (entryModal.file) fd.append('receipt', entryModal.file);
+      // Every bill, one part each under the same field name.
+      (entryModal.files || []).forEach((f) => fd.append('receipt', f));
       const res = await api.post('/khata/entries', fd);
       toast.success(res.data.message || 'Recorded');
       setEntryModal(null);
@@ -861,12 +868,9 @@ export default function AdminKhata() {
    * linked with `?access_token=`, matching AdminCashbook — a token in a URL ends
    * up in history, logs and referrers.
    */
-  const viewReceipt = async (id) => {
-    try {
-      const res = await api.get(`/khata/entries/${id}/receipt`, { responseType: 'blob' });
-      window.open(URL.createObjectURL(res.data), '_blank', 'noopener');
-    } catch (err) { errToast(err, 'Could not open the bill'); }
-  };
+  // One bill opens in a tab as it always did; several open the gallery
+  // (2026-09-28). Takes the ENTRY, so it can tell which.
+  const viewReceipt = (entry) => openBill(entry, billPath, setGallery);
 
   /**
    * Undo a posted entry. Worded as a REJECTION for an employee's expense, which
@@ -932,7 +936,9 @@ export default function AdminKhata() {
     setExpenseEdit({
       entry,
       khatas: [],
-      file: null,
+      files: [],
+      // Every bill already on it stays unless taken off.
+      keep: billList(entry).map((b) => b.i),
       data: {
         amount: String(entry.amount ?? ''),
         purpose: entry.purpose || '',
@@ -953,13 +959,20 @@ export default function AdminKhata() {
 
   const submitExpenseEdit = async (e) => {
     e.preventDefault();
-    const { entry, data, file } = expenseEdit;
+    const { entry, data, files = [], keep = [] } = expenseEdit;
     if (!(Number(data.amount) > 0)) { toast.error('Enter an amount greater than zero'); return; }
+    // Filed with a bill, and a correction must not leave it with none.
+    if (['expense', 'refund'].includes(entry.type) && keep.length + files.length === 0) {
+      toast.error('Keep at least one bill — or add a new one — before saving.');
+      return;
+    }
     setSaving(true);
     try {
       const fd = new FormData();
       Object.entries(data).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
-      if (file) fd.append('receipt', file);
+      // New bills, plus which of the attached ones stay (2026-09-28).
+      files.forEach((f) => fd.append('receipt', f));
+      fd.append('keepBills', JSON.stringify(keep));
       const res = await api.put(`/khata/entries/${entry._id}`, fd);
       toast.success(res.data.message || 'Updated');
       setExpenseEdit(null);
@@ -1832,9 +1845,9 @@ export default function AdminKhata() {
                           worth noticing rather than passing over quietly. */}
                       <div className="flex flex-wrap items-center gap-3">
                         {e.hasAttachment ? (
-                          <button onClick={() => viewReceipt(e._id)}
+                          <button onClick={() => viewReceipt(e)}
                             className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
-                            View bill
+                            {e.attachmentCount > 1 ? `View ${e.attachmentCount} bills` : 'View bill'}
                           </button>
                         ) : (
                           <span className="text-xs text-amber-700">No bill attached</span>
@@ -2083,23 +2096,15 @@ export default function AdminKhata() {
               </div>
             </div>
 
-            <label className="block text-sm text-gray-700 mb-1">Receipt (optional)</label>
-            <div className="flex flex-wrap items-center gap-2 mb-4">
-              {/* Full width below sm. A file input is as wide as ~34 characters of
-                  its font, and at the 16px phone font floor that is ~300px — past
-                  the edge of this panel's 288px content box. */}
-              <input type="file" accept="image/*,application/pdf"
-                onChange={(e) => setEntryModal({ ...entryModal, file: e.target.files?.[0] || null })}
-                className="text-sm w-full sm:w-auto" />
-              {/* A real camera rather than an `<input capture>` hint, which does
-                  nothing at all on a desktop — see components/CameraCapture. */}
-              <button type="button" onClick={() => setCamera('entry')}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                Take photo
-              </button>
-              {entryModal.file && (
-                <span className="text-xs text-gray-600 truncate max-w-[12rem]">{entryModal.file.name}</span>
-              )}
+            {/* Several receipts to one entry (2026-09-28) — photos taken one
+                after another, or files picked together; each comes off alone. */}
+            <div className="mb-4">
+              <BillPicker
+                label="Receipts (optional)"
+                files={entryModal.files || []}
+                onFilesChange={(files) => setEntryModal((m) => (m ? { ...m, files } : m))}
+                hint="Images or PDFs, up to 5 MB each."
+              />
             </div>
 
             <div className="flex justify-end gap-2">
@@ -2368,19 +2373,21 @@ export default function AdminKhata() {
               </div>
             </div>
 
-            <label className="block text-sm text-gray-700 mb-1">Replace the bill (optional)</label>
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <input type="file" accept="image/*,application/pdf"
-                onChange={(e) => setExpenseEdit({ ...expenseEdit, file: e.target.files?.[0] || null })}
-                className="text-sm w-full sm:w-auto" />
-              <button type="button" onClick={() => setCamera('edit')}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                Take photo
-              </button>
+            {/* The bills already attached, each removable, and room to add
+                more (2026-09-28). */}
+            <div className="mb-4">
+              <BillPicker
+                label="Bills"
+                required={['expense', 'refund'].includes(expenseEdit.entry?.type)}
+                files={expenseEdit.files || []}
+                onFilesChange={(files) => setExpenseEdit((m) => (m ? { ...m, files } : m))}
+                existing={billList(expenseEdit.entry)}
+                keep={expenseEdit.keep || []}
+                onKeepChange={(keep) => setExpenseEdit((m) => (m ? { ...m, keep } : m))}
+                onViewExisting={(i) => openBillInTab(billPath(expenseEdit.entry._id, i))}
+                hint="Take off any that are wrong, or add more. Images or PDFs, up to 5 MB each."
+              />
             </div>
-            <p className="text-xs text-gray-500 mb-4">
-              {expenseEdit.file ? expenseEdit.file.name : 'Leave this alone to keep the bill already attached.'}
-            </p>
 
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setExpenseEdit(null)}
@@ -2394,16 +2401,8 @@ export default function AdminKhata() {
         </div>
       )}
 
-      {camera && (
-        <CameraCapture
-          title="Photograph the bill"
-          fileName="bill"
-          onCapture={(file) => {
-            if (camera === 'edit') setExpenseEdit((m) => (m ? { ...m, file } : m));
-            else setEntryModal((m) => (m ? { ...m, file } : m));
-          }}
-          onClose={() => setCamera(false)} />
-      )}
+      {/* Every bill on one entry, when it has several (2026-09-28). */}
+      <BillGallery entry={gallery} pathFor={billPath} onClose={() => setGallery(null)} />
 
       {settingsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -2804,8 +2803,8 @@ function EntryTable({
                         only where a bill exists — an advance never has one, and
                         a dead "no bill" note on every second row is noise. */}
                     {e.hasAttachment && onViewBill && (
-                      <button onClick={() => onViewBill(e._id)} className="text-xs text-indigo-600 hover:underline">
-                        Bill
+                      <button onClick={() => onViewBill(e)} className="text-xs text-indigo-600 hover:underline">
+                        {e.attachmentCount > 1 ? `Bills (${e.attachmentCount})` : 'Bill'}
                       </button>
                     )}
                     {e.editable && onEdit && (

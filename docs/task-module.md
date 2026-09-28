@@ -5,6 +5,18 @@ replaced the twelve-status workflow engine of 2026-09-17, and **simplified
 2026-09-25** (see the section right below). The through-line has not changed: a
 task app a business owner can work without being taught.
 
+### What the 2026-09-28 pass added
+
+| the brief | what it is |
+|---|---|
+| *"the Task and Recurring both should be in very different tab"* | Recurring is its own menu entry now — web `/admin/recurring-tasks` + `/employee/recurring-tasks` (`pages/RecurringTasks.jsx`), app `RecurringTasksScreen` (menu row, admin tile, Search entry). The old `?tab=recurring` / `view` params redirect there. Tasks has no tabs |
+| *"for Recurring and to set notification for a task it should be Permission based — Super Admin can decide who to give"* | two standalone grants on `User`, like `taskProxyAccess`: **`taskRecurringAccess`** (`services/taskAccess.canManageRecurring`; every `/tasks/recurring` route is behind `requireRecurring`, and a one-off `createTask` with a recurring `repeat` is refused 403) and **`taskReminderAccess`** (`canSetReminders`; `reminders` sent by anyone without it are IGNORED on create/update — the task keeps the default reminders — so an old app build never fails a save). SuperAdmin holds both by role. `PATCH /admin/users/:id/task-recurring-access` / `task-reminder-access` (SuperAdmin only); Permissions "Tasks" column on web, GRANTS on the app. `GET /tasks/meta` answers `canRecur` / `canSetReminders`, which is what both clients hang the UI off |
+| *"while assigning task the Reminders should be closed — +Add a reminder"* (app) | `AssignTaskScreen`: the Reminders block starts closed behind a dashed "+ Add a reminder", seeded with the org default on open; hidden entirely without the grant |
+| *"in any task give option to edit that before accept"* | `setsTerms(user, task)` — the creator, the approver, or whoever acts as assigner — may edit while `termsOpen` holds, **your own self-task included**; "Edit task" in the status menu (web) / status sheet (app). The doer never gets it; `editLockReason` says "You have accepted this task…" once they have. The edit banner reads "You have not accepted this yet…" on your own task (no "they are told") |
+| *"by default Assigned to me should be selected"* | both clients open on the `mine` pile |
+| *"in Total Task dont show completed task"* | the **Total** figure is open work only (Pending + In progress + Under review); its list query sends those statuses; Completed keeps its own figure |
+| *"option to export for task as a report"* | `GET /tasks/export` — same `buildQuery` as the list, so it exports exactly the pile, figure and filters on screen. Sheets: **Tasks** (code, status, overdue, priority, category, by, to, assigned/due/completed dates as IST date cells, on time?, progress, points, pieces, repeats, loop, details) and **Summary** (generated on/by, every filter in words, the figures). Web Export button beside Filter; app icon button |
+
 ### What the 2026-09-27 pass added
 
 | the brief | what it is |

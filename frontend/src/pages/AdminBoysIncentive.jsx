@@ -87,7 +87,7 @@ const dateInput = (d) => {
 };
 
 const TABS = [
-  ['entries', 'Daily teams'],
+  ['entries', 'Rolling Team'],
   ['qc', 'QC'],
   ['summary', 'Per employee'],
   ['points', 'Points per sheet'],
@@ -135,6 +135,46 @@ function qcSum(sheetsRaw, heads, perSheetRaw, pctRaw) {
 
 /** Points read better without trailing zeros: 4, not 4.00. */
 const points = (n) => `${Math.round((Number(n) || 0) * 100) / 100}`;
+
+/** The 1st of this month as YYYY-MM-DD — where "apply it from" starts. */
+const firstOfThisMonth = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+};
+
+/**
+ * "Also apply it to the days already recorded" on a rate form (2026-09-28).
+ * Every day freezes the figures it was saved with, so without this a changed
+ * rate only fills in new days; ticked, the new figure also reaches back to the
+ * days recorded from the chosen date. Off unless ticked.
+ * @param {{value: string, onChange: (v: string) => void, days: string}} props
+ *   `value` '' or 'YYYY-MM-DD'; `days` 'team days' | 'QC days'
+ */
+function ApplyToRecorded({ value, onChange, days }) {
+  return (
+    <div className="rounded-lg border border-gray-200 p-3">
+      <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+        <input type="checkbox" className="mt-0.5" checked={!!value}
+          onChange={(e) => onChange(e.target.checked ? firstOfThisMonth() : '')} />
+        <span>Also apply it to the {days} already recorded</span>
+      </label>
+      {value ? (
+        <div className="mt-2 pl-6">
+          <label className="block text-xs font-medium text-gray-600 mb-1">From *</label>
+          <input required type="date" value={value} onChange={(e) => onChange(e.target.value)}
+            className="block w-full border rounded-lg px-3 py-2" />
+          <p className="text-xs text-gray-400 mt-1">
+            The {days} from this date on are worked out again with the new figure.
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-400 mt-1 pl-6">
+          Left unticked, {days} already recorded keep the figure they were saved with.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function AdminBoysIncentive() {
   // Deliberately NOT useViewOnly(), which also covers a read-only CEO/MD: in
@@ -221,6 +261,10 @@ export default function AdminBoysIncentive() {
   // The deduction editor on the rate tab: the typed value, or null.
   const [shareForm, setShareForm] = useState(null);
   const [savingShare, setSavingShare] = useState(false);
+  // Per rate form: '' = the new figure fills in NEW days only (the default);
+  // 'YYYY-MM-DD' = also work out again the days already recorded from then.
+  const [applyFrom, setApplyFrom] = useState({ points: '', share: '', qc: '' });
+  const setApply = (key, value) => setApplyFrom((a) => ({ ...a, [key]: value }));
 
   const [showImport, setShowImport] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -530,18 +574,51 @@ export default function AdminBoysIncentive() {
   };
 
   /**
-   * Change what percentage comes off a team's gross before it is credited.
-   * Like the per-sheet yield beside it, it fills in a NEW day and never restates
-   * one already recorded — each day froze its own copy.
+   * Save one rate. By default it fills in NEW days only — each day froze its own
+   * copy of the figures. With a date ticked on the form it also works out again
+   * every day recorded from then (2026-09-28: QC went from 4 to 0.4 a sheet and
+   * the days already recorded still read 4). That changes points people have
+   * already earned, so it is confirmed first, and the server refuses it whole
+   * (RERATE_OVERPAID) if anybody already paid would be left overpaid.
+   * @param {Object} body - the one figure being changed
+   * @param {'points'|'share'|'qc'} applyKey - which form's date to read
+   * @param {string} days - 'team days' | 'QC days', for the wording
+   * @returns {Promise<Object|null>} the response, or null when not confirmed
+   */
+  const putRate = async (body, applyKey, days) => {
+    const from = applyFrom[applyKey];
+    if (from) {
+      const ok = await confirmDialog({
+        title: `Apply it to the ${days} already recorded?`,
+        message: `Every one of the ${days} from ${fmtDate(`${from}T12:00:00`)} onward will be worked out again with the new figure, so the points on them will change. It is refused if anybody already paid for those days would be left paid more than they earned.`,
+        confirmText: 'Apply',
+      });
+      if (!ok) return null;
+    }
+    const { data } = await api.put('/incentives/settings', { ...body, ...(from ? { applyFrom: from } : {}) });
+    setSettings((st) => ({ ...st, ...data.settings }));
+    setApply(applyKey, '');
+    if (from) {
+      const n = (data.reRated?.teamDays || 0) + (data.reRated?.qcDays || 0);
+      toast.success(n
+        ? `Saved — ${n} ${n === 1 ? 'day was' : 'days were'} worked out again with the new figure.`
+        : 'Saved — every day from that date already had this figure.');
+      await load({ quiet: true });
+    } else {
+      toast.success('Saved');
+    }
+    return data;
+  };
+
+  /**
+   * Change what percentage comes off a team's gross before it is credited —
+   * for new days, or from a date (see putRate).
    */
   const saveShare = async (ev) => {
     ev.preventDefault();
     setSavingShare(true);
     try {
-      const { data } = await api.put('/incentives/settings', { deductionPct: shareForm });
-      setSettings((st) => ({ ...st, ...data.settings }));
-      setShareForm(null);
-      toast.success('Saved');
+      if (await putRate({ deductionPct: shareForm }, 'share', 'team days')) setShareForm(null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not save');
     } finally {
@@ -672,17 +749,14 @@ export default function AdminBoysIncentive() {
   };
 
   /**
-   * Change one of QC's two figures. Like the teams' pair, it fills in a NEW QC
-   * day and never restates one already recorded — each froze its own copy.
+   * Change one of QC's two figures — for new QC days, or from a date (see
+   * putRate).
    */
   const saveQcSetting = async (ev) => {
     ev.preventDefault();
     setSavingQcSetting(true);
     try {
-      const { data } = await api.put('/incentives/settings', { [qcSettingForm.key]: qcSettingForm.value });
-      setSettings((st) => ({ ...st, ...data.settings }));
-      setQcSettingForm(null);
-      toast.success('Saved');
+      if (await putRate({ [qcSettingForm.key]: qcSettingForm.value }, 'qc', 'QC days')) setQcSettingForm(null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not save');
     } finally {
@@ -717,7 +791,8 @@ export default function AdminBoysIncentive() {
   };
 
   /**
-   * Change what a sheet is worth, for days recorded FROM NOW ON.
+   * Change what a sheet is worth, for days recorded FROM NOW ON — or from a
+   * date, when the form's "also apply" box is ticked (see putRate).
    *
    * It lives on this page rather than beside the rupee value of a point because
    * it belongs to this module: another incentive counts something else and will
@@ -727,10 +802,7 @@ export default function AdminBoysIncentive() {
     ev.preventDefault();
     setSavingPoints(true);
     try {
-      const { data } = await api.put('/incentives/settings', { pointsPerSheet: pointsForm });
-      setSettings((s) => ({ ...s, ...data.settings }));
-      setPointsForm(null);
-      toast.success('Saved');
+      if (await putRate({ pointsPerSheet: pointsForm }, 'points', 'team days')) setPointsForm(null);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not save');
     } finally {
@@ -1277,11 +1349,11 @@ export default function AdminBoysIncentive() {
       {tab === 'points' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-4xl">
         <div className="bg-white shadow rounded-xl p-6">
-          <h2 className="card-title mb-1">Points per sheet</h2>
+          <h2 className="card-title mb-1">Rolling - Points Per Sheet</h2>
           <p className="text-sm text-gray-500 mb-4">
             What one rolled sheet is worth. It fills in a new day and can still be changed on the
-            day itself; a day already recorded keeps the figure it was saved with, so changing it
-            here never restates points already earned.
+            day itself; a day already recorded keeps the figure it was saved with, unless you
+            choose to apply the change to the days already recorded when you make it.
           </p>
 
           {pointsForm === null ? (
@@ -1304,13 +1376,14 @@ export default function AdminBoysIncentive() {
           ) : (
             <form onSubmit={savePointsPerSheet} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Points per sheet *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Rolling points per sheet *</label>
                 <input autoFocus required type="number" min="0" step="0.01" value={pointsForm}
                   onChange={(e) => setPointsForm(e.target.value)}
                   className="block w-full border rounded-lg px-3 py-2" />
               </div>
+              <ApplyToRecorded value={applyFrom.points} onChange={(v) => setApply('points', v)} days="team days" />
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setPointsForm(null)}
+                <button type="button" onClick={() => { setPointsForm(null); setApply('points', ''); }}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={savingPoints}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
@@ -1326,7 +1399,7 @@ export default function AdminBoysIncentive() {
             the two are read together — one decides the size of the gross, the
             other how much of it the team is credited with. */}
         <div className="bg-white shadow rounded-xl p-6">
-          <h2 className="card-title mb-1">Deduction</h2>
+          <h2 className="card-title mb-1">Rolling - Deduction</h2>
           <p className="text-sm text-gray-500 mb-4">
             How much comes off a team&apos;s points before they are credited. Taken from every
             team on every day; what it is used for is settled outside the portal, so it is not
@@ -1353,16 +1426,14 @@ export default function AdminBoysIncentive() {
           ) : (
             <form onSubmit={saveShare} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Deduction (%) *</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Rolling deduction (%) *</label>
                 <input autoFocus required type="number" min="0" max="100" step="0.01" value={shareForm}
                   onChange={(e) => setShareForm(e.target.value)}
                   className="block w-full border rounded-lg px-3 py-2" />
-                <p className="text-xs text-gray-400 mt-1">
-                  A day already recorded keeps the figure it was saved with.
-                </p>
               </div>
+              <ApplyToRecorded value={applyFrom.share} onChange={(v) => setApply('share', v)} days="team days" />
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShareForm(null)}
+                <button type="button" onClick={() => { setShareForm(null); setApply('share', ''); }}
                   className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={savingShare}
                   className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
@@ -1378,8 +1449,8 @@ export default function AdminBoysIncentive() {
         {[
           {
             key: 'qcPointsPerSheet',
-            title: 'QC — points per sheet',
-            text: 'What one sheet is worth to the day\'s QC. It fills in a new QC day; a day already recorded keeps the figure it was saved with.',
+            title: 'QC - Points Per Sheet',
+            text: 'What one sheet is worth to the day\'s QC. It fills in a new QC day; a day already recorded keeps the figure it was saved with, unless you choose to apply the change to it.',
             value: settings.qcPointsPerSheet,
             suffix: '',
             unit: 'points per sheet',
@@ -1388,7 +1459,7 @@ export default function AdminBoysIncentive() {
           },
           {
             key: 'qcDeductionPct',
-            title: 'QC — deduction',
+            title: 'QC - Deduction',
             text: 'How much comes off QC\'s points before they are credited, the same way it comes off a team\'s. Settled outside the portal.',
             value: settings.qcDeductionPct,
             suffix: '%',
@@ -1411,7 +1482,7 @@ export default function AdminBoysIncentive() {
                     credited with {points(ex.credited)} — {points(ex.each)} each.
                   </p>
                   {!viewOnly && (
-                    <button onClick={() => setQcSettingForm({ key: c.key, value: String(c.value) })}
+                    <button onClick={() => { setQcSettingForm({ key: c.key, value: String(c.value) }); setApply('qc', ''); }}
                       className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
                   )}
                 </>
@@ -1422,12 +1493,10 @@ export default function AdminBoysIncentive() {
                     <input autoFocus required type="number" min="0" max={c.max} step="0.01" value={qcSettingForm.value}
                       onChange={(e) => setQcSettingForm({ ...qcSettingForm, value: e.target.value })}
                       className="block w-full border rounded-lg px-3 py-2" />
-                    <p className="text-xs text-gray-400 mt-1">
-                      A QC day already recorded keeps the figure it was saved with.
-                    </p>
                   </div>
+                  <ApplyToRecorded value={applyFrom.qc} onChange={(v) => setApply('qc', v)} days="QC days" />
                   <div className="flex justify-end gap-2 pt-2">
-                    <button type="button" onClick={() => setQcSettingForm(null)}
+                    <button type="button" onClick={() => { setQcSettingForm(null); setApply('qc', ''); }}
                       className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
                     <button type="submit" disabled={savingQcSetting}
                       className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">

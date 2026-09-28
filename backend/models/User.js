@@ -178,6 +178,29 @@ const userSchema = new mongoose.Schema(
      * Admin holds it by role (services/taskAccess.canAssignOnBehalf).
      */
     taskProxyAccess: { type: Boolean, default: false },
+    /**
+     * SET UP RECURRING TASKS (user request 2026-09-28: "for Recurring … it
+     * should be as Permission based — Super Admin can decide who to give").
+     *
+     * Opens the Recurring Tasks page (its own sidebar / menu entry since the
+     * same day) and every /api/tasks/recurring route. A standalone grant, not a
+     * capability key: an HR Manager with no `permissions` list holds every
+     * catalogued key by default, and this is meant to be a list of people a
+     * Super Admin named one at a time. A Super Admin holds it by role
+     * (services/taskAccess.canManageRecurring). Schedules already set up keep
+     * running whoever set them — the grant decides who may see and change them.
+     */
+    taskRecurringAccess: { type: Boolean, default: false },
+    /**
+     * SET A TASK'S NOTIFICATIONS — its reminders (same request, 2026-09-28).
+     *
+     * Without it the assign form offers no Reminders section and the server
+     * ignores any reminders sent (an older app always sends them), so the task
+     * gets the company's default reminders — the ones a task gets when nobody
+     * sets their own. A Super Admin holds it by role
+     * (services/taskAccess.canSetReminders).
+     */
+    taskReminderAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

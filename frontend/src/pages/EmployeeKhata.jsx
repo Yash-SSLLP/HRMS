@@ -53,11 +53,14 @@
  * The wording deliberately avoids debit/credit — see the backend's
  * describeWalletForEmployee.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
-import CameraCapture from '../components/CameraCapture';
+// Several bills per entry (2026-09-28): the picker holds the camera now.
+import BillPicker from '../components/BillPicker';
+import BillGallery, { openBill, openBillInTab } from '../components/BillGallery';
+import { billList, khataBillPath as billPath } from '../utils/bills';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
 import { DateSortButton } from '../components/DateSort';
@@ -282,19 +285,20 @@ export default function EmployeeKhata() {
   const [error, setError] = useState('');
   const [modal, setModal] = useState(null); // 'request' | 'expense' | 'refund' | 'settle' | 'claim'
   const [form, setForm] = useState(blankRequest);
-  const [receipt, setReceipt] = useState(null);
+  // THE BILLS — several per entry since 2026-09-28 (components/BillPicker):
+  // the new files, and on a correction which of the ones already attached stay.
+  const [bills, setBills] = useState([]);
+  const [keepBills, setKeepBills] = useState([]);
+  // An entry with several bills opens them all in one window (BillGallery).
+  const [gallery, setGallery] = useState(null);
   const [saving, setSaving] = useState(false);
   const [newKhata, setNewKhata] = useState(null); // { name, note }
   const [downloading, setDownloading] = useState(false);
   // The expense being corrected, if the modal is open to fix one rather than to
   // record a new one. Null for a new one.
   const [editing, setEditing] = useState(null);
-  // Two ways to attach the slip: pick a file already on the device, or open the
-  // camera. The camera is a real getUserMedia capture rather than an
-  // `<input capture>` hint, which does nothing at all on a laptop — see
-  // components/CameraCapture.
-  const [camera, setCamera] = useState(false);
-  const fileRef = useRef(null);
+  // (The one-file picker and its camera flag went into components/BillPicker,
+  // 2026-09-28 — it takes several photos or files, and removes any of them.)
 
   // The Cash Out chooser — only 'out' now, which covers two things (spending
   // the advance, handing cash back), so asking "which kind?" once is kinder
@@ -470,10 +474,9 @@ export default function EmployeeKhata() {
         || postableKhatas.find((k) => k.isDefault)?._id
         || postableKhatas[0]?._id || '',
     });
-    setReceipt(null);
+    setBills([]);
+    setKeepBills([]);
     setEditing(null);
-    // Clear the input too, else re-picking the same file fires no change event.
-    if (fileRef.current) fileRef.current.value = '';
     setModal(which);
   };
 
@@ -500,8 +503,9 @@ export default function EmployeeKhata() {
       referenceNo: entry.referenceNo || '',
       date: (entry.date || '').slice(0, 10) || today(),
     });
-    setReceipt(null);
-    if (fileRef.current) fileRef.current.value = '';
+    setBills([]);
+    // Every bill already on it stays unless they take it off.
+    setKeepBills(billList(entry).map((b) => b.i));
     setEditing(entry);
     setModal(entry.type === 'refund' ? 'refund' : 'expense');
   };
@@ -515,14 +519,8 @@ export default function EmployeeKhata() {
    * same owner-or-manager rule the company side goes through; it is their own
    * bill, and until now the only way back to it was to ask the company for it.
    */
-  const viewReceipt = async (id) => {
-    try {
-      const res = await api.get(`/khata/entries/${id}/receipt`, { responseType: 'blob' });
-      window.open(URL.createObjectURL(res.data), '_blank', 'noopener');
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not open the bill');
-    }
-  };
+  // One bill opens in a tab as it always did; several open the gallery (2026-09-28).
+  const viewReceipt = (entry) => openBill(entry, billPath, setGallery);
 
   const createKhata = async (e) => {
     e.preventDefault();
@@ -562,12 +560,14 @@ export default function EmployeeKhata() {
     }
     // The bill is the only control on an expense — or a refund — now that they
     // post on the spot. Checked here as well as on the server so the failure is
-    // immediate rather than a round trip after they hit Send. Not asked for
-    // again on a correction: the bill that came with it is still attached.
-    if (needsBook && !editing && !receipt) {
-      toast.error(modal === 'refund'
-        ? 'Attach the credit note or receipt — it is required for a refund'
-        : 'Attach the bill or receipt — it is required for an expense');
+    // immediate rather than a round trip after they hit Send. On a correction
+    // the bills already attached count, as long as at least one is kept.
+    if (needsBook && (editing ? keepBills.length + bills.length === 0 : !bills.length)) {
+      toast.error(editing
+        ? 'Keep at least one bill — or add a new one — before saving.'
+        : modal === 'refund'
+          ? 'Attach the credit note or receipt — it is required for a refund'
+          : 'Attach the bill or receipt — it is required for an expense');
       return;
     }
 
@@ -580,7 +580,10 @@ export default function EmployeeKhata() {
         // decides what may be edited (ledger.expenseEditability).
         const fd = new FormData();
         Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
-        if (receipt) fd.append('receipt', receipt);
+        // Every new bill under the one field name, plus which of the attached
+        // ones stay — the server deletes the rest once the edit is saved.
+        bills.forEach((f) => fd.append('receipt', f));
+        fd.append('keepBills', JSON.stringify(keepBills));
         const res = await api.put(`/khata/me/expenses/${editing._id}`, fd);
         toast.success(res.data.message || 'Updated');
       } else if (modal === 'request') {
@@ -596,7 +599,8 @@ export default function EmployeeKhata() {
         // against it.
         const fd = new FormData();
         Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
-        if (receipt) fd.append('receipt', receipt);
+        // Every bill, one part each under the same field name (2026-09-28).
+        bills.forEach((f) => fd.append('receipt', f));
         // Where the entry is being filed from, taken at the moment of filing.
         // Best-effort — a refused permission or a machine with no fix sends
         // nothing rather than blocking a record of money already spent. Only a
@@ -1382,9 +1386,9 @@ export default function EmployeeKhata() {
                         an expense you are asked about weeks later is a figure
                         and a remark until you can see the bill behind it. */}
                     {e.hasAttachment && (
-                      <button onClick={() => viewReceipt(e._id)}
+                      <button onClick={() => viewReceipt(e)}
                         className="block text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
-                        View bill
+                        {e.attachmentCount > 1 ? `View ${e.attachmentCount} bills` : 'View bill'}
                       </button>
                     )}
                     {canEditMine(e, khatas) && (
@@ -1876,43 +1880,30 @@ export default function EmployeeKhata() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
                   placeholder="Bill / UPI / cheque number" />
 
-                <label className="block text-sm text-gray-700 mb-1">
-                  {editing ? 'Replace the bill (optional)'
-                    : modal === 'expense' ? <>Bill or receipt<Req /></>
-                      : modal === 'refund' ? <>Credit note or receipt<Req /></>
-                        : 'Receipt (optional)'}
-                </label>
-                {/* Two ways in: attach a file already on the device, or open the
-                    camera and photograph the paper slip there and then. */}
-                <div className="flex flex-wrap gap-2 mb-2">
-                  <button type="button" onClick={() => fileRef.current?.click()}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                    Upload file
-                  </button>
-                  <button type="button" onClick={() => setCamera(true)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                    Take photo
-                  </button>
-                </div>
-                <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden"
-                  onChange={(e) => setReceipt(e.target.files?.[0] || null)} />
-                {receipt ? (
-                  <div className="flex items-center gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
-                    <span className="truncate text-gray-700">{receipt.name}</span>
-                    <button type="button" onClick={() => { setReceipt(null); if (fileRef.current) fileRef.current.value = ''; }}
-                      className="ml-auto text-gray-500 hover:text-gray-800 shrink-0">Remove</button>
-                  </div>
-                ) : (
-                  <p className={`text-xs mb-3 ${BOOK_FORMS.includes(modal) && !editing ? 'text-red-600' : 'text-gray-500'}`}>
-                    {editing
-                      ? 'Image or PDF. Leave this alone to keep the bill already attached.'
+                {/* SEVERAL BILLS, one entry (2026-09-28): take photo after
+                    photo, or pick several files at once — each one a tile that
+                    comes off on its own. On a correction the bills already
+                    attached are tiles too. */}
+                <div className="mb-3">
+                  <BillPicker
+                    label={modal === 'refund' ? 'Credit notes or receipts'
+                      : modal === 'expense' ? 'Bills or receipts' : 'Receipts'}
+                    required={BOOK_FORMS.includes(modal)}
+                    files={bills}
+                    onFilesChange={setBills}
+                    existing={editing ? billList(editing) : []}
+                    keep={keepBills}
+                    onKeepChange={setKeepBills}
+                    onViewExisting={editing ? (i) => openBillInTab(billPath(editing._id, i)) : undefined}
+                    hint={editing
+                      ? 'Images or PDFs, up to 5 MB each. Take off any that are wrong, or add more.'
                       : modal === 'expense'
-                        ? 'Image or PDF. An expense cannot be recorded without the bill.'
+                        ? 'Images or PDFs, up to 5 MB each. An expense cannot be recorded without a bill — add as many as it took.'
                         : modal === 'refund'
-                          ? 'Image or PDF. A refund cannot be recorded without the credit note.'
-                          : 'Image or PDF.'}
-                  </p>
-                )}
+                          ? 'Images or PDFs, up to 5 MB each. A refund cannot be recorded without the credit note.'
+                          : 'Images or PDFs, up to 5 MB each.'}
+                  />
+                </div>
               </>
             )}
 
@@ -1937,15 +1928,8 @@ export default function EmployeeKhata() {
         </div>
       )}
 
-      {/* A real camera, not the `<input capture>` hint, which silently falls
-          back to a file dialog on anything without a phone camera. */}
-      {camera && (
-        <CameraCapture
-          title="Photograph the bill"
-          fileName="bill"
-          onCapture={(file) => setReceipt(file)}
-          onClose={() => setCamera(false)} />
-      )}
+      {/* Every bill on one entry, when it has several (2026-09-28). */}
+      <BillGallery entry={gallery} pathFor={billPath} onClose={() => setGallery(null)} />
     </div>
   );
 }

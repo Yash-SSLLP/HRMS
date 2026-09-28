@@ -13,6 +13,10 @@ import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+// Several receipts per entry (2026-09-28): picked or photographed, and viewed together.
+import BillPicker from '../components/BillPicker';
+import BillGallery, { openBill } from '../components/BillGallery';
+import { cashbookBillPath } from '../utils/bills';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -115,19 +119,21 @@ export default function AdminCashbook() {
   // ---------- Entry create/edit ----------
   const openEntry = (mode, data) => setEntryModal({
     mode,
-    file: null,
+    // The receipts — several per entry since 2026-09-28.
+    files: [],
     data: data || { account: activeAccounts[0]?._id || '', type: 'out', amount: '', date: today(), category: '', paymentMode: 'Cash', party: '', referenceNo: '', description: '' },
   });
   const saveEntry = async (e) => {
     e.preventDefault();
-    const { mode, data, file } = entryModal;
+    const { mode, data, files = [] } = entryModal;
     if (!(Number(data.amount) > 0)) { toast.error('Enter a positive amount'); return; }
     setSaving(true);
     try {
       if (mode === 'create') {
         const fd = new FormData();
         Object.entries(data).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
-        if (file) fd.append('receipt', file);
+        // Every receipt, one part each under the same field name.
+        files.forEach((f) => fd.append('receipt', f));
         await api.post('/cashbook/entries', fd);
       } else {
         await api.put(`/cashbook/entries/${data._id}`, clean({
@@ -148,12 +154,10 @@ export default function AdminCashbook() {
     } catch (err) { errToast(err, 'Could not delete'); }
   };
 
-  const viewReceipt = async (id) => {
-    try {
-      const res = await api.get(`/cashbook/entries/${id}/receipt`, { responseType: 'blob' });
-      window.open(URL.createObjectURL(res.data), '_blank', 'noopener');
-    } catch (err) { errToast(err, 'Could not open receipt'); }
-  };
+  // One receipt opens in a tab as it always did; several open the gallery
+  // (2026-09-28). Takes the ENTRY, so it can tell which.
+  const [gallery, setGallery] = useState(null);
+  const viewReceipt = (entry) => openBill(entry, cashbookBillPath, setGallery);
 
   // ---------- Voucher review ----------
   const submitReview = async (action) => {
@@ -338,7 +342,7 @@ export default function AdminCashbook() {
                     <td className="px-3 py-2 text-right text-red-700">{e.type === 'out' ? money(e.amount) : ''}</td>
                     <td className="px-3 py-2"><span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_STYLES[e.status]}`}>{e.status}</span></td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      {e.hasAttachment && <button onClick={() => viewReceipt(e._id)} className="text-blue-600 hover:underline text-xs mr-2">Receipt</button>}
+                      {e.hasAttachment && <button onClick={() => viewReceipt(e)} className="text-blue-600 hover:underline text-xs mr-2">{e.attachmentCount > 1 ? `Receipts (${e.attachmentCount})` : 'Receipt'}</button>}
                       {!viewOnly && !e.transferGroup && <button onClick={() => openEntry('edit', { ...e })} className="text-gray-600 hover:underline text-xs mr-2">Edit</button>}
                       {!viewOnly && <button onClick={() => deleteEntry(e._id)} className="text-red-600 hover:underline text-xs">Delete</button>}
                     </td>
@@ -368,7 +372,7 @@ export default function AdminCashbook() {
                   <td className="px-3 py-2 text-gray-600">{v.party || '-'}</td>
                   <td className="px-3 py-2 font-medium">{money(v.amount)}</td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
-                    {v.hasAttachment && <button onClick={() => viewReceipt(v._id)} className="text-blue-600 hover:underline text-xs mr-2">Receipt</button>}
+                    {v.hasAttachment && <button onClick={() => viewReceipt(v)} className="text-blue-600 hover:underline text-xs mr-2">{v.attachmentCount > 1 ? `Receipts (${v.attachmentCount})` : 'Receipt'}</button>}
                     {!viewOnly && (
                       <button onClick={() => setReview({ ...v, account: activeAccounts[0]?._id || '', note: '' })} className="text-indigo-600 hover:underline text-xs">Review</button>
                     )}
@@ -516,7 +520,16 @@ export default function AdminCashbook() {
             </div>
             <Field label="Description"><textarea rows={2} value={entryModal.data.description} onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryModal.data, description: e.target.value } })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
             {entryModal.mode === 'create' && (
-              <Field label="Receipt (image / PDF)"><input type="file" accept="image/*,application/pdf" onChange={(e) => setEntryModal({ ...entryModal, file: e.target.files?.[0] || null })} className="text-sm" /></Field>
+              <div className="mb-3">
+                <BillPicker
+                  label="Receipts"
+                  files={entryModal.files || []}
+                  onFilesChange={(files) => setEntryModal((m) => (m ? { ...m, files } : m))}
+                  cameraTitle="Photograph the receipts"
+                  fileName="receipt"
+                  hint="Images or PDFs, up to 5 MB each."
+                />
+              </div>
             )}
             <ModalActions saving={saving} onCancel={() => setEntryModal(null)} />
           </form>
@@ -531,7 +544,7 @@ export default function AdminCashbook() {
             <div><span className="text-gray-500">Amount:</span> <strong>{money(review.amount)}</strong></div>
             <div><span className="text-gray-500">Category:</span> {review.category} · <span className="text-gray-500">Paid to:</span> {review.party || '-'}</div>
             {review.description && <div className="text-gray-600">{review.description}</div>}
-            {review.hasAttachment && <button onClick={() => viewReceipt(review._id)} className="text-blue-600 hover:underline text-xs">View receipt</button>}
+            {review.hasAttachment && <button onClick={() => viewReceipt(review)} className="text-blue-600 hover:underline text-xs">{review.attachmentCount > 1 ? `View ${review.attachmentCount} receipts` : 'View receipt'}</button>}
           </div>
           <Field label="Pay from account *"><SearchableSelect value={review.account} onChange={(e) => setReview({ ...review, account: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm"><option value="">Select…</option>{activeAccounts.map((a) => <option key={a._id} value={a._id}>{a.name} · {money(a.currentBalance)}</option>)}</SearchableSelect></Field>
           <Field label="Note (optional)"><input value={review.note} onChange={(e) => setReview({ ...review, note: e.target.value })} className="w-full border rounded-lg px-3 py-2 text-sm" /></Field>
@@ -599,6 +612,9 @@ export default function AdminCashbook() {
           </form>
         </Modal>
       )}
+
+      {/* Every receipt on one entry, when it has several (2026-09-28). */}
+      <BillGallery entry={gallery} pathFor={cashbookBillPath} onClose={() => setGallery(null)} />
     </div>
   );
 }

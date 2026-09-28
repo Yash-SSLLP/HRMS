@@ -579,8 +579,13 @@ export const PILES = [
  */
 export const STAT_BAR = [
   {
+    // TOTAL IS THE OPEN WORK since 2026-09-28 — the user: "in Total Task dont
+    // show completed task there". Not accepted, overdue, in progress and in
+    // review; finished work is under Completed, and called-off work is not
+    // work. The same figure the pile cards call "open" (TaskPileCards
+    // .openCount), so a card saying 12 and a bar saying 12 are the same 12.
     key: 'total', label: 'Total', icon: 'FiLayers', colour: '#2a78d6',
-    query: {},
+    query: { status: [STATUS.PENDING, STATUS.IN_PROGRESS, STATUS.SUBMITTED].join(',') },
   },
   {
     key: 'pending', label: 'Not Accepted Yet', icon: 'FiClock', colour: '#DC6803',
@@ -604,9 +609,25 @@ export const STAT_BAR = [
   },
 ];
 
-/** A stat-bar figure out of the server's counters — one counter per figure. */
+/**
+ * A stat-bar figure out of the server's counters — one counter per figure,
+ * except Total, which is everything bar the finished and the called-off (the
+ * server's `total` still counts every row, for an older client).
+ */
 export function statValue(counters = {}, key) {
+  if (key === 'total') {
+    return Math.max(0, (Number(counters.total) || 0) - (Number(counters.completed) || 0)
+      - (Number(counters.cancelled) || 0));
+  }
   return Number(counters[key]) || 0;
+}
+
+/**
+ * What a figure asks the list for. No figure picked IS Total — the page opens
+ * on the open work, not on every row it ever held.
+ */
+export function statQueryFor(key) {
+  return (STAT_BAR.find((s) => s.key === (key || 'total')) || STAT_BAR[0]).query;
 }
 
 /**

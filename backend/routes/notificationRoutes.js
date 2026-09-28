@@ -11,6 +11,7 @@ const {
   markRead,
   markUnread,
   deleteNotification,
+  deleteAllRead,
 } = require('../controllers/notificationController');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -30,6 +31,10 @@ router.patch('/:id/read', markRead);
 // PATCH /:id/unread — put a read one back to unread (the phone's right swipe
 // toggles between the two); protected.
 router.patch('/:id/unread', markUnread);
+// DELETE /read — take every READ alert off the caller's feed ("Delete read" on
+// the phone). Soft, like the swipe. Declared BEFORE /:id, which would otherwise
+// take "read" for an id.
+router.delete('/read', deleteAllRead);
 // DELETE /:id — take one alert off the caller's feed (swipe-to-delete on the
 // phone). Soft: the record survives, see the controller.
 router.delete('/:id', deleteNotification);

@@ -43,6 +43,12 @@ export default function TaskModal({
    */
   initialStatus = null,
   /**
+   * "Edit task" was picked on a row (2026-09-28): open with the task's editor
+   * already out, once it has loaded — and only if the server still says it may
+   * be edited.
+   */
+  initialEdit = false,
+  /**
    * Where this module lives for this account.
    *
    * Worked out from the URL when the caller does not say, because the module
@@ -146,6 +152,7 @@ export default function TaskModal({
             /* The dropped-on column belongs to the card that was dragged, not
                to a piece somebody opened from inside it afterwards. */
             initialStatus={current === taskId ? initialStatus : null}
+            initialEdit={current === taskId ? initialEdit : false}
             onChanged={onChanged}
             onOpenTask={(id) => { if (id) setOverride(String(id)); }}
             onGone={onClose}

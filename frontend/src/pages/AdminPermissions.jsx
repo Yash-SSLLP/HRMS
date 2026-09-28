@@ -84,6 +84,8 @@ const GRANT_HELP = {
   assets: 'Issue, return and track company assets.',
   training: 'Opens the training module: the schedule, and booking on it. They can create a training, set its dates and times, add participants, edit it and cancel it — the same page HR uses, reached from My Portal. A standalone grant because whoever organises training is as often a department lead or a coordinator as HR, and the capability list only reaches HR Manager and Manager accounts.',
   taskProxy: 'Assign a task on somebody else’s behalf: the assign form offers “On behalf of”, and the task goes out in that person’s name — they approve it and it sits in their “Assigned by me” — while the record keeps who actually sent it. The sender does not keep it: once sent, it leaves their own lists and they hear nothing more about it. For an assistant or coordinator who hands out work for a director or a department head.',
+  taskRecurring: 'Set up recurring tasks: opens the Recurring Tasks page — daily, weekly, monthly or yearly schedules that drop a task into people’s Tasks each time one comes round — and lets them pause, change and stop the ones they set. Schedules already running keep running either way; this decides who may see and change them.',
+  taskReminders: 'Set a task’s notifications: the Reminders section on the assign form — before or after the deadline, or repeating until it is done, by app or email. Without it the section is not shown and the task simply gets the company’s default reminder.',
   loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
   khata: 'Open the employee cashbook: give cash advances to staff, confirm what they spend, and settle up.',
@@ -172,8 +174,13 @@ function AccessTab({ showGuide, setShowGuide }) {
   // Org-wide feature switches.
   const [org, setOrg] = useState({
     chatEnabled: false,
+    // A switch again since 2026-09-28 (the user's "toggle in permission …
+    // CEO/MD approval mandatory for any advance or not"). Default ON.
+    khataAdvanceApprovalRequired: true,
     documentFooter: { helpline: '', note: '' },
   });
+  // What flipping the advance switch did to requests in flight, said once.
+  const [orgNotice, setOrgNotice] = useState('');
   const [orgBusy, setOrgBusy] = useState(false);
   // The footer inputs are edited freely and saved on a button, unlike the
   // switches — so they need their own draft, or every keystroke would be a PUT.
@@ -185,6 +192,7 @@ function AccessTab({ showGuide, setShowGuide }) {
   // by the next toggle.
   const readOrg = (d = {}) => ({
     chatEnabled: !!d.chatEnabled,
+    khataAdvanceApprovalRequired: d.khataAdvanceApprovalRequired !== false,
     documentFooter: {
       helpline: d.documentFooter?.helpline || '',
       note: d.documentFooter?.note || '',
@@ -230,11 +238,18 @@ function AccessTab({ showGuide, setShowGuide }) {
   // second copy of the same optimistic-update dance.
   const toggleOrg = async (field, errorText) => {
     const next = !org[field];
-    setOrgBusy(true); setError('');
+    setOrgBusy(true); setError(''); setOrgNotice('');
     setOrg({ ...org, [field]: next });
     try {
       const { data } = await api.put('/admin/org-settings', { [field]: next });
       setOrg(readOrg(data));
+      // The advance switch moves requests already waiting (2026-09-28) — say
+      // how many, and where to, so the move is never a surprise.
+      if (field === 'khataAdvanceApprovalRequired' && data?.advancesMoved > 0) {
+        const n = data.advancesMoved;
+        setOrgNotice(`${n} advance request${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} moved to ${
+          next ? 'the CEO/MD for approval' : 'the cashbook manager'}.`);
+      }
     } catch (err) {
       setOrg({ ...org, [field]: !next });
       setError(err.response?.data?.message || errorText);
@@ -309,6 +324,17 @@ function AccessTab({ showGuide, setShowGuide }) {
 
   const toggleTaskProxy = (u) => toggleAccess(u, {
     path: 'task-proxy-access', field: 'taskProxyAccess', enabled: !u.taskProxyAccess, errorText: 'Could not update the tasks permission',
+  });
+
+  // The two task grants of 2026-09-28 — "Super Admin can decide who to give".
+  const toggleTaskRecurring = (u) => toggleAccess(u, {
+    path: 'task-recurring-access', field: 'taskRecurringAccess', enabled: !u.taskRecurringAccess,
+    errorText: 'Could not update the recurring tasks permission',
+  });
+
+  const toggleTaskReminders = (u) => toggleAccess(u, {
+    path: 'task-reminder-access', field: 'taskReminderAccess', enabled: !u.taskReminderAccess,
+    errorText: 'Could not update the task reminders permission',
   });
 
   const toggleTraining = (u) => toggleAccess(u, {
@@ -480,8 +506,9 @@ function AccessTab({ showGuide, setShowGuide }) {
       && (!t || `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(t)));
   }, [users, q, roleFilter]);
 
-  // Account, Role, Company Accounts, Assets, Loans, Training, Tasks on behalf,
-  // Incentive, Employee Cashbook, Attendance, CEO/MD, Manager profiles,
+  // Account, Role, Company Accounts, Assets, Loans, Training, Tasks (on behalf
+  // · recurring · reminders, one column since 2026-09-28), Incentive, Employee
+  // Cashbook, Attendance, CEO/MD, Manager profiles,
   // Capabilities. THIRTEEN — it is the colSpan of the loading skeleton and of
   // the "no accounts match" panel, so a column added above without touching
   // this leaves both a cell short of the table. (The Expenses column went with
@@ -518,6 +545,9 @@ function AccessTab({ showGuide, setShowGuide }) {
               ['Assets', GRANT_HELP.assets],
               ['Loans & Advances', GRANT_HELP.loans],
               ['Training', GRANT_HELP.training],
+              ['Tasks · On behalf', GRANT_HELP.taskProxy],
+              ['Tasks · Recurring', GRANT_HELP.taskRecurring],
+              ['Tasks · Reminders', GRANT_HELP.taskReminders],
               ['Employee Cashbook · Module', GRANT_HELP.khata],
               ['Employee Cashbook · Export', GRANT_HELP.khataExport],
               ['Attendance · WFH', GRANT_HELP.wfh],
@@ -553,18 +583,21 @@ function AccessTab({ showGuide, setShowGuide }) {
             onLabel="Enabled" offLabel="Disabled"
             onChange={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} />
 
-          {/* Not a switch any more (2026-09-26): every employee advance goes to
-              the CEO/MD and then to the cashbook manager. Said here, where the
-              switch used to be, so nobody goes looking for it. */}
-          <div className="py-4">
-            <div className="text-sm font-medium text-gray-900">CEO / MD approval for cash advances</div>
-            <p className="text-xs text-gray-500 mt-1 max-w-3xl leading-relaxed">
-              Always required. An employee&apos;s advance request goes to the CEO and the MD first — either of
-              them can approve it — and then to the cashbook manager, who pays it from a cash account. Only then
-              does the amount reach the employee&apos;s wallet. A CEO or MD asking for their own advance goes
-              straight to the cashbook manager.
-            </p>
-          </div>
+          {/* A SWITCH AGAIN (2026-09-28 — the user: "give this a toggle in
+              permission so that we can set is it CEO/MD approval mandatory for
+              any advance or not"). It was a fixed sentence from 2026-09-26. */}
+          <SettingRow
+            title="CEO / MD approval for cash advances"
+            description={org.khataAdvanceApprovalRequired
+              ? 'Required. An employee’s advance request goes to the CEO and the MD first — either of them can approve it — and then to the cashbook manager, who pays it from a cash account. Only then does the amount reach the employee’s wallet. Switch it off and requests go straight to the cashbook manager; any still waiting on the CEO/MD go with them. A CEO or MD asking for their own advance always goes straight to the cashbook manager.'
+              : 'Not required. An employee’s advance request goes straight to the cashbook manager, who decides it and pays it from a cash account. Switch it on and every request goes to the CEO and the MD first; any not yet paid that were filed while it was off go to them too.'}
+            checked={org.khataAdvanceApprovalRequired}
+            busy={orgBusy}
+            onLabel="Required" offLabel="Not required"
+            onChange={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance approval setting')} />
+          {orgNotice && (
+            <p className="py-2 text-xs font-medium text-green-700" role="status">{orgNotice}</p>
+          )}
 
           {/* The contact strip on the khata statement PDF. Only a Super Admin
               can change it, because the document goes outside the company. */}
@@ -655,7 +688,7 @@ function AccessTab({ showGuide, setShowGuide }) {
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Assets</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.loans}>Loans</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.training}>Training</th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.taskProxy}>Tasks on behalf</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700" title="Assign on somebody’s behalf · set up recurring tasks · set a task’s reminders">Tasks</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700" title={GRANT_HELP.incentive}>Incentive</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Employee Cashbook</th>
               <th className="px-4 py-3 text-left font-semibold text-gray-700">Attendance</th>
@@ -750,14 +783,22 @@ function AccessTab({ showGuide, setShowGuide }) {
                     )}
                   </td>
 
-                  {/* A Super Admin sets tasks for anybody by role, so there
-                      is nothing to switch on for them. */}
+                  {/* Three task grants in one column (2026-09-28): on behalf,
+                      recurring tasks, and a task's reminders. A Super Admin
+                      holds all three by role, so there is nothing to switch on
+                      for them. */}
                   <td className="px-4 py-3">
                     {isExternal ? outside : u.role === 'SuperAdmin' ? (
-                      <span className="text-xs text-gray-400" title="Holds it by role.">By role</span>
+                      <span className="text-xs text-gray-400" title="Holds all three by role.">By role</span>
                     ) : (
-                      <ToggleSwitch checked={!!u.taskProxyAccess} busy={isBusy('taskProxyAccess')} label="Assign tasks on behalf"
-                        title={GRANT_HELP.taskProxy} onChange={() => toggleTaskProxy(u)} />
+                      <div className="flex flex-col gap-2">
+                        <GrantRow label="On behalf" aria="Assign tasks on somebody's behalf" checked={!!u.taskProxyAccess}
+                          busy={isBusy('taskProxyAccess')} title={GRANT_HELP.taskProxy} onChange={() => toggleTaskProxy(u)} />
+                        <GrantRow label="Recurring" aria="Set up recurring tasks" checked={!!u.taskRecurringAccess}
+                          busy={isBusy('taskRecurringAccess')} title={GRANT_HELP.taskRecurring} onChange={() => toggleTaskRecurring(u)} />
+                        <GrantRow label="Reminders" aria="Set a task's reminders" checked={!!u.taskReminderAccess}
+                          busy={isBusy('taskReminderAccess')} title={GRANT_HELP.taskReminders} onChange={() => toggleTaskReminders(u)} />
+                      </div>
                     )}
                   </td>
 

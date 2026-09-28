@@ -19,6 +19,8 @@ const CashbookEntry = require('../models/CashbookEntry');
 const { ENTRY_STATUS, PAYMENT_MODES, POSTED_STATUSES } = require('../models/CashbookEntry');
 const User = require('../models/User');
 const storage = require('../services/storage');
+// Several bills per entry since 2026-09-28 — read and written only through here.
+const bills = require('../utils/bills');
 const { viewerCompanyScope, cannotSeeUser, allowedUserIds } = require('../utils/employeeScope');
 
 // ===== Company wall =====
@@ -107,21 +109,14 @@ async function recomputeBalance(accountId) {
   return acc.currentBalance;
 }
 
-// Persist a receipt file (image/PDF) for an entry and stamp its attachment.
-async function attachReceipt(entry, file) {
-  if (!file) return;
-  const saved = await storage.saveBuffer({
-    buffer: file.buffer,
-    ownerType: 'cashbook',
-    ownerId: entry._id,
-    originalName: file.originalname,
-  });
-  entry.attachment = {
-    storagePath: saved.storagePath,
-    name: file.originalname,
-    sizeBytes: saved.sizeBytes,
-    mime: file.mimetype,
-  };
+// Persist the receipt files (images/PDFs) for an entry — all of them, in order
+// (several per entry since 2026-09-28; see utils/bills).
+async function attachReceipt(entry, files) {
+  const list = Array.isArray(files) ? files : (files ? [files] : []);
+  if (!list.length) return;
+  const stored = await bills.storeBills(list, { ownerType: 'cashbook', ownerId: entry._id });
+  if (!stored.length) return;
+  bills.setBills(entry, [...bills.billsOf(entry), ...stored]);
   await entry.save();
 }
 
@@ -174,13 +169,16 @@ const publicEntry = (e) => ({
   reviewNote: e.reviewNote,
   reviewedAt: e.reviewedAt,
   balanceAfter: e.balanceAfter,
-  hasAttachment: !!e.attachment?.storagePath,
+  hasAttachment: bills.billCount(e) > 0,
   // Name and type of the receipt, so a client that DOWNLOADS it (the phone app
   // saves to disk and hands the file to the OS) can save it under a name the
   // OS will open. Without these it had to guess ".jpg", and a PDF receipt
-  // opened as a broken image.
-  attachmentName: e.attachment?.name || undefined,
-  attachmentMime: e.attachment?.mime || undefined,
+  // opened as a broken image. (The FIRST receipt's.)
+  attachmentName: bills.billsOf(e)[0]?.name || undefined,
+  attachmentMime: bills.billsOf(e)[0]?.mime || undefined,
+  // Every receipt (2026-09-28), each served by GET /entries/:id/receipt?i=.
+  attachmentCount: bills.billCount(e),
+  attachments: bills.publicBills(e),
   transferGroup: e.transferGroup || null,
   createdAt: e.createdAt,
 });
@@ -229,7 +227,7 @@ const submitVoucher = asyncHandler(async (req, res) => {
     employee: req.user._id,
     createdBy: req.user._id,
   });
-  await attachReceipt(entry, req.file);
+  await attachReceipt(entry, bills.uploadedBills(req));
 
   const who = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   notifyMany(await financeManagerIds(), {
@@ -478,7 +476,7 @@ const createEntry = asyncHandler(async (req, res) => {
     status: 'Approved',
     createdBy: req.user._id,
   });
-  await attachReceipt(entry, req.file);
+  await attachReceipt(entry, bills.uploadedBills(req));
   const balance = await recomputeBalance(account);
   entry.balanceAfter = balance;
   await entry.save();
@@ -544,7 +542,8 @@ const deleteEntry = asyncHandler(async (req, res) => {
   }
   for (const e of toDelete) {
     if (e.account) affected.add(String(e.account));
-    if (e.attachment?.storagePath) { try { await storage.remove(e.attachment.storagePath); } catch { /* ignore */ } }
+    // Every receipt on it, not just the first (2026-09-28).
+    await bills.removeFiles(bills.billsOf(e).map((a) => a.storagePath));
     await e.deleteOne();
   }
   for (const a of affected) await recomputeBalance(a);
@@ -882,8 +881,10 @@ const exportExcel = asyncHandler(async (req, res) => {
  */
 // GET /api/cashbook/entries/:id/receipt — stream the receipt (owner or manager)
 const getReceipt = asyncHandler(async (req, res) => {
-  const entry = await CashbookEntry.findById(req.params.id).select('attachment employee account');
-  if (!entry || !entry.attachment?.storagePath) { res.status(404); throw new Error('Receipt not found'); }
+  const entry = await CashbookEntry.findById(req.params.id).select('attachment attachments employee account');
+  // `?i=` picks which receipt (several per entry since 2026-09-28); the first without.
+  const bill = bills.billAt(entry, req.query.i);
+  if (!entry || !bill) { res.status(404); throw new Error('Receipt not found'); }
   const isOwner = entry.employee && String(entry.employee) === String(req.user._id);
   // A manager only within the company wall — role alone no longer opens
   // another company's receipts.
@@ -892,8 +893,8 @@ const getReceipt = asyncHandler(async (req, res) => {
     || ['CEO', 'MD'].includes(req.user.role))
     && !(await entryOutOfScope(req, entry));
   if (!isOwner && !isManager) { res.status(403); throw new Error('Not allowed'); }
-  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
-  if (!(await storage.streamTo(entry.attachment.storagePath, res))) { res.status(404); throw new Error('Receipt file missing'); }
+  if (bill.mime) res.setHeader('Content-Type', bill.mime);
+  if (!(await storage.streamTo(bill.storagePath, res))) { res.status(404); throw new Error('Receipt file missing'); }
 });
 
 module.exports = {

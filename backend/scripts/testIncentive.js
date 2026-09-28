@@ -105,6 +105,7 @@ FakeEntry.prototype.deleteOne = async function deleteOne() {
   if (i >= 0) store.splice(i, 1);
 };
 FakeEntry.payees = RealEntry.payees;
+FakeEntry.recalc = RealEntry.recalc;
 FakeEntry.isPending = RealEntry.isPending;
 
 /** A chainable stand-in for a mongoose Query. */
@@ -1672,6 +1673,92 @@ const DAY2 = '2026-09-11';
       assert.ok(through, `a manager passes ${method.toUpperCase()} ${path}`);
     }
     assert.strictEqual(layer('get', '/qc').route.stack.length, 1, 'GET /qc has no gate beyond the tab\'s');
+  });
+
+  // ---- A changed rate reaching back to days already recorded (2026-09-28) ----
+  // QC was changed from 4 to 0.4 a sheet and the days already recorded still
+  // read 4, because every day freezes its figures. The settings form can now
+  // ask for the change to apply from a date — never by default.
+  const qcDay = (date) => qcStore.find((d) => ymd(d.date) === date);
+
+  await check('a changed QC figure still leaves recorded days alone unless asked', async () => {
+    const plain = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 0.4 } });
+    assert.strictEqual(plain.statusCode, 200, plain.error);
+    assert.strictEqual(plain.payload.reRated, undefined, 'nothing was worked out again');
+    assert.strictEqual(qcDay(QC1).pointsPerSheet, 4);
+    assert.strictEqual(qcDay(QC2).pointsPerSheet, 5);
+    settingsDoc.incentive.qcPointsPerSheet = 4; // put the fixture back
+  });
+
+  await check('reaching back is refused WHOLE when somebody already paid would be left overpaid', async () => {
+    // Person 5 was paid 140 for the month, all of it QC1 at 4 a sheet. At 0.4
+    // they would have earned 14.
+    const res = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 0.4, applyFrom: QC1 } });
+    assert.strictEqual(res.statusCode, 409, res.error || JSON.stringify(res.payload));
+    assert.strictEqual(res.payload.code, 'RERATE_OVERPAID');
+    const five = res.payload.people.find((p) => String(p.employee) === String(id(5)));
+    assert.ok(five, 'names who would be overpaid');
+    assert.strictEqual(five.paid, 140);
+    assert.strictEqual(five.earned, 14);
+    assert.ok(/Nothing was changed/.test(res.payload.message), res.payload.message);
+    assert.strictEqual(qcDay(QC1).pointsPerSheet, 4, 'no day was touched');
+    assert.strictEqual(qcDay(QC1).teamPoints, 280);
+    assert.strictEqual(settingsDoc.incentive.qcPointsPerSheet, 4, 'and the setting was not changed either');
+  });
+
+  await check('an unreadable "from" date is refused before anything moves', async () => {
+    const res = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 0.4, applyFrom: 'soon' } });
+    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(settingsDoc.incentive.qcPointsPerSheet, 4);
+    assert.strictEqual(qcDay(QC1).pointsPerSheet, 4);
+  });
+
+  await check('from a date, only the days on or after it are worked out again, and only the figure changed', async () => {
+    const res = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 0.4, applyFrom: QC2 } });
+    assert.strictEqual(res.statusCode, 200, res.error || JSON.stringify(res.payload));
+    assert.deepStrictEqual(res.payload.reRated, { teamDays: 0, qcDays: 1 });
+    assert.strictEqual(res.payload.settings.qcPointsPerSheet, 0.4);
+    const two = qcDay(QC2);
+    assert.strictEqual(two.pointsPerSheet, 0.4);
+    assert.strictEqual(two.deductionPct, 20, 'the deduction it froze is not the figure that changed');
+    assert.strictEqual(two.teamPoints, 3.2, '10 sheets x 0.4 = 4, less 20%');
+    assert.strictEqual(two.updatedByName, 'The Backend', 'who re-rated it is on the day');
+    assert.strictEqual(qcDay(QC1).pointsPerSheet, 4, 'the day before the date is left alone');
+    const team = store.find((d) => ymd(d.date) === QC1);
+    assert.strictEqual(team.pointsPerSheet, 4, 'a QC figure never touches a rolling team');
+  });
+
+  await check('once the payment is taken back, the earlier day follows too — and the roll-up with it', async () => {
+    const row = payments.find((p) => String(p.employee) === String(id(5)) && p.points === 140);
+    assert.ok(row, 'the 140-point payment is on file');
+    const undo = await call(ctrl.deletePayment, { params: { id: row._id } });
+    assert.strictEqual(undo.statusCode, 200, undo.error);
+
+    const res = await call(ctrl.updateSettings, { body: { qcPointsPerSheet: 0.4, applyFrom: QC1 } });
+    assert.strictEqual(res.statusCode, 200, res.error || JSON.stringify(res.payload));
+    assert.deepStrictEqual(res.payload.reRated, { teamDays: 0, qcDays: 1 }, 'QC2 is already at 0.4, so only QC1 moves');
+    const one = qcDay(QC1);
+    assert.strictEqual(one.pointsPerSheet, 0.4);
+    assert.strictEqual(one.deductionPct, 30);
+    assert.strictEqual(one.teamPoints, 28, '100 sheets x 0.4 = 40, less 30%');
+    assert.strictEqual(one.perPersonPoints, 14);
+
+    const sum = await call(ctrl.summary, { query: { month: QC_MONTH } });
+    const five = sum.payload.people.find((r) => r.employeeCode === 'SSL105');
+    assert.strictEqual(five.qcPoints, 14, 'the Per employee tab reads the new figure');
+  });
+
+  await check("a rolling team's figure reaches back to team days the same way", async () => {
+    const res = await call(ctrl.updateSettings, { body: { pointsPerSheet: 5, applyFrom: QC1 } });
+    assert.strictEqual(res.statusCode, 200, res.error || JSON.stringify(res.payload));
+    assert.strictEqual(res.payload.reRated.qcDays, 0, 'a team figure never touches QC');
+    assert.ok(res.payload.reRated.teamDays >= 1);
+    const team = store.find((d) => ymd(d.date) === QC1);
+    assert.strictEqual(team.pointsPerSheet, 5);
+    assert.strictEqual(team.teamPoints, 35, '10 sheets x 5 = 50, less 30%');
+    assert.strictEqual(qcDay(QC1).pointsPerSheet, 0.4, 'QC keeps its own');
+    settingsDoc.incentive.pointsPerSheet = 4; // put the fixture back
+    settingsDoc.incentive.qcPointsPerSheet = 4;
   });
 
   console.log(`\n${passed} checks passed${process.exitCode ? ' (with failures above)' : ''}\n`);

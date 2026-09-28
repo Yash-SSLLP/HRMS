@@ -12,11 +12,13 @@
  * TWO GATES ON AN ADVANCE, and they answer different questions.
  *   1. SHOULD THEY HAVE IT? An employee's request parks as 'AwaitingApproval'
  *      and goes to the CEO and the MD — both are told, either may decide.
- *      ALWAYS, since 2026-09-26: the org switch that could turn this step off
- *      (Setting.khataAdvanceApprovalRequired) is retired, and requests that
- *      reached the accounts team while it was off are sent back to the
- *      executives (sendUnsanctionedAdvancesToExecs). The one exception is an
- *      executive's own request — there is nobody above them to ask.
+ *      While the org switch is ON (Setting.khataAdvanceApprovalRequired — a
+ *      Permissions toggle again since 2026-09-28; it was always-on between
+ *      2026-09-26 and then). Turning it on sends advances that reached the
+ *      accounts team while it was off to the executives
+ *      (sendUnsanctionedAdvancesToExecs); turning it off hands the ones still
+ *      waiting on them to the accounts team (releaseAdvancesFromExecs). An
+ *      executive's own request never waits — nobody is above them to ask.
  *   2. WHERE DOES THE CASH COME FROM? Once sanctioned it parks as 'Pending' for
  *      the cashbook manager — an operator with approve rights on a cash account
  *      — who names the account it is paid out of. Only then does any money
@@ -54,6 +56,8 @@ const User = require('../models/User');
 const { departedUserIdSet } = require('../utils/departed');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const storage = require('../services/storage');
+// Several bills per entry since 2026-09-28 — read and written only through here.
+const bills = require('../utils/bills');
 const ledger = require('../services/khataLedger');
 // The Category dropdown on an expense — the list, who writes it, and the rule a
 // filed category is checked against. See services/cashOutCategories.js.
@@ -92,7 +96,9 @@ const RECEIPT_LINK_SCOPE = 'khata-receipt';
  * @returns {string}
  */
 function receiptLinkFor(entry) {
-  if (!entry?.attachment?.storagePath) return '';
+  // One link per ENTRY, whatever the bill count — the page it opens lists
+  // every bill on the entry (2026-09-28).
+  if (!bills.billCount(entry)) return '';
   const id = String(entry._id);
   return `${appBaseUrl()}/bill/${id}/${signId(RECEIPT_LINK_SCOPE, id)}`;
 }
@@ -114,10 +120,12 @@ function receiptLinkFor(entry) {
  * @sideEffects Sets the cell's value and font.
  */
 function writeBillCell(cell, entry) {
-  if (!entry?.attachment?.storagePath) return;
+  const count = bills.billCount(entry);
+  if (!count) return;
   const url = receiptLinkFor(entry);
-  if (!url) { cell.value = 'Yes'; return; }
-  cell.value = { text: 'View bill', hyperlink: url };
+  if (!url) { cell.value = count > 1 ? `Yes (${count})` : 'Yes'; return; }
+  // "View 3 bills" when there are several — the link opens a page with all of them.
+  cell.value = { text: count > 1 ? `View ${count} bills` : 'View bill', hyperlink: url };
   // Excel does not style a hyperlink on its own when the cell value is set
   // programmatically — without this it is plain black text that happens to be
   // clickable, which nobody clicks.
@@ -286,15 +294,20 @@ const publicEntry = (e, viewer, opts = {}) => ({
     && String(e.employee?._id || e.employee) !== String(viewer._id)
     ? {}
     : { balanceAfter: e.walletBalanceAfter }),
-  hasAttachment: !!e.attachment?.storagePath,
+  hasAttachment: bills.billCount(e) > 0,
   // WHAT the bill is, not just that there is one. The mobile app has no tab to
   // open a stream in: it downloads the bytes to a file and hands that file to
   // the OS, which picks the viewer from the name and the mime. Without these it
   // guessed — every bill was saved as `.jpg`, so a PDF invoice reached the OS
   // labelled as a photo and opened as a broken image. Same two keys, same
-  // names, as the company cashbook's mapper.
-  attachmentName: e.attachment?.name || undefined,
-  attachmentMime: e.attachment?.mime || undefined,
+  // names, as the company cashbook's mapper. (The FIRST bill's — see below.)
+  attachmentName: bills.billsOf(e)[0]?.name || undefined,
+  attachmentMime: bills.billsOf(e)[0]?.mime || undefined,
+  // EVERY bill (2026-09-28: several per entry). `i` is what
+  // GET /entries/:id/receipt?i= serves; an older client ignores both keys and
+  // opens the first, as before.
+  attachmentCount: bills.billCount(e),
+  attachments: bills.publicBills(e),
   // Has anybody on the company side actually looked at this expense? 'Approved'
   // does not answer that for an expense, which posts unreviewed — see the
   // KhataEntry schema. Until this is true the row is still correctable.
@@ -457,22 +470,40 @@ const publicWallet = (w) => ({
 const ADVANCE_SANCTIONERS = ['CEO', 'MD', 'SuperAdmin'];
 
 /**
- * Advances an employee asked for that reached the accounts team WITHOUT a
- * CEO/MD sanction — filed while the (now retired) org switch had that step
- * turned off. Every employee advance goes to the CEO/MD first since
- * 2026-09-26, so these are sent back to them rather than paid unvetted. Moves
- * no money: they were only ever waiting, and they wait with the executives now.
+ * Is the CEO/MD sanction on an employee's cash advance switched ON?
  *
- * ONCE PER PROCESS. The rule itself stops new ones appearing — requestAdvance
- * always parks an employee's request with the executives — so after one pass
- * there is nothing left to find. Idempotent (a second pass finds nothing), and
- * a failure is logged and retried on the next call rather than blocking the
- * queue it guards. Called from the reads that show either queue and from the
- * pay-out paths, so no such row can be paid before it has been looked at.
+ * A Permissions toggle AGAIN since 2026-09-28 — the user: *"give this a toggle
+ * in permission so that we can set is it CEO/MD approval mandatory for any
+ * advance or not"*. It was always-on from 2026-09-26 to 2026-09-28 (the switch
+ * had been retired). Default ON, and ON whenever the settings document cannot
+ * be read: a missing setting must never quietly remove an approval gate.
+ * @returns {Promise<boolean>}
+ */
+async function advanceApprovalRequired() {
+  const s = await Setting.getSettings().catch(() => null);
+  return s ? s.khataAdvanceApprovalRequired !== false : true;
+}
+
+/**
+ * Advances an employee asked for that reached the accounts team WITHOUT a
+ * CEO/MD sanction — filed while the org switch had that step turned off — sent
+ * to the executives now that it is ON, rather than paid unvetted. Moves no
+ * money: they were only ever waiting, and they wait with the executives now.
+ *
+ * ONCE PER PROCESS WHILE THE SWITCH IS ON. With it on, requestAdvance parks
+ * every employee request with the executives, so after one pass there is
+ * nothing left to find. With it OFF this does nothing and remembers nothing —
+ * those rows are exactly where the switch says they belong — and turning it
+ * back on resets the memo (resetUnsanctionedSweep, from the org-settings
+ * route). Idempotent, and a failure is logged and retried on the next call
+ * rather than blocking the queue it guards. Called from the reads that show
+ * either queue and from the pay-out paths, so no such row can be paid before
+ * it has been looked at.
  * @returns {Promise<number>} how many rows were sent back
  */
 let unsanctionedSweep = null;
-function sendUnsanctionedAdvancesToExecs() {
+async function sendUnsanctionedAdvancesToExecs() {
+  if (!(await advanceApprovalRequired())) return 0;
   if (!unsanctionedSweep) {
     unsanctionedSweep = (async () => {
       const rows = await KhataEntry.find({
@@ -513,6 +544,50 @@ function sendUnsanctionedAdvancesToExecs() {
     });
   }
   return unsanctionedSweep;
+}
+
+/** The switch went back ON: the next read sweeps again (see above). */
+function resetUnsanctionedSweep() {
+  unsanctionedSweep = null;
+}
+
+/**
+ * The switch went OFF (2026-09-28): requests still waiting on the CEO/MD go to
+ * the cashbook manager, because the step they were waiting for is no longer
+ * required — left where they were, they would wait for a decision nobody has
+ * to make. Nothing is PAID: the manager still decides and names the account.
+ * Turning the switch back on sends any of them not yet paid to the executives
+ * again (sendUnsanctionedAdvancesToExecs), so a slip either way is undone by
+ * flipping it back. A request the executives already DECLINED is not touched —
+ * that is a decision, not a wait.
+ * @returns {Promise<number>} how many requests moved
+ */
+async function releaseAdvancesFromExecs() {
+  const rows = await KhataEntry.find({
+    status: 'AwaitingApproval',
+    movement: 'advance',
+    direction: 'to_employee',
+    raisedByEmployee: true,
+  }).populate('employee', 'firstName lastName role').lean();
+  if (!rows.length) return 0;
+  // Guarded on the same state, so a request decided in the meantime stays decided.
+  const { modifiedCount } = await KhataEntry.updateMany(
+    { _id: { $in: rows.map((e) => e._id) }, status: 'AwaitingApproval' },
+    { $set: { status: 'Pending', execApprovalRequired: false } },
+  );
+  if (modifiedCount) {
+    const names = [...new Set(rows.map((e) => e.employee?.firstName).filter(Boolean))].join(', ');
+    const total = ledger.round2(rows.reduce((sum, e) => sum + (Number(e.amount) || 0), 0));
+    await notifyMany(await khataApproverIds(), {
+      type: 'general',
+      audience: 'all',
+      title: modifiedCount === 1 ? 'Advance request is yours to decide' : 'Advance requests are yours to decide',
+      body: `CEO/MD approval for advances was switched off, so ${modifiedCount === 1 ? 'a request' : `${modifiedCount} requests`}`
+        + ` (₹${total.toLocaleString('en-IN')}${names ? `, from ${names}` : ''}) that was waiting on them is with you now.`,
+      link: '/admin/khata',
+    }).catch((e) => console.error('[khata] release notify failed:', e.message));
+  }
+  return modifiedCount;
 }
 
 /**
@@ -566,24 +641,18 @@ async function openKhata({ employee, name: rawName, note, actor, res }) {
 }
 
 /**
- * Save an uploaded receipt onto an entry.
+ * Save the uploaded bills onto an entry — ALL of them, in the order sent
+ * (several bills to one expense since 2026-09-28; see utils/bills). Added
+ * after any the entry already carries.
  * @param {object} entry - A saved KhataEntry document.
- * @param {object} [file] - Multer file, or undefined when none was sent.
+ * @param {object[]|object} [files] - Multer files (bills.uploadedBills), or one file.
  */
-async function attachReceipt(entry, file) {
-  if (!file) return;
-  const saved = await storage.saveBuffer({
-    buffer: file.buffer,
-    ownerType: 'khata',
-    ownerId: entry._id,
-    originalName: file.originalname,
-  });
-  entry.attachment = {
-    storagePath: saved.storagePath,
-    name: file.originalname,
-    sizeBytes: saved.sizeBytes,
-    mime: file.mimetype,
-  };
+async function attachReceipt(entry, files) {
+  const list = Array.isArray(files) ? files : (files ? [files] : []);
+  if (!list.length) return;
+  const stored = await bills.storeBills(list, { ownerType: 'khata', ownerId: entry._id });
+  if (!stored.length) return;
+  bills.setBills(entry, [...bills.billsOf(entry), ...stored]);
   await entry.save();
 }
 
@@ -1019,9 +1088,10 @@ const getMyKhata = asyncHandler(async (req, res) => {
       claimable: ledger.round2(Math.max(0, -(wallet.balance || 0) - sums.pendingReimbursement)),
     },
     // Whether a request of theirs will need an executive's sanction, so the
-    // form can say so before they send it rather than after. Always, except for
-    // a CEO/MD/Backend, who sanctions their own — theirs goes straight to accounts.
-    approvalRequired: !ADVANCE_SANCTIONERS.includes(req.user.role),
+    // form can say so before they send it rather than after. Only while the
+    // org switch is on (a Permissions toggle again since 2026-09-28), and never
+    // for a CEO/MD/Backend, who sanctions their own — theirs goes straight to accounts.
+    approvalRequired: !ADVANCE_SANCTIONERS.includes(req.user.role) && await advanceApprovalRequired(),
     count: entries.length,
     // Passed explicitly rather than as `entries.map(publicEntry)`: Array.map
     // hands its callback the INDEX as a second argument, which would arrive as
@@ -1242,7 +1312,9 @@ const requestAdvance = asyncHandler(async (req, res) => {
   // A CEO/MD (or the Backend) is the sanctioning authority — there is nobody
   // above them to approve their own advance, so it skips the executive gate and
   // goes straight to the accounts team (the Account Manager) to be paid out.
-  const needsExec = !ADVANCE_SANCTIONERS.includes(req.user.role);
+  // Everybody else goes to the CEO/MD first while the org switch is ON (the
+  // Permissions toggle, back since 2026-09-28); with it off, to accounts.
+  const needsExec = !ADVANCE_SANCTIONERS.includes(req.user.role) && await advanceApprovalRequired();
 
   const { entry } = await ledger.postEntry({
     employee: req.user._id,
@@ -1370,10 +1442,12 @@ const recordMyExpense = asyncHandler(async (req, res) => {
   // before anything posts, like the bill below.
   const category = resolveExpenseCategory((await getCashOutCategories()).list, req.body.category);
   // Before anything posts — see above. An expense with no bill behind it is the
-  // one thing this flow cannot allow, now that it self-approves.
-  if (!req.file) bad(res, 'Attach the bill or receipt — it is required for an expense.');
+  // one thing this flow cannot allow, now that it self-approves. Several bills
+  // to one expense are fine (2026-09-28); none is not.
+  const billFiles = bills.uploadedBills(req);
+  if (!billFiles.length) bad(res, 'Attach the bill or receipt — it is required for an expense.');
 
-  const { entry, khata } = await ledger.postEntry({
+  const { entry, khata, duplicate } = await ledger.postEntry({
     employee: req.user._id,
     // Which book it belongs to. The ledger refuses one that is not theirs or
     // has been closed, and falls back to their default when none is named.
@@ -1398,7 +1472,9 @@ const recordMyExpense = asyncHandler(async (req, res) => {
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
-  await attachReceipt(entry, req.file);
+  // A replayed request got the row it already made — with its bills already on
+  // it. Attaching again would give it every bill twice.
+  if (!duplicate) await attachReceipt(entry, billFiles);
 
   const wallet = await ledger.getOrCreateWallet(req.user._id);
 
@@ -1447,13 +1523,14 @@ const recordMyRefund = asyncHandler(async (req, res) => {
   if (!purpose) bad(res, 'Say what the money is for');
   // Before anything posts, exactly as for an expense: a refund raises the
   // employee's advance, so it needs the same paper behind it.
-  if (!req.file) bad(res, 'Attach the credit note or receipt — it is required for a refund.');
+  const billFiles = bills.uploadedBills(req);
+  if (!billFiles.length) bad(res, 'Attach the credit note or receipt — it is required for a refund.');
   // No fallback to the default book here, unlike an expense. Money coming back
   // has to come back INTO something: filed nowhere it is a settlement (cash
   // handed to the company), which is a different event with a different gate.
   if (!isId(req.body.khata)) bad(res, 'Say which book the money came back into.');
 
-  const { entry, khata } = await ledger.postEntry({
+  const { entry, khata, duplicate } = await ledger.postEntry({
     employee: req.user._id,
     khata: req.body.khata,
     direction: 'to_employee',
@@ -1473,7 +1550,8 @@ const recordMyRefund = asyncHandler(async (req, res) => {
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
-  await attachReceipt(entry, req.file);
+  // Not on a replay — the row already has its bills.
+  if (!duplicate) await attachReceipt(entry, billFiles);
 
   const wallet = await ledger.getOrCreateWallet(req.user._id);
 
@@ -1537,23 +1615,44 @@ async function holdCategoryToList(changes, entry) {
 }
 
 /**
- * Swap the bill on an entry, deleting the one it replaces.
+ * The bills an edit leaves on an entry (2026-09-28: several bills per entry).
  *
- * The old file is removed only AFTER the new one is stored and the entry saved:
- * a failure part-way through leaves an entry with a bill that exists, never one
- * pointing at a file that has been deleted.
+ * `keepBills` (the indexes of the bills already there that the form kept) plus
+ * any new files, in that order — see utils/bills.planEdit. An older form sends
+ * no `keepBills`, and its one new file REPLACES the bill, as it always did.
+ *
+ * NOTHING IS DELETED HERE. The new files are stored and set on the entry (not
+ * saved); the caller saves the edit and only THEN removes `removed` — so a
+ * refused edit (a closed book, a bad amount) never leaves an entry pointing at
+ * a bill that has already been deleted.
  * @param {object} entry - A saved KhataEntry document.
- * @param {object} [file] - Multer file; nothing happens without one.
- * @returns {Promise<boolean>} Whether a replacement actually happened.
+ * @param {object} req - the request (files + body.keepBills)
+ * @param {object} res - for the 400
+ * @returns {Promise<{changed: boolean, removed: string[], summary: string}>}
  */
-async function replaceReceipt(entry, file) {
-  if (!file) return false;
-  const previous = entry.attachment?.storagePath;
-  await attachReceipt(entry, file);
-  if (previous && previous !== entry.attachment?.storagePath) {
-    await storage.remove(previous).catch(() => { /* the entry is what matters */ });
+async function editBills(entry, req, res) {
+  const added = bills.uploadedBills(req);
+  const keep = bills.parseKeep(req.body?.keepBills, bills.billCount(entry));
+  if (!added.length && keep === null) return { changed: false, removed: [], summary: '' };
+  const before = bills.billCount(entry);
+  // Checked before anything is stored, so a refusal leaves no orphan files.
+  const kept = keep === null ? (added.length ? 0 : before) : keep.length;
+  if (kept + added.length > bills.MAX_BILLS) {
+    bad(res, `An entry can carry at most ${bills.MAX_BILLS} bills — remove some first.`);
   }
-  return true;
+  // Filing one needs a bill (recordMyExpense / recordMyRefund); an edit must
+  // not be the way to end up with none.
+  if (kept + added.length === 0 && ['expense', 'refund'].includes(entry.movement)) {
+    bad(res, 'An expense needs its bill — keep at least one, or add a new one.');
+  }
+  const stored = await bills.storeBills(added, { ownerType: 'khata', ownerId: entry._id });
+  const plan = bills.planEdit(entry, keep, stored);
+  if (!plan.changed) return { changed: false, removed: [], summary: '' };
+  bills.setBills(entry, plan.next);
+  const after = plan.next.length;
+  const summary = before === 1 && after === 1 ? 'bill replaced'
+    : `bills ${before} → ${after}`;
+  return { changed: true, removed: plan.removed, summary };
 }
 
 /**
@@ -1587,13 +1686,16 @@ const updateMyExpense = asyncHandler(async (req, res) => {
   }
 
   const changes = expenseChanges(req.body, res);
-  // Before the bill is swapped, so a refused category leaves nothing behind.
+  // Before the bills are touched, so a refused category leaves nothing behind.
   await holdCategoryToList(changes, entry);
-  changes.receiptReplaced = await replaceReceipt(entry, req.file);
+  const billEdit = await editBills(entry, req, res);
+  changes.receiptReplaced = billEdit.changed ? billEdit.summary : false;
 
   const { entry: saved, wallet, khata, changed, summary } = await ledger.applyExpenseEdit(
     entry, changes, req.user, { asEmployee: true }
   );
+  // The edit is saved — only now may the bills it took off be deleted.
+  await bills.removeFiles(billEdit.removed);
 
   // No notification (2026-09-27): an expense corrected before it is confirmed
   // is still just an expense — only advance and reimbursement requests notify.
@@ -1713,7 +1815,7 @@ const declareSettlement = asyncHandler(async (req, res) => {
   const amount = toNum(req.body.amount);
   if (!Number.isFinite(amount) || amount <= 0) bad(res, 'Enter how much you are returning');
 
-  const { entry } = await ledger.postEntry({
+  const { entry, duplicate } = await ledger.postEntry({
     employee: req.user._id,
     direction: 'from_employee',
     type: 'settlement',
@@ -1728,7 +1830,8 @@ const declareSettlement = asyncHandler(async (req, res) => {
     idempotencyKey: req.body.idempotencyKey,
   }, req.user);
 
-  await attachReceipt(entry, req.file);
+  // Optional here; every bill sent, and not again on a replay.
+  if (!duplicate) await attachReceipt(entry, bills.uploadedBills(req));
 
   // No notification (2026-09-27, user rule: only advance and reimbursement
   // requests notify). It waits in the Approval tab under its red count.
@@ -1849,9 +1952,9 @@ const overview = asyncHandler(async (req, res) => {
     peopleWithKhatas: wallets.length,
     pendingCount,
     awaitingApprovalCount,
-    // Always, since the switch was retired (2026-09-26). Still sent, because an
-    // older app warns "approval is switched off" when it reads false.
-    approvalRequired: true,
+    // The org switch (a Permissions toggle again since 2026-09-28). An app
+    // shows "approval is switched off" when this reads false — true again now.
+    approvalRequired: await advanceApprovalRequired(),
     // Only the accounts this operator may actually pay from.
     accounts: await ledger.listOperableAccounts(req.user),
   });
@@ -2650,7 +2753,8 @@ const createEntry = asyncHandler(async (req, res) => {
     });
   }
 
-  await attachReceipt(entry, req.file);
+  // Every bill sent (several per entry since 2026-09-28). A replay returned above.
+  await attachReceipt(entry, bills.uploadedBills(req));
 
   if (autoApprove) {
     // Tell the employee their own wallet moved, in their own words.
@@ -2805,8 +2909,8 @@ const listAdvanceApprovals = asyncHandler(async (req, res) => {
 
   res.json({
     count: entries.length,
-    // Always now — see overview. Kept for older apps.
-    approvalRequired: true,
+    // The org switch — see overview.
+    approvalRequired: await advanceApprovalRequired(),
     entries: entries.map((e) => {
       const w = walletBy.get(String(e.employee?._id || e.employee));
       return {
@@ -3028,11 +3132,14 @@ const updateEntry = asyncHandler(async (req, res) => {
   // Same rule as the employee's own correction: a new category must be on the
   // list, an unchanged one is left alone.
   await holdCategoryToList(changes, entry);
-  changes.receiptReplaced = await replaceReceipt(entry, req.file);
+  const billEdit = await editBills(entry, req, res);
+  changes.receiptReplaced = billEdit.changed ? billEdit.summary : false;
 
   const { entry: saved, wallet, khata, changed, summary } = await ledger.applyExpenseEdit(
     entry, changes, req.user, { asEmployee: false }
   );
+  // Saved — now the bills the correction took off may go.
+  await bills.removeFiles(billEdit.removed);
 
   if (changed) {
     await notify({
@@ -4011,31 +4118,41 @@ const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
  * One at a time rather than one Promise.all: sixty GridFS downloads fired at
  * once is a burst the connection pool does not need, and the loop stops the
  * moment a cap is reached instead of paying for reads nothing will draw.
+ * SEVERAL BILLS PER ROW since 2026-09-28: a row's value is the ARRAY of its
+ * files (the renderer takes `Buffer|Buffer[]`), and the page cap counts FILES,
+ * not rows — ten photos on one expense are ten pages, not one.
  * @param {Array<object>} rows - Lean entries, in the order they will be printed.
- * @returns {Promise<{bills: Map<string, Buffer>, billsSkipped: number}>}
+ * @returns {Promise<{bills: Map<string, Buffer[]>, billsSkipped: number}>}
  */
 async function readBillsFor(rows) {
-  const bills = new Map();
+  const out = new Map();
+  let files = 0;
   let bytes = 0;
   let billsSkipped = 0;
   for (const e of rows) {
-    if (!e.attachment?.storagePath) continue;
-    if (bills.size >= RECEIPT_PAGE_CAP || bytes >= RECEIPT_BYTES_CAP) {
-      billsSkipped += 1;
-      continue;
+    const list = bills.billsOf(e);
+    if (!list.length) continue;
+    const buffers = [];
+    for (const a of list) {
+      if (files >= RECEIPT_PAGE_CAP || bytes >= RECEIPT_BYTES_CAP) {
+        billsSkipped += 1;
+        continue;
+      }
+      try {
+        const buffer = await storage.readBuffer(a.storagePath);
+        if (!buffer) { billsSkipped += 1; continue; }
+        buffers.push(buffer);
+        files += 1;
+        bytes += buffer.length;
+      } catch (_) {
+        // A missing or unreadable bill must not sink the whole report — but it is
+        // still a bill the reader was expecting to see, so it is counted.
+        billsSkipped += 1;
+      }
     }
-    try {
-      const buffer = await storage.readBuffer(e.attachment.storagePath);
-      if (!buffer) { billsSkipped += 1; continue; }
-      bills.set(String(e._id), buffer);
-      bytes += buffer.length;
-    } catch (_) {
-      // A missing or unreadable bill must not sink the whole report — but it is
-      // still a bill the reader was expecting to see, so it is counted.
-      billsSkipped += 1;
-    }
+    if (buffers.length) out.set(String(e._id), buffers);
   }
-  return { bills, billsSkipped };
+  return { bills: out, billsSkipped };
 }
 
 /**
@@ -4132,7 +4249,9 @@ async function gatherReport(req, res, employeeId, opts = {}) {
       khataName: e.expenseBook?.name || '',
       cashAccountName: e.account?.name || '',
       byName: e.employee?.firstName ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim() : '',
-      hasAttachment: !!e.attachment?.storagePath,
+      hasAttachment: bills.billCount(e) > 0,
+      // Several bills per entry since 2026-09-28 — readBillsFor reads them all.
+      attachmentCount: bills.billCount(e),
     };
     // Where the person was standing when they filed it is SuperAdmin-only and
     // never goes into a document — see publicEntry. Dropped at the source rather
@@ -4229,7 +4348,8 @@ async function streamStatement(req, res, employeeId, opts = {}) {
   // big book lands as a much larger file. Every report type can carry them now,
   // since every one of them ends with the rows they hang off.
   const wantBills = String(req.query.bills) === '1';
-  const { bills, billsSkipped } = wantBills
+  // (Not named `bills` — that is the utils/bills module in this file.)
+  const { bills: billBuffers, billsSkipped } = wantBills
     ? await readBillsFor(rows)
     : { bills: null, billsSkipped: 0 };
 
@@ -4255,7 +4375,7 @@ async function streamStatement(req, res, employeeId, opts = {}) {
     range: { from, to },
     opening,
     entries: rows,
-    bills,
+    bills: billBuffers,
     billLinks,
     billsSkipped,
     // The filters that produced these rows, printed under the duration box, so
@@ -4464,12 +4584,15 @@ const myReportXlsx = asyncHandler(async (req, res) => {
  * Authenticates via header OR ?access_token=, because an <img>/<a> cannot set
  * an Authorization header. Visible to the employee it belongs to and to khata
  * managers — the same owner-or-manager rule the cashbook uses.
+ * `?i=` picks which bill (0-based) now that an entry may carry several
+ * (2026-09-28); without it — every older client — the first.
  * @route GET /api/khata/entries/:id/receipt
  * @returns {binary} 403 if not allowed, 404 if missing.
  */
 const getReceipt = asyncHandler(async (req, res) => {
-  const entry = await KhataEntry.findById(req.params.id).select('attachment employee expenseBook');
-  if (!entry || !entry.attachment?.storagePath) bad(res, 'Receipt not found', 404);
+  const entry = await KhataEntry.findById(req.params.id).select('attachment attachments employee expenseBook');
+  const bill = bills.billAt(entry, req.query.i);
+  if (!entry || !bill) bad(res, 'Receipt not found', 404);
 
   const isOwner = String(entry.employee) === String(req.user._id);
   // A manager only within the company wall — capability alone no longer opens
@@ -4492,8 +4615,8 @@ const getReceipt = asyncHandler(async (req, res) => {
 
   if (!isOwner && !isManager && !isBookMember) bad(res, 'Not allowed', 403);
 
-  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
-  if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
+  if (bill.mime) res.setHeader('Content-Type', bill.mime);
+  if (!(await storage.streamTo(bill.storagePath, res))) bad(res, 'Receipt file missing', 404);
 });
 
 /**
@@ -4514,10 +4637,10 @@ async function entryFromSignedLink(req, res, opts = {}) {
   if (!isId(id) || !verifyId(RECEIPT_LINK_SCOPE, id, sig)) {
     bad(res, 'This bill link is invalid or has expired.', 404);
   }
-  const query = KhataEntry.findById(id).select('attachment amount date code purpose category direction status expenseBook employee');
+  const query = KhataEntry.findById(id).select('attachment attachments amount date code purpose category direction status expenseBook employee');
   if (opts.full) query.populate('expenseBook', 'name').populate('employee', 'firstName lastName');
   const entry = await query;
-  if (!entry || !entry.attachment?.storagePath) bad(res, 'This bill link is invalid or has expired.', 404);
+  if (!entry || !bills.billCount(entry)) bad(res, 'This bill link is invalid or has expired.', 404);
   return entry;
 }
 
@@ -4550,7 +4673,18 @@ const asJpegName = (name) => `${String(name).replace(/\.hei[cf]$/i, '')}.jpg`;
  */
 const publicReceiptMeta = asyncHandler(async (req, res) => {
   const e = await entryFromSignedLink(req, res, { full: true });
-  const heic = isHeicBill(e.attachment);
+  // The first bill's facts stay at the top level for a page built before an
+  // entry could carry several; `files` lists them all (2026-09-28).
+  const first = bills.billsOf(e)[0];
+  const heic = isHeicBill(first);
+  const fileFacts = (a) => {
+    const h = isHeicBill(a);
+    return {
+      fileName: a.name ? (h ? asJpegName(a.name) : a.name) : null,
+      mime: h ? 'image/jpeg' : (a.mime || null),
+      sizeBytes: a.sizeBytes || null,
+    };
+  };
   res.json({
     code: e.code,
     date: e.date,
@@ -4563,10 +4697,12 @@ const publicReceiptMeta = asyncHandler(async (req, res) => {
     employeeName: e.employee?.firstName
       ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim()
       : null,
-    fileName: e.attachment.name ? (heic ? asJpegName(e.attachment.name) : e.attachment.name) : null,
-    mime: heic ? 'image/jpeg' : (e.attachment.mime || null),
+    fileName: first.name ? (heic ? asJpegName(first.name) : first.name) : null,
+    mime: heic ? 'image/jpeg' : (first.mime || null),
     // The size of the file as stored; a converted photo comes out smaller.
-    sizeBytes: e.attachment.sizeBytes || null,
+    sizeBytes: first.sizeBytes || null,
+    // Every bill on the entry, each served by the stream route with `?i=`.
+    files: bills.billsOf(e).map((a, i) => ({ i, ...fileFacts(a) })),
   });
 });
 
@@ -4581,23 +4717,26 @@ const publicReceiptMeta = asyncHandler(async (req, res) => {
  */
 const publicReceipt = asyncHandler(async (req, res) => {
   const entry = await entryFromSignedLink(req, res);
-  const name = String(entry.attachment.name || `bill-${entry.code || entry._id}`).replace(/["\\]/g, '');
+  // Which bill: `?i=` (several per entry since 2026-09-28), the first without.
+  // The signature is the ENTRY's, and every bill on it is equally that entry's.
+  const bill = bills.billAt(entry, req.query.i);
+  const name = String(bill.name || `bill-${entry.code || entry._id}`).replace(/["\\]/g, '');
   // An iPhone photo goes out as a JPEG, or the page this link opens shows a
   // broken image in every browser but Safari. Only here: the logged-in route
   // (getReceipt) still hands over the original file, and a photo this server
   // cannot convert is sent as it is rather than not at all.
-  if (isHeicBill(entry.attachment)) {
-    const original = await storage.readBuffer(entry.attachment.storagePath).catch(() => null);
+  if (isHeicBill(bill)) {
+    const original = await storage.readBuffer(bill.storagePath).catch(() => null);
     if (!original) bad(res, 'Receipt file missing', 404);
     const jpeg = await heicToJpeg(original);
-    res.setHeader('Content-Type', jpeg ? 'image/jpeg' : (entry.attachment.mime || 'image/heic'));
+    res.setHeader('Content-Type', jpeg ? 'image/jpeg' : (bill.mime || 'image/heic'));
     res.setHeader('Content-Disposition', `inline; filename="${jpeg ? asJpegName(name) : name}"`);
     res.send(jpeg || original);
     return;
   }
-  if (entry.attachment.mime) res.setHeader('Content-Type', entry.attachment.mime);
+  if (bill.mime) res.setHeader('Content-Type', bill.mime);
   res.setHeader('Content-Disposition', `inline; filename="${name}"`);
-  if (!(await storage.streamTo(entry.attachment.storagePath, res))) bad(res, 'Receipt file missing', 404);
+  if (!(await storage.streamTo(bill.storagePath, res))) bad(res, 'Receipt file missing', 404);
 });
 
 module.exports = {
@@ -4616,8 +4755,10 @@ module.exports = {
   summariseEntries,
   // operator lists
   overview, listMyAccounts, listKhatas, getKhata, employeeOptions, listEntries, listPending,
-  // executive sanction
+  // executive sanction — and the org switch over it (2026-09-28), which the
+  // org-settings route calls when a Super Admin flips it
   listAdvanceApprovals, decideAdvanceApproval, bulkDecideAdvances,
+  advanceApprovalRequired, resetUnsanctionedSweep, releaseAdvancesFromExecs, sendUnsanctionedAdvancesToExecs,
   // money movement
   createEntry, approveEntry, rejectEntry, reverseEntry, updateEntry, confirmEntry,
   // several entries at once — the multi-select on the approval queues

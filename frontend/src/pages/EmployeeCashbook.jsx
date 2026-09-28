@@ -8,6 +8,8 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
+// Several receipts per voucher, photographed or picked (2026-09-28).
+import BillPicker from '../components/BillPicker';
 
 const STATUS_STYLES = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -27,7 +29,8 @@ export default function EmployeeCashbook() {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(blank);
-  const [receipt, setReceipt] = useState(null);
+  // The receipts — several per voucher since 2026-09-28.
+  const [receipts, setReceipts] = useState([]);
 
   const load = async () => {
     setLoading(true); setError('');
@@ -50,7 +53,7 @@ export default function EmployeeCashbook() {
 
   const openCreate = () => {
     setForm({ ...blank, date: new Date().toISOString().slice(0, 10) });
-    setReceipt(null); setError(''); setShowModal(true);
+    setReceipts([]); setError(''); setShowModal(true);
   };
 
   const submit = async (e) => {
@@ -60,7 +63,8 @@ export default function EmployeeCashbook() {
     try {
       const fd = new FormData();
       Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
-      if (receipt) fd.append('receipt', receipt);
+      // Every receipt, one part each under the same field name.
+      receipts.forEach((f) => fd.append('receipt', f));
       await api.post('/cashbook/me', fd);
       setShowModal(false);
       await load();
@@ -189,12 +193,14 @@ export default function EmployeeCashbook() {
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
-              <div>
-                <label className="block text-sm text-gray-700">Receipt (image / PDF)</label>
-                <input type="file" accept="image/*,application/pdf"
-                  onChange={(e) => setReceipt(e.target.files?.[0] || null)}
-                  className="mt-1 block w-full text-sm" />
-              </div>
+              <BillPicker
+                label="Receipts"
+                files={receipts}
+                onFilesChange={setReceipts}
+                cameraTitle="Photograph the receipts"
+                fileName="receipt"
+                hint="Images or PDFs, up to 5 MB each."
+              />
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
               )}
