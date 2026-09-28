@@ -14,6 +14,12 @@
  * says why each one is not (see backend/services/payslipRequestMonths.js); this
  * page renders that answer and never computes a bound of its own, so it cannot
  * drift from the mobile app's copy of the same screen.
+ *
+ * NOTHING UNRELEASED IS SHOWN (2026-09-28). The server sends figures only for
+ * payslips HR has released (Finalised) — `payslips`. A payslip HR has but nobody
+ * asked for arrives in `ready` with its month and nothing else, and one being
+ * asked for, prepared or corrected is in `requests`. So the table, the detail
+ * view and the "Latest net pay" card only ever hold released payslips.
  */
 import { useEffect, useState } from 'react';
 import api from '../api/client';
@@ -458,6 +464,8 @@ export default function EmployeePayslips() {
   // Both come from the server already decided — see the note in the header.
   const [months, setMonths] = useState([]);
   const [requests, setRequests] = useState([]);
+  // Payslips HR has that nobody has asked for yet — month only, no figures.
+  const [ready, setReady] = useState([]);
   const [picking, setPicking] = useState(false);
 
   const load = async () => {
@@ -468,6 +476,7 @@ export default function EmployeePayslips() {
       // before, with the per-row Request button and no picker.
       setMonths(data.months || []);
       setRequests(data.requests || []);
+      setReady(data.ready || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load');
     } finally {
@@ -597,7 +606,8 @@ export default function EmployeePayslips() {
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-gray-900">{r.label}</div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {r.state === 'Approved' ? 'HR is preparing it.' : 'Asked for'}
+                    {r.state === 'Approved' ? 'HR is preparing it.'
+                      : r.state === 'ChangeRequested' ? 'Your correction is with HR.' : 'Asked for'}
                     {r.requestedAt ? ` · ${shortDate(r.requestedAt)}` : ''}
                     {!r.payslipReady && r.state === 'Requested'
                       ? ' · payroll has not been run for this month yet'
@@ -610,6 +620,32 @@ export default function EmployeePayslips() {
                     {busyId === r.id ? 'Withdrawing…' : 'Withdraw'}
                   </button>
                 )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Payslips HR has that nobody asked for yet. Month only — the figures come
+          with the release, never before (see the note at the top). */}
+      {ready.length > 0 && (
+        <div className="bg-white shadow rounded-lg overflow-hidden mb-4">
+          <div className="px-4 py-3 border-b border-gray-100">
+            <h2 className="card-title">Ready to request</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Request a payslip to see it. HR checks it and releases it to you — it then shows below with its PDF.
+            </p>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {ready.map((r) => (
+              <li key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-gray-900 min-w-0">{r.label}</div>
+                <button type="button"
+                  onClick={() => setRequestFor({ _id: r.id, payPeriodYear: r.year, payPeriodMonth: r.month })}
+                  disabled={busyId === r.id}
+                  className="text-sm text-blue-600 hover:underline disabled:opacity-50 shrink-0">
+                  {busyId === r.id ? 'Requesting…' : 'Request'}
+                </button>
               </li>
             ))}
           </ul>
@@ -632,7 +668,9 @@ export default function EmployeePayslips() {
             {loading ? (
               <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : payslips.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No payslips yet</td></tr>
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">
+                No payslips released to you yet. Request one — it shows here once HR releases it.
+              </td></tr>
             ) : payslips.map((p) => (
               <tr key={p._id}>
                 <td className="px-4 py-3">{MONTHS[p.payPeriodMonth - 1]} {p.payPeriodYear}</td>

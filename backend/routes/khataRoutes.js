@@ -229,6 +229,10 @@ router.get('/reports/outstanding', ctrl.outstandingReport);
 // Reading the ledger on screen and walking out with a file of it are different
 // decisions, so the second one is its own tick — see middleware canExportKhata.
 router.get('/reports/export', requireKhataExport, ctrl.exportExcel);
+// GET /reports/advances?from=YYYY-MM-DD&to=YYYY-MM-DD[&employees=id,id] — total
+// advance per person over any dates, everyone or the people named, as .xlsx;
+// requires 'khata.manage' + the same download grant as the export above.
+router.get('/reports/advances', requireKhataExport, ctrl.advanceReportXlsx);
 // POST /reports/remind — nudge everyone (or named people) holding company cash; requires 'khata.manage'.
 router.post('/reports/remind', ctrl.sendSettleReminders);
 

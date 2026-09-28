@@ -953,6 +953,39 @@ and changing the number a client is told to ring would otherwise need a deploy.
 A blank number prints **no help line at all**, which is a legitimate choice for
 a document that leaves the building.
 
+### Advance report — total advance per person, any dates (2026-09-28)
+
+Asked for as "download total advance taken by people in any interval, for all
+people, for few people". `GET /api/khata/reports/advances?from=YYYY-MM-DD&to=YYYY-MM-DD[&employees=id,id]`
+(`khataController.advanceReportXlsx`), behind `khata.manage` **and the same
+download grant as the export** (`requireKhataExport`: SuperAdmin or
+`User.khataExportAccess`). Web: **Overview → Advance report** (a dialog:
+quick ranges, From/To, Everyone or Choose people). App: the **Advances** chip
+beside Export (a sheet with the same choices; the file is saved into Download).
+
+- **What counts:** a `movement: 'advance'` row that was paid (POSTED_STATUSES)
+  and still stands. A reversal is a mirror row and can itself be reversed, so
+  `standingAdvanceIds` walks each advance's chain: an odd number of posted rows
+  (advance, or advance → undo → redo) means it is out; even means it was taken
+  back. Waiting, declined and reversed advances are left out, and the Summary
+  sheet says how many were reversed.
+- **Dates are IST calendar days** (`istDayRange`), on the entry's own `date`
+  — the date the ledger and statements show.
+- **Everyone** lists the people advanced something in the dates; **named
+  people** are all listed, a ₹0 row included. The company wall applies to both.
+- Two sheets: **Summary** (one row per person: count, total, first, last, a
+  formula TOTAL, then Period / People / Counted / Generated notes) and
+  **Advances** (every advance behind the totals, with who approved and paid it).
+
+### The CEO and MD are people here too (2026-09-28)
+
+They keep cashbooks of their own, so `/khata/employee-options` no longer
+excludes them (it used to filter `role: { $nin: ['CEO','MD'] }`), and they are
+**not** flagged `systemAccount` — every picker on the cashbook page lists them
+with staff. With no employee profile, their title reads as their role
+(`EXEC_OWNER_ROLES` fallback on `designation`) in the People list, a person's
+page, the ageing report, the statement header and the advance report.
+
 ---
 
 ## Integrations with the other money modules

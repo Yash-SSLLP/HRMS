@@ -286,7 +286,7 @@ Payslips move through Draft, Approved and Paid, with On Hold available. There is
 
 You can create and edit, approve, mark paid with a payment date and reference, delete while still in draft, generate the PDF, share a public link, email the slip after previewing the message, and export the whole month to the payroll register.
 
-[!IMPORTANT] Employees cannot download a payslip until it is released. They request it, HR checks and corrects it, previews, and finalises. Editing a payslip after release withdraws the download until it is released again, which stops an outdated slip circulating.
+[!IMPORTANT] Employees cannot see or download a payslip until it is released — not even its net pay. They request it, HR checks and corrects it, previews, and finalises. Editing a payslip after release withdraws the download until it is released again, which stops an outdated slip circulating.
 
 [!WARNING] If any active employee has no salary structure or no annual CTC, an amber banner names them on the dashboard and at the top of the payroll page. Payroll cannot compute anything for those people — they come out of a run with a zero payslip, and even the late-coming penalty is zero because its rate depends on monthly Basic. Clicking a name jumps straight to their salary setup. You are also notified the moment an employee is added without salary details.
 

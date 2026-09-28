@@ -191,7 +191,7 @@ There is no separate holidays page. Company holidays appear in the **Calendar** 
 
 ### 7.1 Payslips
 
-Your payslips are listed by period with gross, deductions, net, and status. Opening one shows the full breakdown: working, payable, unpaid, half and late days; every earning including Leave Incentive; every deduction including Loss of Pay and Late coming; and the payment date and reference.
+Your payslips are listed by period with gross, deductions, net, and status — but only the ones HR has released to you. A month HR has ready that you have not asked for shows as **Ready to request**, with no figures at all: request it, and once HR releases it the payslip appears with its full breakdown: working, payable, unpaid, half and late days; every earning including Leave Incentive; every deduction including Loss of Pay and Late coming; and the payment date and reference.
 
 Getting the PDF works in two steps: you **request** the payslip, and HR **releases** it. This lets HR check and correct a slip before it goes out. Once released, the PDF is yours, and it carries your statutory and bank details, the day counts, the earnings and deductions tables, and the net amount in words.
 

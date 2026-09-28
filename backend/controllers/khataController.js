@@ -72,6 +72,12 @@ const { scopeUserField, scopeUserFilter, cannotSeeUser } = require('../utils/emp
 // hideSuperAdminFilter keeps a Backend login out of the colleague picker, exactly
 // as it does in the chat directory this module's sharing flow was copied from.
 const { isNonStaffRole, hideSuperAdminFilter } = require('../utils/visibility');
+const { istDateString, istDayRange } = require('../utils/istDate');
+
+// The CEO and the MD keep cashbooks of their own (see getMyKhata), so on the
+// company's side they are people with wallets like anybody else — offered in
+// every picker and never tucked away as an admin login (2026-09-28).
+const EXEC_OWNER_ROLES = ['CEO', 'MD'];
 // Bill links printed inside a statement PDF. See utils/signedLink.js for why an
 // HMAC rather than a stored token, and receiptLinkFor below for what it builds.
 const { signId, verifyId } = require('../utils/signedLink');
@@ -2024,7 +2030,7 @@ const listKhatas = asyncHandler(async (req, res) => {
         email: w.employee.email,
         photo: w.employee.photo || null,
         employeeCode: profile?.employeeCode,
-        designation: profile?.designation,
+        designation: profile?.designation || (EXEC_OWNER_ROLES.includes(w.employee.role) ? w.employee.role : undefined),
         department: profile?.department,
       },
       // The wallet is the position; `total` keeps the old key so nothing that
@@ -2136,7 +2142,7 @@ const getKhata = asyncHandler(async (req, res) => {
       email: employee.email,
       photo: employee.photo || null,
       employeeCode: profile?.employeeCode,
-      designation: profile?.designation,
+      designation: profile?.designation || (EXEC_OWNER_ROLES.includes(employee.role) ? employee.role : undefined),
       department: profile?.department,
     },
     total: ledger.round2(wallet.balance || 0),
@@ -2603,7 +2609,12 @@ const employeeOptions = asyncHandler(async (req, res) => {
   // SuperAdmin (see utils/visibility.js), because an admin login CAN legitimately
   // hold a khata. It is flagged instead of dropped so the picker can hold it back
   // until searched for.
-  const active = await User.find(await scopeUserFilter(req, { isActive: true, role: { $nin: ['CEO', 'MD'] } }))
+  //
+  // The CEO and MD used to be left out altogether (`role: { $nin: ['CEO','MD'] }`),
+  // from before they could hold a cashbook. They do now, so every dropdown on the
+  // cashbook page — give an advance, open a book, filter the ledger, the advance
+  // report — offers them too (user request 2026-09-28).
+  const active = await User.find(await scopeUserFilter(req, { isActive: true }))
     .select('firstName lastName email photo role')
     .sort({ firstName: 1 })
     .lean();
@@ -2632,14 +2643,17 @@ const employeeOptions = asyncHandler(async (req, res) => {
         email: u.email,
         photo: u.photo || null,
         employeeCode: profile?.employeeCode,
-        designation: profile?.designation,
+        // A CEO/MD has no employee profile, so their title is their role.
+        designation: profile?.designation || (EXEC_OWNER_ROLES.includes(u.role) ? u.role : undefined),
         department: profile?.department,
+        role: u.role,
         // An admin/service login rather than a member of staff. Decided by ROLE,
         // never by "has no employee code" — a real new joiner has no code either
         // until HR attaches their profile, and hiding those would hide people who
         // belong in the list. The picker keeps these out of the default view and
-        // surfaces them on a search.
-        systemAccount: isNonStaffRole(u.role),
+        // surfaces them on a search. The CEO/MD are NOT that: they are listed
+        // with everyone else.
+        systemAccount: isNonStaffRole(u.role) && !EXEC_OWNER_ROLES.includes(u.role),
         // So the picker can warn "already holds ₹4,000" before a second advance.
         balance: ledger.round2(wallet?.balance || 0),
         creditLimit: ledger.round2(wallet?.creditLimit || 0),
@@ -3834,7 +3848,7 @@ const outstandingReport = asyncHandler(async (req, res) => {
         name: `${w.employee.firstName} ${w.employee.lastName || ''}`.trim(),
         email: w.employee.email,
         employeeCode: profile?.employeeCode,
-        designation: profile?.designation,
+        designation: profile?.designation || (EXEC_OWNER_ROLES.includes(w.employee.role) ? w.employee.role : undefined),
         department: profile?.department,
       },
       balance: ledger.round2(w.balance),
@@ -4088,6 +4102,245 @@ const exportExcel = asyncHandler(async (req, res) => {
   res.end();
 });
 
+/**
+ * Which of these advances are still out, walking each one's reversal chain.
+ *
+ * A reversal is a mirror row, and a mirror can itself be reversed (undo, then
+ * redo), so "was it reversed?" is not one lookup: every posted row in the chain
+ * flips the answer. An odd count — the advance alone, or advance → undo → redo
+ * — means the money is out; an even count means it was taken back. A chain
+ * whose mirror is missing counts only the advance, as the wallet replay does.
+ * @param {Object[]} advances - posted `movement: 'advance'` rows (lean)
+ * @returns {Promise<Set<string>>} ids of the advances that stand
+ */
+async function standingAdvanceIds(advances) {
+  const posted = new Set(ledger.POSTED_STATUSES);
+  const rows = new Map(advances.map((a) => [String(a._id), 1]));
+  let frontier = advances.filter((a) => a.status === 'Reversed').map((a) => [String(a._id), a._id]);
+  for (let hops = 0; frontier.length && hops < 20; hops += 1) {
+    const rootOf = new Map(frontier.map(([root, id]) => [String(id), root]));
+    // eslint-disable-next-line no-await-in-loop -- one query per LINK in a chain, not per row
+    const mirrors = await KhataEntry.find({ reversalOf: { $in: frontier.map(([, id]) => id) } })
+      .select('_id reversalOf status').lean();
+    frontier = [];
+    for (const m of mirrors) {
+      const root = rootOf.get(String(m.reversalOf));
+      if (!root || !posted.has(m.status)) continue;
+      rows.set(root, rows.get(root) + 1);
+      if (m.status === 'Reversed') frontier.push([root, m._id]);
+    }
+  }
+  return new Set([...rows].filter(([, n]) => n % 2 === 1).map(([id]) => id));
+}
+
+/**
+ * Advance totals — how much each person was advanced over any stretch of dates.
+ *
+ * Asked for 2026-09-28: "download total advance taken by people in any
+ * interval, for all people, for few people". The Summary sheet is one row per
+ * person (how many advances, the total, the first and last); the Advances
+ * sheet lists every advance behind those totals, so each figure can be traced.
+ *
+ * WHAT COUNTS: a `movement: 'advance'` row that was paid (POSTED_STATUSES) and
+ * still stands (standingAdvanceIds). A request still with the CEO/MD or the
+ * accounts team, or one that was declined, is not money and is left out. Dated
+ * by the entry's own `date` — the date the ledger and statements show — read as
+ * IST calendar days.
+ *
+ * "Everyone" lists the people who were advanced something. Named people are all
+ * listed, a ₹0 row included: somebody asked about them by name.
+ * @route GET /api/khata/reports/advances  (khata.manage + khataExportAccess)
+ * @param {string} req.query.from - First day, YYYY-MM-DD (inclusive).
+ * @param {string} req.query.to - Last day, YYYY-MM-DD (inclusive).
+ * @param {string} [req.query.employees] - Comma-separated User ids; omit for everyone.
+ * @returns {binary} An .xlsx stream.
+ */
+const advanceReportXlsx = asyncHandler(async (req, res) => {
+  const DAY = /^\d{4}-\d{2}-\d{2}$/;
+  const fromDay = String(req.query.from || '');
+  const toDay = String(req.query.to || '');
+  if (!DAY.test(fromDay) || !DAY.test(toDay)) bad(res, 'Choose the dates the report should cover.');
+  const [from] = istDayRange(fromDay);
+  const [, to] = istDayRange(toDay);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) bad(res, 'Those dates are not valid.');
+  if (from > to) bad(res, 'The start date is after the end date.');
+
+  const asked = String(req.query.employees || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const named = [...new Set(asked.filter(isId))];
+  if (asked.length && !named.length) bad(res, 'Choose at least one person.');
+
+  // Company wall on both halves: the advances read, and the named people (a
+  // name from another company quietly drops out rather than earning a row).
+  const filter = {
+    movement: 'advance',
+    status: { $in: ledger.POSTED_STATUSES },
+    date: { $gte: from, $lte: to },
+  };
+  if (named.length) filter.employee = { $in: [...named] };
+  await scopeUserField(req, filter);
+  const namedIds = named.length
+    ? (await scopeUserField(req, { employee: { $in: [...named] } })).employee.$in.map(String)
+    : [];
+
+  const advances = await KhataEntry.find(filter)
+    .populate('account', 'name')
+    .populate('execApprovedBy', USER_FIELDS)
+    .populate('reviewedBy', USER_FIELDS)
+    .sort({ date: 1, createdAt: 1 })
+    .lean();
+  const standing = await standingAdvanceIds(advances);
+  const counted = advances.filter((a) => standing.has(String(a._id)));
+  const undone = advances.length - counted.length;
+
+  const ids = [...new Set([...counted.map((a) => String(a.employee)), ...namedIds])];
+  const [users, profiles] = await Promise.all([
+    User.find({ _id: { $in: ids } }).select(USER_FIELDS).lean(),
+    profilesFor(ids),
+  ]);
+  const userBy = new Map(users.map((u) => [String(u._id), u]));
+  const name = (u) => (u?.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : '');
+  // A CEO/MD has no profile; their title is their role.
+  const title = (id) => profiles.get(id)?.designation
+    || (EXEC_OWNER_ROLES.includes(userBy.get(id)?.role) ? userBy.get(id).role : '');
+
+  const per = new Map(ids.map((id) => [id, { count: 0, total: 0, first: null, last: null }]));
+  for (const a of counted) {
+    const p = per.get(String(a.employee));
+    p.count += 1;
+    p.total = ledger.round2(p.total + (a.amount || 0));
+    if (!p.first || a.date < p.first) p.first = a.date;
+    if (!p.last || a.date > p.last) p.last = a.date;
+  }
+  const people = ids
+    .map((id) => ({ id, person: userBy.get(id), ...per.get(id) }))
+    // A deleted account's advances still count; its row just has no name to show.
+    .map((r) => ({ ...r, name: name(r.person) || 'Removed account' }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+  const MONEY = '#,##0.00';
+  const day = (d) => (d ? istDateString(d) : '');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Sequence - HRMS';
+  wb.created = new Date();
+  const styleHead = (ws) => {
+    const head = ws.getRow(1);
+    head.font = { bold: true };
+    head.alignment = { vertical: 'middle' };
+    head.height = 20;
+    head.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
+    });
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+  };
+  /** A bold TOTAL row whose sums are formulas over the columns named. */
+  const totalRow = (ws, labelKey, keys, dataRows) => {
+    const row = ws.addRow({ [labelKey]: 'TOTAL' });
+    for (const key of keys) {
+      const letter = ws.getColumn(key).letter;
+      const cell = ws.getCell(`${letter}${row.number}`);
+      cell.value = dataRows ? { formula: `SUM(${letter}2:${letter}${dataRows + 1})` } : 0;
+      if (key !== 'count') cell.numFmt = MONEY;
+    }
+    row.font = { bold: true };
+    row.eachCell((cell) => { cell.border = { top: { style: 'thin', color: { argb: 'FFD4D4D8' } } }; });
+  };
+
+  // ---- Sheet 1: one row per person ----
+  const ss = wb.addWorksheet('Summary');
+  ss.columns = [
+    { header: '#', key: 'n', width: 5 },
+    { header: 'Employee', key: 'employee', width: 26 },
+    { header: 'Employee Code', key: 'code', width: 14 },
+    { header: 'Designation', key: 'designation', width: 22 },
+    { header: 'Department', key: 'department', width: 18 },
+    { header: 'Advances', key: 'count', width: 10 },
+    { header: 'Total Advance', key: 'total', width: 16 },
+    { header: 'First Advance', key: 'first', width: 14 },
+    { header: 'Last Advance', key: 'last', width: 14 },
+  ];
+  styleHead(ss);
+  people.forEach((p, i) => {
+    const row = ss.addRow({
+      n: i + 1,
+      employee: p.name,
+      code: profiles.get(p.id)?.employeeCode || '',
+      designation: title(p.id),
+      department: profiles.get(p.id)?.department || '',
+      count: p.count,
+      total: p.total,
+      first: day(p.first),
+      last: day(p.last),
+    });
+    row.getCell('total').numFmt = MONEY;
+  });
+  totalRow(ss, 'employee', ['count', 'total'], people.length);
+
+  // What the sheet covers, under the figures, so a copy forwarded on its own
+  // still says which dates and whom it is about.
+  const fmtDay = (d) => new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric',
+  }).format(d);
+  const stamp = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(new Date());
+  ss.addRow({});
+  const notes = [
+    ['Period', `${fmtDay(from)} – ${fmtDay(to)}`],
+    ['People', named.length ? `${namedIds.length} chosen` : 'Everyone who was advanced money in this period'],
+    ['Counted', 'Advances paid out. Requests still waiting for approval, and declined ones, are not included.'],
+  ];
+  if (undone) {
+    notes.push(['Reversed', `${undone} advance${undone === 1 ? ' in this period was' : 's in this period were'} reversed and ${undone === 1 ? 'is' : 'are'} not counted.`]);
+  }
+  notes.push(['Generated', `${stamp} by ${name(req.user) || 'the HRMS'}`]);
+  for (const [k, v] of notes) {
+    const row = ss.addRow({ employee: k, code: v });
+    row.getCell('employee').font = { bold: true };
+  }
+
+  // ---- Sheet 2: every advance behind the totals ----
+  const as = wb.addWorksheet('Advances');
+  as.columns = [
+    { header: 'Date', key: 'date', width: 12 },
+    { header: 'Code', key: 'code', width: 18 },
+    { header: 'Employee', key: 'employee', width: 24 },
+    { header: 'Employee Code', key: 'empCode', width: 14 },
+    { header: 'Amount', key: 'amount', width: 14 },
+    { header: 'Purpose', key: 'purpose', width: 34 },
+    { header: 'Paid From', key: 'account', width: 18 },
+    { header: 'Mode', key: 'mode', width: 12 },
+    { header: 'Reference', key: 'reference', width: 16 },
+    { header: 'Approved By (CEO/MD)', key: 'execBy', width: 20 },
+    { header: 'Paid By', key: 'paidBy', width: 20 },
+  ];
+  styleHead(as);
+  for (const a of counted) {
+    const id = String(a.employee);
+    const row = as.addRow({
+      date: day(a.date),
+      code: a.code || '',
+      employee: name(userBy.get(id)) || 'Removed account',
+      empCode: profiles.get(id)?.employeeCode || '',
+      amount: a.amount,
+      purpose: a.purpose || a.category || '',
+      account: a.account?.name || '',
+      mode: a.paymentMode || '',
+      reference: a.referenceNo || '',
+      execBy: name(a.execApprovedBy),
+      paidBy: name(a.reviewedBy),
+    });
+    row.getCell('amount').numFmt = MONEY;
+  }
+  totalRow(as, 'employee', ['amount'], counted.length);
+
+  const fname = `advance-totals_${fromDay}_to_${toDay}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  await wb.xlsx.write(res);
+  res.end();
+});
+
 // ============================ Reports: PDF and .xlsx ============================
 
 /**
@@ -4327,7 +4580,7 @@ async function streamStatement(req, res, employeeId, opts = {}) {
   const employeeBlock = {
     name: `${employee.firstName} ${employee.lastName || ''}`.trim(),
     employeeCode: profile?.employeeCode,
-    designation: profile?.designation,
+    designation: profile?.designation || (EXEC_OWNER_ROLES.includes(employee.role) ? employee.role : undefined),
     department: profile?.department,
   };
 
@@ -4768,7 +5021,7 @@ module.exports = {
   // closing a book (its owner may) and re-opening one (the cashbook authority only)
   closeMyKhata, reopenKhata, requireBookReopener,
   // reports
-  outstandingReport, sendSettleReminders, exportExcel, statementPdf, myStatementPdf, myReportXlsx,
+  outstandingReport, sendSettleReminders, exportExcel, advanceReportXlsx, statementPdf, myStatementPdf, myReportXlsx,
   // account operators
   listOperators, setOperators,
   // receipts

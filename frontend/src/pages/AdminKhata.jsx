@@ -34,6 +34,7 @@ import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import SearchableSelect from '../components/SearchableSelect';
+import AdvanceReportModal from '../components/AdvanceReportModal';
 // The portal-wide date-order control, so this table reverses the way every
 // other dated table in the portal does. `useDateSort` sorts a COPY, which
 // matters here: `entries` is refetched whenever a server-side filter changes
@@ -477,6 +478,8 @@ export default function AdminKhata() {
   // asks for its date range before it builds, the way the paper version is
   // always asked for ("the Tamilnadu trip", not "everything ever").
   const [statementModal, setStatementModal] = useState(null);
+  // The advance-totals download (2026-09-28): dates + everyone or chosen people.
+  const [advanceReportOpen, setAdvanceReportOpen] = useState(false);
   const [viewKhata, setViewKhata] = useState('');           // '' = every book of theirs
   const [operatorsFor, setOperatorsFor] = useState(null); // { account, operators[] }
 
@@ -1250,6 +1253,13 @@ export default function AdminKhata() {
                 <button onClick={exportXlsx}
                   className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                   Export to Excel
+                </button>
+              )}
+              {/* Same download grant as the export: it is a file of the ledger. */}
+              {mayExport && (
+                <button onClick={() => setAdvanceReportOpen(true)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                  Advance report
                 </button>
               )}
               {!viewOnly && (
@@ -2170,6 +2180,10 @@ export default function AdminKhata() {
             </div>
           </form>
         </div>
+      )}
+
+      {advanceReportOpen && (
+        <AdvanceReportModal people={people} onClose={() => setAdvanceReportOpen(false)} />
       )}
 
       {khataModal && (

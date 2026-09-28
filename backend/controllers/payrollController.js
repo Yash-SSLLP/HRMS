@@ -334,6 +334,15 @@ const listMyPayslips = asyncHandler(async (req, res) => {
     employee: profile._id,
     status: { $in: ['Approved', 'Paid'] },
   }).populate(MY_PAYSLIP_POPULATE).sort({ payPeriodYear: -1, payPeriodMonth: -1 });
+  // ONLY A RELEASED PAYSLIP CARRIES FIGURES TO ITS EMPLOYEE (2026-09-28: "employee
+  // should not be able to see this also without requesting the payslip"). The
+  // PDF was already gated on Finalised, but this list shipped every Approved/Paid
+  // slip in full — net pay, the breakdown, bank and PAN — so both apps showed a
+  // payslip nobody had asked for. Now `payslips` is the released ones; a slip
+  // HR has but nobody asked for is a money-free entry in `ready`, and one being
+  // asked for / prepared / corrected is in `requests`. The absence of the
+  // figures IS the rule, so no client can show what it was never sent.
+  const released = payslips.filter(isReleased);
 
   // Every month this employee has ANY row for — shells and unapproved drafts
   // included — so the picker below can say "already asked for" instead of
@@ -359,10 +368,13 @@ const listMyPayslips = asyncHandler(async (req, res) => {
   // a request has no figures, and a shell would print ₹0 if it rode along in
   // `payslips` (the clients' "latest net pay" reduce picks the newest period
   // whatever its value).
+  const byNewest = (a, b) => monthOrdinal(b.payPeriodYear, b.payPeriodMonth)
+    - monthOrdinal(a.payPeriodYear, a.payPeriodMonth);
+  // A released slip under correction (ChangeRequested) is waiting on HR too, and
+  // its figures are withheld until the corrected one is released.
   const requests = allRows
-    .filter((r) => ['Requested', 'Approved'].includes(r.release?.status))
-    .sort((a, b) => monthOrdinal(b.payPeriodYear, b.payPeriodMonth)
-      - monthOrdinal(a.payPeriodYear, a.payPeriodMonth))
+    .filter((r) => ['Requested', 'Approved', 'ChangeRequested'].includes(r.release?.status))
+    .sort(byNewest)
     .map((r) => ({
       id: String(r._id),
       year: r.payPeriodYear,
@@ -376,14 +388,30 @@ const listMyPayslips = asyncHandler(async (req, res) => {
       payslipReady: !r.requestShell,
     }));
 
+  // Payslips HR has approved or paid that nobody has asked for yet — the month
+  // and nothing else, so the screen can offer "Request this payslip" on it. A
+  // missing release sub-doc reads as NotRequested (closed), never as released.
+  const ready = allRows
+    .filter((r) => !r.requestShell
+      && ['Approved', 'Paid'].includes(r.status)
+      && (r.release?.status || 'NotRequested') === 'NotRequested')
+    .sort(byNewest)
+    .map((r) => ({
+      id: String(r._id),
+      year: r.payPeriodYear,
+      month: r.payPeriodMonth,
+      label: monthLabel(r.payPeriodYear, r.payPeriodMonth),
+      state: 'NotRequested',
+    }));
+
   // Every slip this employee has is already in hand, so each one's year-to-date
-  // is accumulated in memory rather than costing a query per row.
+  // is accumulated in memory rather than costing a query per row. The YTD runs
+  // over all of them, exactly as the released PDF prints it.
   res.json({
-    count: payslips.length,
-    payslips: payslips.map((p) => withLines(p, computeYtdFrom(payslips, p), { details: true })),
-    // New keys only — `count` and `payslips` are byte-identical to before, so
-    // app builds already in people's hands keep working untouched.
+    count: released.length,
+    payslips: released.map((p) => withLines(p, computeYtdFrom(payslips, p), { details: true })),
     requests,
+    ready,
     months: requestableMonths(profile, stateByOrd),
     maxOpenRequests: MAX_OPEN_PAYSLIP_REQUESTS,
   });
@@ -407,6 +435,11 @@ const getMyPayslip = asyncHandler(async (req, res) => {
   if (!payslip) {
     res.status(404);
     throw new Error('Payslip not found');
+  }
+  // Same rule as the list: the figures travel only once HR has released it.
+  if (!isReleased(payslip)) {
+    res.status(403);
+    throw new Error('This payslip has not been released to you yet. Request it from Payslips — HR will release it to you.');
   }
   res.json({ payslip: withLines(payslip, await buildYtd(payslip), { details: true }) });
 });
