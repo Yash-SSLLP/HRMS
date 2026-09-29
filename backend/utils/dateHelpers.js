@@ -42,8 +42,16 @@ const IST_TZ = 'Asia/Kolkata';
  * @returns {string} 'YYYY-MM-DD' for the IST calendar day the instant falls in.
  */
 // 'YYYY-MM-DD' for the IST calendar day that `date` falls in.
+//
+// ONE formatter, built once (2026-09-29, speed pass). Building an
+// Intl.DateTimeFormat costs ~70 µs, formatting with a built one ~2 µs, and this
+// runs in loops: ~700 calls per personal heatmap (≈50 ms of the ONE event loop,
+// every Home load) and employees × days for the org heatmap (≈2 s at 100
+// people, during which nobody else's request was answered). Formatters are
+// stateless, so sharing one changes nothing but the time.
+const IST_YMD = new Intl.DateTimeFormat('en-CA', { timeZone: IST_TZ });
 function ymdIST(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: IST_TZ }).format(new Date(date));
+  return IST_YMD.format(new Date(date));
 }
 
 /**

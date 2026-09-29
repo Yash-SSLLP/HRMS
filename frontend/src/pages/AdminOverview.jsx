@@ -21,7 +21,8 @@ import ClockInOutCard from '../components/ClockInOutCard';
 import AttendanceReportWidget from '../components/AttendanceReportWidget';
 import AttendanceHeatmap from '../components/AttendanceHeatmap';
 import { ATTENDANCE_COLORS } from '../theme/chartColors';
-import { hasPermission } from '../config/permissions';
+import { hasPermission, isExecViewer } from '../config/permissions';
+import GoToCalendar from '../components/GoToCalendar';
 import {
   FiUsers, FiUserCheck, FiSun, FiUserX, FiClock, FiAlertTriangle, FiFileText,
   FiCalendar, FiUserPlus,
@@ -127,6 +128,12 @@ export default function AdminOverview() {
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
+
+      {/* "Go To" — the CEO/MD calendar (2026-09-29, the web twin of the app's
+          Home card): opens in place; the chosen day's events, tasks, reminders,
+          interviews and who is away show beside it (below it on a narrow
+          screen). CEO/MD only; it fetches nothing until it is opened. */}
+      {isExecViewer(user) && <GoToCalendar />}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">

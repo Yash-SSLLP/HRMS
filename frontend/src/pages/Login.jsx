@@ -122,7 +122,11 @@ export default function Login() {
         navigate('/change-password', { replace: true });
         return;
       }
-      const from = location.state?.from?.pathname;
+      // The page that sent them here, WITH its query string: a report viewer tab
+      // bounced to sign-in is /report-view?src=…, and the path alone lands on
+      // "This link is not a report" (2026-09-29).
+      const sentFrom = location.state?.from;
+      const from = sentFrom?.pathname ? `${sentFrom.pathname}${sentFrom.search || ''}` : null;
       // Employees and Managers use the employee portal; admins and the
       // read-only CEO/MD executives use the admin portal.
       const employeePortal = ['Employee', 'Manager'].includes(data.user.role);

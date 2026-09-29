@@ -2,7 +2,8 @@
  * Celebrations controller — surfaces birthdays and work anniversaries (from
  * EmployeeProfile), builds a combined month calendar (holidays, festival
  * reminders, events, celebrations, interviews — the viewer's own, or every one
- * booked for SuperAdmin and HR), and lets colleagues send a wish.
+ * booked for SuperAdmin and HR) plus the one-day agenda cut from it, and lets
+ * colleagues send a wish.
  *
  * A wish is delivered as an in-app NOTIFICATION and nothing else — plus a
  * celebratory email when, and only when, the sender is the Backend, the CEO or
@@ -18,9 +19,14 @@ const Company = require('../models/Company');
 const { enqueueMail } = require('../services/email');
 const { notify } = require('../services/notify');
 const { hiddenUserIds, EXECUTIVE_ROLES } = require('../utils/visibility');
-const { companyScopeFilter, viewerCompanyScope } = require('../utils/employeeScope');
+const {
+  companyScopeFilter, viewerCompanyScope, allowedUserIds, scopeEmployeeFilter,
+} = require('../utils/employeeScope');
+const { hasDeparted } = require('../utils/departed');
 const { festivalsInRange } = require('../utils/festivalFeed');
-const { IST_TZ, istParts, istMonthDay, istMonthRange } = require('../utils/istDate');
+const {
+  IST_TZ, istParts, istMonthDay, istMonthRange, istDayRange, istDateString,
+} = require('../utils/istDate');
 const { hasPermission, isPortalViewer } = require('../middleware/authMiddleware');
 
 // {month, day} of a date **in IST**, for recurring-date matching. Must not use
@@ -72,8 +78,9 @@ const WISH_MESSAGE_MAX = 280;
  * The occasion date a wish is FOR, as a UTC instant, from a recurring
  * anniversary date (birthday / joining / marriage).
  *
- * A wish can be sent days early — the widget lists a month ahead — so "two days
- * after the event" cannot be measured from when the wish was sent. This resolves
+ * A wish can be sent days early — the widget lists a week ahead (it listed a
+ * month until 2026-09-29) — so "two days after the event" cannot be measured
+ * from when the wish was sent. This resolves
  * the occurrence the wish is actually about: this year's, rolled to next year
  * once this year's is more than the grace window in the past (which is how a
  * wish sent in December for a January birthday lands on the right date).
@@ -101,8 +108,11 @@ function occasionDateFrom(recurring) {
   //   - a LATE wish, sent after the day passed — next year's occurrence is ~12
   //     months out, and pinning the greeting to the dashboard until then would
   //     leave it sitting there for a year.
-  // The widget only lists ~2 months ahead, so anything further than that is the
-  // late case: fall back to null and let the caller count from now.
+  // The widget lists a week ahead (GET /upcoming is capped at 7 days since
+  // 2026-09-29; it once reached ~2 months), so anything further out than the
+  // window below is the late case: fall back to null and let the caller count
+  // from now. The 90-day window is deliberately left as it was: it only has to
+  // be wider than the widget's reach, and it still is.
   const nextYear = atIstMidnight(y + 1);
   const EARLY_WISH_WINDOW_MS = 90 * dayMs;
   return nextYear.getTime() - Date.now() <= EARLY_WISH_WINDOW_MS ? nextYear : null;
@@ -189,37 +199,18 @@ async function wishesAlreadySent(req, events) {
   return out;
 }
 
-// The next `n` IST calendar days, as {m, d, daysAway}.
+// Today plus the next `n` IST calendar days, as {m, d, daysAway} — `i <= n`,
+// so n = 7 is eight days, today..today+7.
+//
+// (2026-09-29) The calendar-month window that stood beside this (nextNMonths,
+// for `?months=`) is gone: birthdays and anniversaries are shown only from a
+// week before the date now, and a whole-month window was the one way round it.
 function nextNDays(n) {
   const out = [];
   const now = Date.now();
   for (let i = 0; i <= n; i++) {
     const { m, d } = istMonthDay(now + i * 24 * 60 * 60 * 1000);
     out.push({ m, d, daysAway: i });
-  }
-  return out;
-}
-
-// Every IST calendar day from today through the end of the (months-1)th month
-// after this one, as {m, d, daysAway}. `months: 2` → the rest of this month plus
-// all of next month, which is what the celebrations widget asks for; a rolling
-// "next 60 days" would instead stop mid-month and look arbitrary.
-function nextNMonths(months) {
-  const out = [];
-  const now = Date.now();
-  const { y: y0, m: m0 } = istParts(new Date());
-  // Last day to include: end of the (months-1)th month ahead.
-  const endMonth = m0 + (months - 1);
-  const endYear = y0 + Math.floor((endMonth - 1) / 12);
-  const endMonthNorm = ((endMonth - 1) % 12) + 1;
-  const lastDay = new Date(Date.UTC(endYear, endMonthNorm, 0)).getUTCDate();
-
-  for (let i = 0; i <= 400; i += 1) {
-    const at = now + i * 24 * 60 * 60 * 1000;
-    const { m, d } = istMonthDay(at);
-    const { y } = istParts(new Date(at));
-    out.push({ m, d, daysAway: i });
-    if (y === endYear && m === endMonthNorm && d === lastDay) break;
   }
   return out;
 }
@@ -359,7 +350,16 @@ async function loadActiveProfiles(req) {
  */
 // GET /api/celebrations/today
 const todayCelebrations = asyncHandler(async (req, res) => {
-  const profiles = await loadActiveProfiles(req);
+  // (2026-09-29, speed pass) The three sweeps share nothing, so they run
+  // together instead of one after another: the profile read (hidden ids, then
+  // profiles) overlaps the exec and company reads. hiddenUserIds is kept as a
+  // query filter on purpose: filtering on a populated role instead would drop
+  // the `user` $nin, which can change the query plan and so the row order.
+  const [profiles, execs, foundedCompanies] = await Promise.all([
+    loadActiveProfiles(req),
+    loadCelebrationExecs(req),
+    loadCelebrationCompanies(req),
+  ]);
   const t = md(new Date());
   const currentYear = istParts(new Date()).y;
 
@@ -387,7 +387,7 @@ const todayCelebrations = asyncHandler(async (req, res) => {
 
   // Executives (no profile, dates on the User doc) join the same three lists —
   // a CEO's birthday is a birthday.
-  for (const u of await loadCelebrationExecs(req)) {
+  for (const u of execs) {
     if (u.dateOfBirth && sameMonthDay(md(u.dateOfBirth), t)) {
       birthdays.push({ ...execPayload(u), date: u.dateOfBirth });
     }
@@ -407,7 +407,7 @@ const todayCelebrations = asyncHandler(async (req, res) => {
 
   // The company's own anniversary — everyone in it celebrates the same day.
   const companies = [];
-  for (const c of await loadCelebrationCompanies(req)) {
+  for (const c of foundedCompanies) {
     if (!sameMonthDay(md(c.foundedOn), t)) continue;
     const years = currentYear - istParts(c.foundedOn).y;
     if (years >= 1) companies.push({ ...companyPayload(c, years), date: c.foundedOn });
@@ -442,20 +442,27 @@ const todayCelebrations = asyncHandler(async (req, res) => {
 });
 
 /**
- * List upcoming birthdays/anniversaries within the next N days (1-30, default 7).
+ * List upcoming birthdays/anniversaries within the next N days (1-7, default 7).
  * @route GET /api/celebrations/upcoming?days=7
- * @param {number} [req.query.days] - clamped to 1-30
- * @returns {{days: number, count: number, events: Object[]}} sorted by daysAway
+ * @param {number} [req.query.days] - clamped to 1-7
+ * @returns {{days: number, months: null, count: number, events: Object[]}} sorted by daysAway
  */
 // GET /api/celebrations/upcoming?days=7
 const upcomingCelebrations = asyncHandler(async (req, res) => {
-  // Two windows: `days` (rolling, the original contract) or `months` (calendar,
-  // e.g. months=2 → the rest of this month plus all of next). `months` wins when
-  // both are sent.
-  const months = req.query.months ? Math.min(Math.max(Number(req.query.months) || 1, 1), 6) : null;
-  const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 30);
-  const profiles = await loadActiveProfiles(req);
-  const range = months ? nextNMonths(months) : nextNDays(days);
+  // (2026-09-29, user decision) Birthdays and anniversaries are shown only from
+  // 7 days before the date. So `days` is capped at 7 (it was 30), and `?months=`
+  // — which used to win over `days` and list up to six calendar months — no
+  // longer widens anything; an older build that still sends it gets the week.
+  // `months: null` stays in the response so its shape does not change.
+  const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 7);
+  // (2026-09-29, speed pass) Same three independent sweeps as the today card,
+  // read together rather than one after another.
+  const [profiles, execs, foundedCompanies] = await Promise.all([
+    loadActiveProfiles(req),
+    loadCelebrationExecs(req),
+    loadCelebrationCompanies(req),
+  ]);
+  const range = nextNDays(days);
   const currentYear = istParts(new Date()).y;
 
   const events = [];
@@ -506,7 +513,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   }
 
   // Executives, from their User dates (they have no profile to sweep).
-  for (const u of await loadCelebrationExecs(req)) {
+  for (const u of execs) {
     const EXEC_DATES = [
       { type: 'birthday', date: u.dateOfBirth, needsYears: false },
       { type: 'anniversary', date: u.dateOfJoining, needsYears: true },
@@ -529,7 +536,7 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
   }
 
   // The company's foundation day, for every company this viewer belongs to.
-  for (const c of await loadCelebrationCompanies(req)) {
+  for (const c of foundedCompanies) {
     const hit = range.find((r) => sameMonthDay(md(c.foundedOn), r));
     if (!hit) continue;
     const years = currentYear - istParts(c.foundedOn).y;
@@ -558,44 +565,182 @@ const upcomingCelebrations = asyncHandler(async (req, res) => {
     e.wishWindow = on ? (isOnTheDay(on) ? 'day' : 'early') : 'day';
   }
 
-  res.json({ days: months ? null : days, months, count: events.length, events });
+  res.json({ days, months: null, count: events.length, events });
 });
 
+// --- Clock helpers for task deadlines and the day agenda (2026-09-29) ---
+
+// IST keeps no daylight saving, so a fixed +05:30 is exact all year round.
+const IST_OFFSET_MS = 330 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Milliseconds past IST midnight of an instant. */
+function istMsOfDay(at) {
+  const ms = new Date(at).getTime() + IST_OFFSET_MS;
+  return ((ms % DAY_MS) + DAY_MS) % DAY_MS;
+}
+
 /**
- * Build a combined calendar for a month: holidays, custom events, recurring
- * birthdays/anniversaries, and interviews: the ones the viewer is assigned to
- * take, or every scheduled round for SuperAdmin and HR (seesEveryInterview).
- * @route GET /api/celebrations/calendar?month=YYYY-MM
- * @param {string} [req.query.month] - YYYY-MM, defaults to the current month
- * @returns {{year, month, count, events: Object[]}} each {day, type, label, meta}, sorted by day
+ * "3:00 PM" from an hour (0-23) and a minute. Built by hand on purpose: ICU's
+ * en-US now puts a narrow no-break space before the meridiem and en-IN writes
+ * it lower-case, so neither is the plain "3:00 PM" both clients print.
  */
-// GET /api/celebrations/calendar?month=YYYY-MM
-// Returns every event (holiday / birthday / work + wedding anniversary) in the given
-// month, each normalized to { day, type, label, meta }. Birthdays & anniversaries
-// match on month+day in any year; holidays match the exact month.
-const monthCalendar = asyncHandler(async (req, res) => {
-  const nowIst = istParts(new Date());
-  let year = nowIst.y;
-  let month = nowIst.m; // 1-12
+function clock12(h, m) {
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
 
-  if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
-    const [y, m] = req.query.month.split('-').map(Number);
-    if (m >= 1 && m <= 12) {
-      year = y;
-      month = m;
-    }
+/** An instant's IST wall-clock time, twelve-hour. */
+function istClock(at) {
+  const mins = Math.floor(istMsOfDay(at) / 60000);
+  return clock12(Math.floor(mins / 60), mins % 60);
+}
+
+/**
+ * Does a deadline carry a real time of day? One saved as a bare date sits on
+ * IST midnight exactly, and "12:00 AM" on its tile would be a time nobody chose.
+ */
+function hasTimeOfDay(at) {
+  return !!at && !Number.isNaN(new Date(at).getTime()) && istMsOfDay(at) !== 0;
+}
+
+/**
+ * An event's or a reminder's `time` is FREE TEXT — the web types "4:00 PM", the
+ * phone's picker stores "16:00" (see clockText in the app's CalendarScreen). Read
+ * as a clock on the given IST day when it is one; otherwise the words are kept
+ * and the row is left unplaced (`at: null`) rather than guessed at.
+ * @param {string} text
+ * @param {string} ymd - the IST day, 'YYYY-MM-DD'
+ * @returns {{at: Date|null, time: string}|null} null when there is no text at all
+ */
+function clockOnDay(text, ymd) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+  let h = null;
+  let m = null;
+  const twelve = /^(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?\s*m\.?$/i.exec(s);
+  const twentyFour = /^(\d{1,2})[:.](\d{2})$/.exec(s);
+  if (twelve && Number(twelve[1]) >= 1 && Number(twelve[1]) <= 12) {
+    h = (Number(twelve[1]) % 12) + (twelve[3].toLowerCase() === 'p' ? 12 : 0);
+    m = Number(twelve[2] || 0);
+  } else if (twentyFour && Number(twentyFour[1]) <= 23) {
+    h = Number(twentyFour[1]);
+    m = Number(twentyFour[2]);
   }
+  if (h === null || m > 59) return { at: null, time: s };
+  const pad = (n) => String(n).padStart(2, '0');
+  return { at: new Date(`${ymd}T${pad(h)}:${pad(m)}:00+05:30`), time: clock12(h, m) };
+}
 
+// The exact instant behind a calendar row that has one — an interview's
+// scheduledAt, a timed task's deadline — for the day agenda's `at`. Kept OFF the
+// row, in a WeakMap, because both calendars read the month payload as-is and it
+// must not grow a field; the entry goes when the row does.
+const ROW_INSTANT = new WeakMap();
+
+/**
+ * Every row of one IST month's calendar: holidays, festival reminders, events,
+ * birthdays and anniversaries (staff, CEO/MD, company), interviews, reminders
+ * and task deadlines — each {day, type, label, meta}, sorted by day.
+ *
+ * (2026-09-29) Lifted out of monthCalendar so the one-day agenda (dayAgenda,
+ * GET /celebrations/day) is cut from the very same rows: a day sheet can never
+ * disagree with the dot the month grid put on that day. The rows, their fields,
+ * their order and their count are exactly what GET /calendar always sent — the
+ * web and app calendars both read that payload byte-for-byte. The one change in
+ * what a viewer sees is the reminder company wall (see the reminders read).
+ *
+ * The reads share no input, so they run together in one Promise.all instead of
+ * ~15 awaits in a row. Rows are still pushed in the old order (holidays,
+ * festivals, events, people, execs, companies, interviews, reminders, tasks)
+ * and the day sort is stable, so ties keep the order they always had.
+ * @param {import('express').Request} req
+ * @param {number} year
+ * @param {number} month - 1-12
+ * @returns {Promise<Object[]>}
+ */
+async function collectMonth(req, year, month) {
   const events = [];
   // Every dated query below is bounded by the IST month, and every entry is
   // placed on its IST calendar day, so the grid matches what people see on a
   // wall calendar in India no matter where the server runs.
   const [monthStart, monthEnd] = istMonthRange(year, month);
 
+  const Candidate = require('../models/Candidate');
+  const Reminder = require('../models/Reminder');
+  const Task = require('../models/Task');
+  const { myDepartment } = require('./reminderController');
+  const { normaliseStatus, statusLabel, isTerminal } = require('../config/tasks');
+  const me = String(req.user._id);
+  const seesAll = seesEveryInterview(req.user);
+  const roundMatch = { scheduledAt: { $gte: monthStart, $lt: monthEnd } };
+
+  const [
+    holidays, festivals, customEvents, profiles, execs, foundedCompanies,
+    wallJobIds, interviewCands, reminders, tasks,
+  ] = await Promise.all([
+    // --- Holidays for the exact month/year ---
+    Holiday.find({
+      date: { $gte: monthStart, $lt: monthEnd },
+    }).sort({ date: 1 }),
+    // --- Festival reminders (Holi, Diwali, Rakhi …) for the exact month/year ---
+    // festivalsInRange reads the month's holidays again for its shadowing rule
+    // (in parallel with its festival read). It takes no holiday list, and the
+    // rule is kept in that one place for the morning digest too, so the second
+    // read is left alone rather than the rule copied here.
+    festivalsInRange(monthStart, monthEnd),
+    // --- Events for the exact month/year ---
+    Event.find({
+      date: { $gte: monthStart, $lt: monthEnd },
+    }).sort({ date: 1 }),
+    loadActiveProfiles(req),
+    loadCelebrationExecs(req),
+    loadCelebrationCompanies(req),
+    // The pipeline's own wall (recruitmentController's `internals`), so the two
+    // can never disagree about which candidates this viewer may see.
+    seesAll ? require('./recruitmentController').internals.allowedJobIds(req) : null,
+    Candidate.find({
+      rounds: { $elemMatch: seesAll ? roundMatch : { ...roundMatch, interviewer: req.user._id } },
+    })
+      .populate('job', 'title')
+      .select('name job rounds resumeName resumePath'),
+    Promise.all([myDepartment(req.user), allowedUserIds(req)]).then(([department, wallIds]) => {
+      const filter = {
+        ...Reminder.visibleFilter(req.user, department),
+        date: { $gte: monthStart, $lt: monthEnd },
+      };
+      // (2026-09-29, bug fix) The same company wall GET /reminders applies
+      // (reminderController listReminders): visibleFilter lets every
+      // 'everyone' reminder through, from any company, so a CEO/MD limited to
+      // one company saw the others' company-wide reminders here though not on
+      // the Reminders page. A walled viewer now needs the reminder to touch
+      // their side of the wall — its creator or one of its recipients in
+      // scope. Unwalled viewers (null) keep full visibility.
+      if (wallIds) {
+        filter.$and = [{ $or: [{ createdBy: { $in: wallIds } }, { recipients: { $in: wallIds } }] }];
+      }
+      return Reminder.find(filter)
+        .populate('createdBy', 'firstName lastName role')
+        .sort({ date: 1 });
+    }),
+    Task.find({
+      $or: [
+        { assignedTo: req.user._id },
+        { 'assignees.user': req.user._id },
+        { createdBy: req.user._id },
+      ],
+      dueDate: { $gte: monthStart, $lt: monthEnd },
+      archived: { $ne: true },
+    })
+      // NO `.populate('project')`: `Task.project` went with the workflow builder
+      // in the 2026-09-21 rework, and asking for it threw
+      // "Cannot populate path `project`" — which took the whole month's calendar
+      // with it, not just the task tiles. A task's grouping is its CATEGORY now,
+      // and that is plain text on the row. (Fixed 2026-09-22.)
+      .populate('assignedTo', 'firstName lastName')
+      .sort({ dueDate: 1 }),
+  ]);
+
   // --- Holidays for the exact month/year ---
-  const holidays = await Holiday.find({
-    date: { $gte: monthStart, $lt: monthEnd },
-  }).sort({ date: 1 });
   for (const h of holidays) {
     events.push({
       day: istParts(h.date).d,
@@ -609,7 +754,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // Reminder only — these never mark a non-working day. One that shares its day
   // with a company holiday is dropped inside festivalsInRange, so the calendar
   // never shows both chips for the same occasion.
-  const festivals = await festivalsInRange(monthStart, monthEnd);
   for (const f of festivals) {
     events.push({
       day: istParts(f.date).d,
@@ -620,9 +764,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   // --- Events for the exact month/year ---
-  const customEvents = await Event.find({
-    date: { $gte: monthStart, $lt: monthEnd },
-  }).sort({ date: 1 });
   for (const ev of customEvents) {
     events.push({
       day: istParts(ev.date).d,
@@ -633,7 +774,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   // --- Birthdays & anniversaries (recurring month/day) ---
-  const profiles = await loadActiveProfiles(req);
   for (const p of profiles) {
     if (p.dateOfBirth) {
       const x = md(p.dateOfBirth);
@@ -675,7 +815,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // --- Executive (CEO/MD) birthdays & anniversaries ---
   // Same three chips as an employee's, from the User document, because an exec
   // has no EmployeeProfile for the loop above to find.
-  for (const u of await loadCelebrationExecs(req)) {
+  for (const u of execs) {
     if (u.dateOfBirth) {
       const x = md(u.dateOfBirth);
       if (x.m === month) {
@@ -709,7 +849,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
   }
 
   // --- Company foundation day (recurring, everyone in that company) ---
-  for (const c of await loadCelebrationCompanies(req)) {
+  for (const c of foundedCompanies) {
     const founded = istParts(c.foundedOn);
     const years = year - founded.y;
     if (founded.m !== month || years < 1) continue;
@@ -727,18 +867,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // capability — sees EVERY round booked this month, whoever takes it: the HR
   // calendar is where the day's interview load is planned. Walled to the jobs
   // in the viewer's companies, like the pipeline itself.
-  const Candidate = require('../models/Candidate');
-  const me = String(req.user._id);
-  const seesAll = seesEveryInterview(req.user);
-  // The pipeline's own wall (recruitmentController's `internals`), so the two
-  // can never disagree about which candidates this viewer may see.
-  const wallJobIds = seesAll ? await require('./recruitmentController').internals.allowedJobIds(req) : null;
-  const roundMatch = { scheduledAt: { $gte: monthStart, $lt: monthEnd } };
-  const interviewCands = await Candidate.find({
-    rounds: { $elemMatch: seesAll ? roundMatch : { ...roundMatch, interviewer: req.user._id } },
-  })
-    .populate('job', 'title')
-    .select('name job rounds resumeName resumePath');
   for (const c of interviewCands) {
     // Job-less candidates are shared, like a company-less job.
     const inWall = seesAll && (!wallJobIds || !c.job || wallJobIds.includes(String(c.job._id)));
@@ -749,7 +877,7 @@ const monthCalendar = asyncHandler(async (req, res) => {
       // Place the interview on its IST calendar day (scheduledAt is stored UTC).
       const at = istParts(r.scheduledAt);
       if (at.y !== year || at.m !== month) continue;
-      events.push({
+      const row = {
         day: at.d,
         type: 'interview',
         label: `${c.name} · ${r.label}`,
@@ -771,7 +899,9 @@ const monthCalendar = asyncHandler(async (req, res) => {
           mine,
           interviewer: mine ? 'You' : (r.interviewerName || ''),
         },
-      });
+      };
+      ROW_INSTANT.set(row, new Date(r.scheduledAt));
+      events.push(row);
     }
   }
 
@@ -779,14 +909,6 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // Their own reminders plus any aimed at them by HR/Admin/CEO (directly, via
   // their department, or company-wide). `reminder` = personal, `hrReminder` =
   // pushed to them by someone else, so the calendar can colour them apart.
-  const Reminder = require('../models/Reminder');
-  const { myDepartment } = require('./reminderController');
-  const reminders = await Reminder.find({
-    ...Reminder.visibleFilter(req.user, await myDepartment(req.user)),
-    date: { $gte: monthStart, $lt: monthEnd },
-  })
-    .populate('createdBy', 'firstName lastName role')
-    .sort({ date: 1 });
   for (const r of reminders) {
     const mine = String(r.createdBy?._id || r.createdBy) === String(req.user._id);
     const setByName = `${r.createdBy?.firstName || ''} ${r.createdBy?.lastName || ''}`.trim();
@@ -822,31 +944,17 @@ const monthCalendar = asyncHandler(async (req, res) => {
   // `assignees.user` as well as `assignedTo`: a task can have several people on
   // it, and a contributor who is not the primary assignee still has the deadline.
   // Archived tasks are out, as they are everywhere else.
-  const Task = require('../models/Task');
-  const { normaliseStatus, statusLabel, isTerminal } = require('../config/tasks');
-  const tasks = await Task.find({
-    $or: [
-      { assignedTo: req.user._id },
-      { 'assignees.user': req.user._id },
-      { createdBy: req.user._id },
-    ],
-    dueDate: { $gte: monthStart, $lt: monthEnd },
-    archived: { $ne: true },
-  })
-    // NO `.populate('project')`: `Task.project` went with the workflow builder
-    // in the 2026-09-21 rework, and asking for it threw
-    // "Cannot populate path `project`" — which took the whole month's calendar
-    // with it, not just the task tiles. A task's grouping is its CATEGORY now,
-    // and that is plain text on the row. (Fixed 2026-09-22.)
-    .populate('assignedTo', 'firstName lastName')
-    .sort({ dueDate: 1 });
   const now = new Date();
   for (const t of tasks) {
     const assignee = `${t.assignedTo?.firstName || ''} ${t.assignedTo?.lastName || ''}`.trim();
     const status = normaliseStatus(t.status) || t.status;
     const mine = String(t.assignedTo?._id || t.assignedTo || '') === String(req.user._id)
       || (t.assignees || []).some((a) => String(a.user) === String(req.user._id));
-    events.push({
+    // (2026-09-29) The deadline's clock time, additive — `at` (ISO) and `time`
+    // ("3:00 PM", IST) — only when the deadline has one. A bare-date deadline
+    // (IST midnight) gets neither, so no tile invents a "12:00 AM".
+    const timed = hasTimeOfDay(t.dueDate);
+    const row = {
       day: istParts(t.dueDate).d,
       type: 'task',
       label: t.title,
@@ -867,12 +975,205 @@ const monthCalendar = asyncHandler(async (req, res) => {
         // completed: a cancelled or declined task is not still owed either.
         done: isTerminal(status),
         overdue: !isTerminal(status) && t.dueDate < now,
+        ...(timed ? { at: new Date(t.dueDate).toISOString(), time: istClock(t.dueDate) } : {}),
       },
-    });
+    };
+    if (timed) ROW_INSTANT.set(row, new Date(t.dueDate));
+    events.push(row);
   }
 
   events.sort((a, b) => a.day - b.day);
+  return events;
+}
+
+/**
+ * Build a combined calendar for a month: holidays, custom events, recurring
+ * birthdays/anniversaries, and interviews: the ones the viewer is assigned to
+ * take, or every scheduled round for SuperAdmin and HR (seesEveryInterview).
+ * @route GET /api/celebrations/calendar?month=YYYY-MM
+ * @param {string} [req.query.month] - YYYY-MM, defaults to the current month
+ * @returns {{year, month, count, events: Object[]}} each {day, type, label, meta}, sorted by day
+ */
+// GET /api/celebrations/calendar?month=YYYY-MM
+// Returns every event (holiday / birthday / work + wedding anniversary) in the given
+// month, each normalized to { day, type, label, meta }. Birthdays & anniversaries
+// match on month+day in any year; holidays match the exact month. The rows come
+// from collectMonth, which the day agenda shares.
+const monthCalendar = asyncHandler(async (req, res) => {
+  const nowIst = istParts(new Date());
+  let year = nowIst.y;
+  let month = nowIst.m; // 1-12
+
+  if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
+    const [y, m] = req.query.month.split('-').map(Number);
+    if (m >= 1 && m <= 12) {
+      year = y;
+      month = m;
+    }
+  }
+
+  const events = await collectMonth(req, year, month);
   res.json({ year, month, count: events.length, events });
+});
+
+// Exit cases that put somebody's last working day on the agenda: the open ones
+// (a resignation still on its ladder, a notice being served — the pair
+// submitMyResignation treats as "open") and the finished ones, so a past day
+// still shows who left on it. A cancelled exit never happened.
+const AGENDA_EXIT_STATUSES = ['Pending', 'InClearance', 'Completed'];
+
+/** One person on the agenda's exits / joiners lists, from a populated profile. */
+function agendaPerson(profile, extra = {}) {
+  return {
+    userId: String(profile.user._id),
+    name: `${profile.user.firstName || ''} ${profile.user.lastName || ''}`.trim(),
+    designation: profile.designation || '',
+    department: profile.department || '',
+    ...extra,
+  };
+}
+
+/** One row per person, sorted by name — two exit cases can name the same day. */
+function byNameOnce(rows) {
+  const seen = new Set();
+  return rows
+    .filter((r) => (seen.has(r.userId) ? false : seen.add(r.userId)))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Whose last working day is this IST day. Company-walled on the exit's
+ * employee (scopeEmployeeFilter), as the Exit console is. The caller decides
+ * whether the viewer may be told at all.
+ * @param {import('express').Request} req
+ * @param {string} ymd
+ * @returns {Promise<Object[]>}
+ */
+async function exitsOn(req, ymd) {
+  const ExitRequest = require('../models/ExitRequest');
+  const [dayStart, dayEnd] = istDayRange(ymd);
+  const filter = await scopeEmployeeFilter(req, {
+    lastWorkingDay: { $gte: dayStart, $lte: dayEnd },
+    status: { $in: AGENDA_EXIT_STATUSES },
+  });
+  const rows = await ExitRequest.find(filter)
+    .select('employee status')
+    .populate({
+      path: 'employee',
+      select: 'user designation department',
+      populate: { path: 'user', select: 'firstName lastName' },
+    })
+    .lean();
+  return byNameOnce(rows
+    .filter((x) => x.employee && x.employee.user)
+    .map((x) => agendaPerson(x.employee, { status: x.status })));
+}
+
+/**
+ * Who joins (joined) on this IST day, leaving out anyone who has since gone
+ * (utils/departed — the one definition of "left"). Company-walled like every
+ * people list (companyScopeFilter).
+ * @param {import('express').Request} req
+ * @param {string} ymd
+ * @returns {Promise<Object[]>}
+ */
+async function joinersOn(req, ymd) {
+  const [dayStart, dayEnd] = istDayRange(ymd);
+  const profiles = await EmployeeProfile.find({
+    dateOfJoining: { $gte: dayStart, $lte: dayEnd },
+    ...companyScopeFilter(req),
+  })
+    .select('user designation department dateOfExit')
+    .populate('user', 'firstName lastName isActive')
+    .lean();
+  return byNameOnce(profiles
+    .filter((p) => p.user && !hasDeparted(p.user, p))
+    .map((p) => agendaPerson(p)));
+}
+
+/** A row's place in the day: exact instant when it has one, else its clock text. */
+function whenOf(row, ymd) {
+  const exact = ROW_INSTANT.get(row);
+  if (exact) return { at: exact, time: istClock(exact) };
+  if (row.type === 'event' || row.type === 'reminder' || row.type === 'hrReminder') {
+    const clock = clockOnDay(row.meta && row.meta.time, ymd);
+    // `time` is a 12-hour clock or null, never the free text somebody typed
+    // ("14:00 - 15:00"): that text stays on the row as meta.time.
+    if (clock && clock.at) return clock;
+  }
+  return { at: null, time: null };
+}
+
+/**
+ * One day of the calendar, with the people side of it — the app's day sheet.
+ *
+ * `events` are EXACTLY the /calendar rows for that day (same visibility, same
+ * meta — cut from collectMonth, so they cannot disagree with the month dots)
+ * plus `time`/`at` where the item has a clock time, sorted: holidays and
+ * festivals first, then timed items by `at`, then the rest in calendar order.
+ *
+ * `onLeave` follows GET /leave/on-leave exactly (peopleOnLeave) — [] on a
+ * Sunday or holiday, which `offDay` names. `exits` and `joiners` are for the
+ * people who run the workforce: CEO/MD and the God account (isPortalViewer),
+ * or whoever holds exit.manage / employees.manage; everybody else gets [].
+ * All four reads run in parallel.
+ *
+ * @route GET /api/celebrations/day?date=YYYY-MM-DD  (any signed-in user)
+ * @param {string} [req.query.date] - the IST day; defaults to today; 400 when unreadable
+ * @returns {{date: string, isToday: boolean, offDay: (null|'sunday'|'holiday'),
+ *   events: Object[], onLeave: Object[], exits: Object[], joiners: Object[]}}
+ */
+// GET /api/celebrations/day?date=YYYY-MM-DD
+const dayAgenda = asyncHandler(async (req, res) => {
+  const ymd = String(req.query.date || '').trim() || istDateString();
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? new Date(`${ymd}T00:00:00+05:30`) : null;
+  // Round-tripped, because Date quietly rolls "2026-02-31" into March.
+  if (!asked || Number.isNaN(asked.getTime()) || istDateString(asked) !== ymd) {
+    res.status(400);
+    throw new Error('date must be a calendar day, as YYYY-MM-DD');
+  }
+  const [y, m, d] = ymd.split('-').map(Number);
+  // Required here, not at the top: leaveController pulls in half the app.
+  const { peopleOnLeave } = require('./leaveController');
+  const seesExits = isPortalViewer(req.user) || hasPermission(req.user, 'exit.manage');
+  const seesJoiners = isPortalViewer(req.user) || hasPermission(req.user, 'employees.manage');
+
+  const [monthRows, leave, exits, joiners] = await Promise.all([
+    collectMonth(req, y, m),
+    peopleOnLeave(req, ymd),
+    seesExits ? exitsOn(req, ymd) : [],
+    seesJoiners ? joinersOn(req, ymd) : [],
+  ]);
+
+  const placed = monthRows
+    .filter((e) => e.day === d)
+    .map((e, i) => {
+      const when = whenOf(e, ymd);
+      const fixed = e.type === 'holiday' || e.type === 'festival';
+      return {
+        rank: fixed ? 0 : (when.at ? 1 : 2),
+        atMs: when.at ? when.at.getTime() : 0,
+        i,
+        row: {
+          type: e.type,
+          label: e.label,
+          meta: e.meta,
+          time: when.time,
+          at: when.at ? when.at.toISOString() : null,
+        },
+      };
+    });
+  placed.sort((a, b) => (a.rank - b.rank) || (a.rank === 1 ? a.atMs - b.atMs : 0) || (a.i - b.i));
+
+  res.json({
+    date: ymd,
+    isToday: ymd === istDateString(),
+    offDay: leave.offDay ? leave.offDay.kind : null,
+    events: placed.map((p) => p.row),
+    onLeave: leave.people,
+    exits,
+    joiners,
+  });
 });
 
 /**
@@ -1249,5 +1550,7 @@ const thankWish = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
-  todayCelebrations, upcomingCelebrations, monthCalendar, sendWish, receivedWishes, dismissWish, thankWish,
+  todayCelebrations, upcomingCelebrations, monthCalendar, dayAgenda, sendWish, receivedWishes, dismissWish, thankWish,
+  // The month's rows, for anything that has to agree with the calendar exactly.
+  collectMonth,
 };

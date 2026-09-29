@@ -26,10 +26,21 @@ function audienceScope(audience) {
 // pile of alerts from before they joined. Returns a `{ createdAt: { $gte } }`
 // filter fragment, or {} when there's no cutoff to apply (no profile / no
 // joining date — e.g. admin-only accounts), which preserves existing behaviour.
-async function joinCutoff(userId) {
-  const profile = await EmployeeProfile.findOne({ user: userId }).select('dateOfJoining').lean();
-  if (!profile || !profile.dateOfJoining) return {};
-  return { createdAt: { $gte: profile.dateOfJoining } };
+//
+// (2026-09-29, speed pass) Takes the signed-in USER, not an id: `protect` has
+// usually just read this same profile for the company wall and left its joining
+// date on the user as `scopeJoinedOn` (middleware/authMiddleware
+// attachScopeCompany). That is a Date or null when the lookup ran; UNDEFINED
+// when it never did (SuperAdmin, CEO/MD, God, HR consultancy — roles whose wall
+// lives on the account), and only then is the profile read here.
+async function joinCutoff(user) {
+  let joinedOn = user.scopeJoinedOn;
+  if (joinedOn === undefined) {
+    const profile = await EmployeeProfile.findOne({ user: user._id }).select('dateOfJoining').lean();
+    joinedOn = profile && profile.dateOfJoining;
+  }
+  if (!joinedOn) return {};
+  return { createdAt: { $gte: joinedOn } };
 }
 
 // The notification types an OUTSIDE account (an HR consultancy — see
@@ -57,7 +68,7 @@ const listNotifications = asyncHandler(async (req, res) => {
   // `deletedAt: null` matches a missing field as well as an explicit null, so
   // every notification written before swipe-to-delete existed still shows.
   const filter = {
-    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user)),
     ...externalScope(req.user),
   };
   // Fifty is the ceiling AND the default: the alerts screen pages through
@@ -98,7 +109,7 @@ const countNotifications = asyncHandler(async (req, res) => {
   // function. A badge that counts what the list does not show is a badge nobody
   // can clear, which is exactly the failure that note was written about.
   const filter = {
-    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(meId)),
+    recipient: meId, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user)),
     ...externalScope(req.user),
   };
   const unreadCount = await Notification.countDocuments({ ...filter, readAt: null });
@@ -119,7 +130,7 @@ const markAllRead = asyncHandler(async (req, res) => {
     // `deletedAt` here too: "mark all read" must mean the rows on screen. Without
     // it the sweep would silently touch alerts the person has thrown away — and
     // if one were ever restored it would come back already read.
-    { recipient: req.user._id, readAt: null, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)), ...externalScope(req.user) },
+    { recipient: req.user._id, readAt: null, deletedAt: null, ...audienceScope(req.query.audience), ...(await joinCutoff(req.user)), ...externalScope(req.user) },
     { $set: { readAt: new Date() } }
   );
   res.json({ ok: true });
@@ -223,7 +234,7 @@ const deleteNotification = asyncHandler(async (req, res) => {
 const deleteAllRead = asyncHandler(async (req, res) => {
   const filter = {
     recipient: req.user._id, readAt: { $ne: null }, deletedAt: null,
-    ...audienceScope(req.query.audience), ...(await joinCutoff(req.user._id)), ...externalScope(req.user),
+    ...audienceScope(req.query.audience), ...(await joinCutoff(req.user)), ...externalScope(req.user),
   };
   const now = new Date();
   // dismissedAt only where it is not already set — a card dismissed last week

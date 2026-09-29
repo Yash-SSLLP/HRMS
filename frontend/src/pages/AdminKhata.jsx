@@ -85,6 +85,7 @@ import { toYMD } from '../utils/time';
 import { useAuthStore } from '../store/authStore';
 import { canExportKhata, isExecViewer, canReopenBook } from '../config/permissions';
 import { saveBlobResponse } from '../utils/download';
+import { openReportViewer } from '../utils/reportView';
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 });
 const money = (n) => inr.format(Number(n) || 0);
@@ -1064,10 +1065,20 @@ export default function AdminKhata() {
   const downloadStatement = async (e) => {
     e?.preventDefault?.();
     const { employee, khata, from, to, report, bills } = statementModal;
+    const params = clean({ khata, from, to, report, bills: bills ? '1' : '' });
+    // THE PDF OPENS IN OUR VIEWER TAB (2026-09-29), so a bill thumbnail in it
+    // opens a new tab instead of replacing the statement — see
+    // pages/ReportViewer.jsx. Opened here, before any await, or the popup
+    // blocker stops it; the statement is built in that tab. Blocked anyway?
+    // The download below, exactly as before.
+    if (openReportViewer(`/khata/employees/${employee}/statement.pdf`, params, 'cashbook-statement.pdf')) {
+      setStatementModal(null);
+      return;
+    }
     setSaving(true);
     try {
       const res = await api.get(`/khata/employees/${employee}/statement.pdf`, {
-        params: clean({ khata, from, to, report, bills: bills ? '1' : '' }),
+        params,
         responseType: 'blob',
       });
       saveBlobResponse(res, 'cashbook-statement.pdf');
@@ -2306,7 +2317,7 @@ export default function AdminKhata() {
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">Cancel</button>
               <button type="submit" disabled={saving}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm disabled:opacity-50">
-                {saving ? 'Building…' : 'Download PDF'}
+                {saving ? 'Building…' : 'Open PDF'}
               </button>
             </div>
           </form>

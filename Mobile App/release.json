@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.48",
-  "versionCode": 129,
-  "notes": "Employee Cashbook → Ledger: Employee, Status and Reason are now dropdowns. The employee one has a search box that finds a person by name, code, designation or email, and the filter words follow the app language.\n\nEmployee Cashbook → Statement PDF: now opens on \"All entries\" with the bills attached, the same as the website, so a statement from the phone is the same document as one from the web.\n\nCashbook reports: a book's report lists what each entry cost, with the book's balance in red beside its name. A closed book shows the wallet balance as it stood when the book was closed, so its report reads the same every time.\n\nAlso: the in-app Help guide is updated."
+  "versionName": "2.8.50",
+  "versionCode": 131,
+  "notes": "For the CEO and MD: a new \"Go To\" on Home, under Quick actions. Pick any date and everything on it shows right below — events, holidays, birthdays and anniversaries, your interviews, reminders, task deadlines, who is on leave, last working days and people joining. The separate \"On leave\" card is gone from the CEO/MD Home. The same calendar is on the website dashboard too.\n\nBirthdays and anniversaries now appear only in the 7 days before the day.\n\nReports and other documents always open fresh — the phone no longer shows an older copy of the same PDF.\n\nHome loads faster: the punch card comes first, and coming back to Home no longer reloads everything.\n\nAlso: the in-app Help guide is updated."
 }

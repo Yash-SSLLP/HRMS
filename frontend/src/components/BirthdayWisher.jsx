@@ -5,7 +5,7 @@ import { TbCake, TbBalloon } from 'react-icons/tb';
 import { useAuthStore } from '../store/authStore';
 
 // SmartHR-style "Birthdays & Celebrations" widget with a Send-a-wish action.
-// Self-contained: fetches today + the next 30 days of birthdays / work
+// Self-contained: fetches today + the next 7 days of birthdays / work
 // anniversaries and lets the viewer send an in-app + email greeting.
 //
 // Only the first PREVIEW_COUNT are shown; the rest sit behind "See all", which
@@ -51,7 +51,7 @@ const occasionOf = (e) => OCCASION[e.type] || OCCASION.birthday;
 // How many rows the card shows before "See all" is offered.
 const PREVIEW_COUNT = 5;
 
-export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
+export default function BirthdayWisher({ myEmployeeId, days = 7 }) {
   // Read from the store rather than a prop: the admin dashboard renders this
   // with no props at all, and an exec row needs a self-check the profile id
   // cannot give (a CEO/MD has no employee profile).
@@ -68,11 +68,10 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
   useEffect(() => {
     (async () => {
       try {
-        // Rolling 30 days by default. A two-month calendar window listed people
-        // 50+ days out, which made the card taller than the page it sits on;
-        // `months` is still honoured for any caller that explicitly wants it.
-        const q = months ? `months=${months}` : `days=${days}`;
-        const { data } = await api.get(`/celebrations/upcoming?${q}`);
+        // A birthday or anniversary shows only in the 7 days before it
+        // (2026-09-29, user: "only 7 days prior"). The server clamps
+        // /upcoming to 7 days too and ignores ?months=, so no caller can widen it.
+        const { data } = await api.get(`/celebrations/upcoming?days=${days}`);
         setEvents(data.events || []);
       } catch {
         // Quietly degrade — widget just shows empty.
@@ -80,7 +79,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
         setLoading(false);
       }
     })();
-  }, [days, months]);
+  }, [days]);
 
   // Collapsed by default; expanding scrolls inside the card instead of growing it.
   const visible = showAll ? events : events.slice(0, PREVIEW_COUNT);
@@ -136,9 +135,7 @@ export default function BirthdayWisher({ myEmployeeId, days = 30, months }) {
         <div className="text-center py-6">
           <TbBalloon size={30} className="mx-auto mb-1.5 text-gray-400" aria-hidden="true" />
           <p className="text-sm text-gray-500 italic">
-            {months
-              ? 'No birthdays or anniversaries this month or next.'
-              : `No celebrations in the next ${days} days.`}
+            {`No celebrations in the next ${days} days.`}
           </p>
         </div>
       ) : (

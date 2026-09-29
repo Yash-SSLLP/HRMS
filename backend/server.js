@@ -46,6 +46,7 @@ const { startWorker: startNotificationCleanup } = require('./services/notificati
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
+const { serverTiming } = require('./middleware/serverTiming');
 
 const app = express();
 
@@ -53,12 +54,21 @@ const app = express();
    MIDDLEWARE
    ============================================================ */
 
+// First, so its clock covers everything after it: a Server-Timing header on
+// every response and a log line for any slow one (see middleware/serverTiming).
+app.use(serverTiming);
+
 // CORS
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || '*',
     credentials: true,
-    exposedHeaders: ['Content-Disposition'],
+    // Server-Timing is exposed so the web client (and devtools) can read the
+    // server's own time next to the total.
+    exposedHeaders: ['Content-Disposition', 'Server-Timing'],
+    // Browsers may reuse a preflight for 2 hours instead of asking before every
+    // authenticated call from a cross-origin page.
+    maxAge: 7200,
   })
 );
 

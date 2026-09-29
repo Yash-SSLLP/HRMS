@@ -1,0 +1,81 @@
+/* ---------------------------------------------------------------------------
+   Report viewer (pages/ReportViewer.jsx, 2026-09-29) — a whole tab: a slim
+   toolbar over a scrolling stage of pdf.js pages. Colours come from the theme
+   tokens (--bg / --surface / --border) so it follows html.dark with the rest
+   of the app; the pages themselves stay white, as a document does.
+--------------------------------------------------------------------------- */
+.rv-root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;           /* a phone's collapsing address bar */
+  overflow: hidden;
+  background-color: var(--bg);
+}
+
+/* Wraps rather than scrolls sideways on a phone: the zoom/download group drops
+   under the name when there is no room beside it. */
+.rv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  flex: 0 0 auto;
+}
+
+.rv-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* PDFViewer throws unless its container is absolutely positioned. Scrolling
+   (both ways when zoomed in) happens in here, never on the page itself. */
+.rv-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background-color: var(--bg);
+  outline: none;
+}
+.rv-scroll:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* pdf.js's own page gap is tight against the toolbar. */
+.rv-scroll .pdfViewer { padding: 0.5rem 0 1rem; }
+
+/* A pointer over a link, and the link box shows faintly on hover, so a bill
+   thumbnail reads as clickable. */
+.rv-scroll .annotationLayer .linkAnnotation > a:hover {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.rv-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background-color: var(--bg);
+}
+
+.rv-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 9999px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: rv-spin 0.8s linear infinite;
+  margin-bottom: 0.25rem;
+}
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .rv-spinner { animation-duration: 2.4s; }
+}

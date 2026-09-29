@@ -987,6 +987,10 @@ const createEmployee = asyncHandler(async (req, res) => {
   await assertWorkLocationCompany(req.body.workLocationRef, req.body.company, null);
 
   const profile = await EmployeeProfile.create(req.body);
+  // The account already existed and may be signed in, with "no profile" cached
+  // by the auth middleware — which now also means "no joining-date cutoff" on
+  // its inbox (2026-09-29, speed pass). Drop it so both apply on the next request.
+  require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
 
   // NO AUTOMATIC ONBOARDING TASKS. Creating an employee used to raise tasks
   // from whatever templates were wired to the event (services/taskEvents),
@@ -1159,8 +1163,10 @@ const updateEmployee = asyncHandler(async (req, res) => {
   await profile.save();
 
   // A company change moves this person's wall — drop their cached scope so it
-  // applies on their next request, not after the auth cache's TTL.
-  if (req.body.company !== undefined) {
+  // applies on their next request, not after the auth cache's TTL. The same
+  // cache now carries the joining date the notification inbox cuts off at
+  // (2026-09-29, speed pass), so a changed date of joining drops it too.
+  if (req.body.company !== undefined || req.body.dateOfJoining !== undefined) {
     require('../middleware/authMiddleware').invalidateScopeCompany([profile.user]);
   }
 

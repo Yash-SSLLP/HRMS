@@ -20,7 +20,12 @@ async function connectDB() {
   if (!uri) {
     throw new Error('MONGO_URI is not set in environment');
   }
-  await mongoose.connect(uri);
+  // minPoolSize: keep five Atlas connections open. The driver's default is none
+  // and it opens at most two at a time, so the first burst after a restart or a
+  // deploy queued behind TLS + auth handshakes. monitorCommands feeds the
+  // per-request round-trip count in the Server-Timing header (2026-09-29).
+  await mongoose.connect(uri, { minPoolSize: 5, monitorCommands: true });
+  require('../middleware/serverTiming').watchDb(mongoose.connection.getClient());
   console.log('MongoDB connected');
 }
 

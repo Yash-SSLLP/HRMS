@@ -142,6 +142,10 @@ const EmployeeIncentive = lazy(() => import('./pages/EmployeeIncentive.jsx'));
 const EmployeeKhata = lazy(() => import('./pages/EmployeeKhata.jsx'));
 const AdminPermissions = lazy(() => import('./pages/AdminPermissions.jsx'));
 const AdminPushNotifications = lazy(() => import('./pages/AdminPushNotifications.jsx'));
+// The report PDF viewer (2026-09-29). Lazy like every page, and here it matters
+// more than most: pdf.js is the heaviest library in the app, and only the tab
+// a report is opened in should ever download it.
+const ReportViewer = lazy(() => import('./pages/ReportViewer.jsx'));
 
 /** Index route ("/"): send unauthenticated users to login, otherwise route each
  *  role to its home portal (employee vs admin). */
@@ -205,6 +209,16 @@ export default function App() {
       <Route
         path="/change-password"
         element={<ProtectedRoute><ChangePassword /></ProtectedRoute>}
+      />
+
+      {/* A report PDF in our own viewer, in a tab of its own — so a bill
+          thumbnail in it opens a NEW tab, which no browser's built-in PDF
+          viewer will do (see pages/ReportViewer.jsx). Signed-in, any role:
+          both portals open reports, and the report endpoint is the real gate.
+          Outside both portal shells, so the document gets the whole tab. */}
+      <Route
+        path="/report-view"
+        element={<ProtectedRoute><ReportViewer /></ProtectedRoute>}
       />
 
       {/* Public — ex-employees access via tokenised link in email */}

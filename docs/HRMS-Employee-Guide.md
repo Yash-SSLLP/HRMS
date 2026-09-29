@@ -43,7 +43,7 @@ The dashboard is your landing page and works as a set of shortcuts. Tapping any 
 - The **Rewards and Recognition** banner during the days after HR announces the month's winners.
 - **Surveys** awaiting your response, and **interviews** you are scheduled to conduct.
 - **Wishes** colleagues have sent you for a birthday or work anniversary. **Say thanks** on any of them to reply — a tap is enough, or add a short note — and they get it as a notification. Older wishes work too: the sender is recovered from the wish itself. The button is only missing where that is genuinely unclear — two colleagues share the name, or the sender has since left.
-- **Birthdays and celebrations** for the next 30 days — birthdays, work and wedding anniversaries, and your company's own anniversary. The card lists the first few; **See all** opens the rest. Tap **Wish** to send someone a greeting.
+- **Birthdays and celebrations** for the next 7 days (each appears a week before the day) — birthdays, work and wedding anniversaries, and your company's own anniversary. The card lists the first few; **See all** opens the rest. Tap **Wish** to send someone a greeting.
 - Your **attendance heatmap** — a calendar-style grid of the year so far.
 - **Snapshot cards**: leave remaining, pending requests, and your employee code, designation and department.
 - If you manage people, a **team status** strip showing who is present.
@@ -273,7 +273,7 @@ Once a book is **closed**, the figure beside its name is your wallet balance as 
 
 Leave **Attach the bills** ticked (it is ticked for you) and every bill is put at the end of the report in full, one to a page — photos, iPhone photos and PDF invoices alike. Each entry shows its bill as a small picture beside what it was for: tap the picture to open the full-size bill online, or **See bill** to jump to its page inside the report, and **Back to the entry** to come back. The bills travel inside the file, so they are there for whoever you send the report to.
 
-Each can be downloaded as a **PDF** to read, send or print, or as an **Excel** file to work with. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file is saved to your phone's **Download** folder — the message that follows has **View** and **Share**, so you can WhatsApp or email it from site without a laptop.
+Each can be opened as a **PDF** to read, send or print, or downloaded as an **Excel** file to work with. On the website, **Open PDF** shows the report in a tab of its own, with **Download** in its toolbar; click a bill photo there and the bill opens in another new tab, so the report stays where it was. On the phone the PDF opens in your PDF viewer (whose share button sends it on), and the Excel file is saved to your phone's **Download** folder — the message that follows has **View** and **Share**, so you can WhatsApp or email it from site without a laptop.
 
 [!NOTE] Only money that has moved counts towards the totals. A rejected request is still listed, struck through, so a report never hides part of the history; a reversed entry is counted together with the reversal that cancels it, so the pair adds up to nothing.
 

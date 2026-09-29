@@ -1773,7 +1773,26 @@ const myPoints = asyncHandler(async (req, res) => {
       { 'members.employee': profile._id },
     ],
   };
-  const [teamMonth, teamAll, qcMonth, qcAll, monthCredits, allCredits] = await Promise.all([
+
+  // THE THIRD WAY POINTS ARRIVE, and the only one that is not a document in
+  // this database: the billing system's own figures, matched on the SSL code
+  // above. Left out, this chip would report zero for the entire billing team,
+  // who between them hold more points than everybody else put together.
+  // A month the billing system could not be read for is simply absent — a home
+  // screen is a glance, not a settlement, and `billingUnavailable` says so
+  // rather than pretending the missing month was a zero.
+  const myCode = billingIncentive.normaliseCode(profile.employeeCode);
+  const billingOn = Boolean(myCode && billingIncentive.isConfigured());
+  const noBilling = { byCode: new Map(), failed: [] };
+
+  // (2026-09-29, speed pass: one wait for everything. The billing calls are an
+  // HTTP round trip to the salestracker and the payment reads need only the
+  // profile id and the month, so none of them has to queue behind the others;
+  // they used to run in three more waits after this one.)
+  const [
+    teamMonth, teamAll, qcMonth, qcAll, monthCredits, allCredits,
+    billMonth, billLife, paidRows, allPaidRows,
+  ] = await Promise.all([
     IncentiveEntry.find({ $and: [mine, dateFilter] }).lean(),
     // The lifetime figure is what somebody actually wants to know when they look
     // at a home screen in the first week of a month; it is one more small query.
@@ -1786,6 +1805,14 @@ const myPoints = asyncHandler(async (req, res) => {
     // left them out would show less than the person is actually owed.
     IncentiveCredit.find({ employee: profile._id, date: { $gte: from, $lte: to } }).select('points').lean(),
     IncentiveCredit.find({ employee: profile._id }).select('points').lean(),
+    billingOn ? billingIncentive.monthByCode(monthParam) : noBilling,
+    billingOn ? billingIncentive.lifetimeByCode() : noBilling,
+    IncentivePayment.find({
+      employee: profile._id,
+      period: { $gte: IncentivePayment.monthStart(from), $lte: IncentivePayment.monthStart(to) },
+    }).select('points').lean(),
+    // Lifetime settled — see WHAT THIS PERSON ACTUALLY HOLDS below.
+    IncentivePayment.find({ employee: profile._id }).select('points').lean(),
   ]);
   const monthEntries = [...teamMonth, ...qcMonth];
   const allEntries = [...teamAll, ...qcAll];
@@ -1799,28 +1826,11 @@ const myPoints = asyncHandler(async (req, res) => {
 
   const creditPoints = creditTotal(monthCredits);
 
-  // THE THIRD WAY POINTS ARRIVE, and the only one that is not a document in
-  // this database: the billing system's own figures, matched on the SSL code
-  // above. Left out, this chip would report zero for the entire billing team,
-  // who between them hold more points than everybody else put together.
-  // A month the billing system could not be read for is simply absent — a home
-  // screen is a glance, not a settlement, and `billingUnavailable` says so
-  // rather than pretending the missing month was a zero.
-  const myCode = billingIncentive.normaliseCode(profile.employeeCode);
-  const [billMonth, billLife] = myCode && billingIncentive.isConfigured()
-    ? await Promise.all([
-      billingIncentive.monthByCode(monthParam),
-      billingIncentive.lifetimeByCode(),
-    ])
-    : [{ byCode: new Map(), failed: [] }, { byCode: new Map(), failed: [] }];
+  // Billing figures (the third way points arrive) were fetched in the wait above.
   const billingPoints = paise(billMonth.byCode.get(myCode)?.points || 0);
   const billingLifetime = paise(billLife.byCode.get(myCode)?.points || 0);
 
   const points = paise(share(monthEntries) + creditPoints + billingPoints);
-  const paidRows = await IncentivePayment.find({
-    employee: profile._id,
-    period: { $gte: IncentivePayment.monthStart(from), $lte: IncentivePayment.monthStart(to) },
-  }).select('points').lean();
   const paidPoints = paise(paidRows.reduce((s, r) => s + (r.points || 0), 0));
 
   // WHAT THIS PERSON ACTUALLY HOLDS — everything ever earned, less everything
@@ -1835,7 +1845,7 @@ const myPoints = asyncHandler(async (req, res) => {
   // and for any month the feed has not been filled in yet — a billing person's
   // chip said 0 while they were owed tens of thousands of points, which is the
   // one thing a home-screen number must never do (user decision 2026-09-16).
-  const allPaidRows = await IncentivePayment.find({ employee: profile._id }).select('points').lean();
+  // (`allPaidRows` is read in the one wait above.)
   const lifetimePaid = paise(allPaidRows.reduce((s, r) => s + (r.points || 0), 0));
   const lifetimePoints = paise(share(allEntries) + creditTotal(allCredits) + billingLifetime);
 

@@ -2,9 +2,8 @@
  * Cashbook report — the one renderer behind every PDF report type.
  *
  *   entries            every filtered row, oldest first, with its bill.
- *   daywise            one line per calendar day, with that day's closing
- *                      balance — the shape a supervisor reads at the end of
- *                      a trip.
+ *   daywise            one line per calendar day and what it cost — the shape a
+ *                      supervisor reads at the end of a trip.
  *   daywise_category   each day's line with what that day went on, category by
  *                      category, and then a category-wise summary of the lot.
  *   category           what the money went on, totalled by category.
@@ -150,12 +149,15 @@ const BACK_MARGIN = 24;
 const IST = 'Asia/Kolkata';
 const fmtDate = new Intl.DateTimeFormat('en-GB', { timeZone: IST, day: '2-digit', month: 'short', year: 'numeric' });
 const fmtDay = new Intl.DateTimeFormat('en-GB', { timeZone: IST, day: '2-digit', month: 'short' });
+// hourCycle 'h12', never `hour12: true`: under the ICU the server runs, en-GB
+// with hour12 resolves to h11 (0-11) and noon printed as "00:53 pm" — seen on a
+// report from the live server, 2026-09-29. h12 is 12, 1 … 11 on every ICU.
 const fmtStamp = new Intl.DateTimeFormat('en-GB', {
-  timeZone: IST, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+  timeZone: IST, day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h12',
 });
 // 12-hour clock wherever a time of day is printed — house rule. Durations are
 // the only exception and a cashbook has none.
-const fmtTime = new Intl.DateTimeFormat('en-GB', { timeZone: IST, hour: '2-digit', minute: '2-digit', hour12: true });
+const fmtTime = new Intl.DateTimeFormat('en-GB', { timeZone: IST, hour: '2-digit', minute: '2-digit', hourCycle: 'h12' });
 // 'YYYY-MM-DD' in IST, used only to decide which calendar day a row belongs to.
 // Doing this with getDate() would file a 1 a.m. entry under the previous day for
 // anyone whose server runs in UTC, which ours does.
@@ -193,15 +195,16 @@ function columns(parts) {
 // Details is the widest: it carries the bill thumbnail at its right.
 const ENTRY_BOOK_X = columns([0.13, 0.52, 0.17, 0.18]);
 const ENTRY_X = columns([0.11, 0.39, 0.14, 0.12, 0.12, 0.12]);
-// THE SUMMARY TABLES CARRY NO CASH IN COLUMN (2026-09-29, user's red marks on
-// the day-by-category and by-category tables): a book is spending, and a
-// column of zeros beside it was noise. Money in still moves the balances.
-// Date | Entries | Cash out | Closing balance
-const DAY_X = columns([0.32, 0.18, 0.25, 0.25]);
-// Date, then its categories | Entries | Cash out | Closing balance
-const DAYCAT_X = columns([0.40, 0.15, 0.22, 0.23]);
-// Category | Entries | Cash out | Balance
-const CAT_X = columns([0.46, 0.14, 0.20, 0.20]);
+// THE SUMMARY TABLES CARRY NO CASH IN COLUMN AND NO BALANCE (2026-09-29, the
+// user's marks on the day-by-category and by-category tables, first the Cash in
+// column and then the Closing balance / Balance one): a summary says where the
+// money went and how much. The one balance a report needs is beside its title.
+// Date | Entries | Cash out
+const DAY_X = columns([0.46, 0.22, 0.32]);
+// Date, then its categories | Entries | Cash out
+const DAYCAT_X = columns([0.50, 0.20, 0.30]);
+// Category | Entries | Cash out
+const CAT_X = columns([0.54, 0.18, 0.28]);
 
 /**
  * Each table's columns: edges and heads. The heads are drawn again at the top of
@@ -224,24 +227,15 @@ const TABLES = {
   },
   days: {
     xs: DAY_X,
-    heads: [
-      { label: 'Date' }, { label: 'Entries', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
-    ],
+    heads: [{ label: 'Date' }, { label: 'Entries', align: 'right' }, { label: 'Cash out', align: 'right' }],
   },
   dayCategories: {
     xs: DAYCAT_X,
-    heads: [
-      { label: 'Date / Category' }, { label: 'Entries', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
-    ],
+    heads: [{ label: 'Date / Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash out', align: 'right' }],
   },
   categories: {
     xs: CAT_X,
-    heads: [
-      { label: 'Category' }, { label: 'Entries', align: 'right' },
-      { label: 'Cash out', align: 'right' }, { label: 'Balance', align: 'right' },
-    ],
+    heads: [{ label: 'Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash out', align: 'right' }],
   },
 };
 
@@ -269,7 +263,7 @@ const SUBTITLES = {
 
 /** The heading over each table, printed only when a document has more than one. */
 const SECTION_TITLES = {
-  days: ['Day by day', 'One line per calendar day, with the balance the day closed at.'],
+  days: ['Day by day', 'One line per calendar day, with what it cost.'],
   dayCategories: ['Day by day, by category', 'Each day\'s total, then what that day went on, category by category.'],
   categories: ['By category', 'Everything in this report, totalled under each category. Only money that moved is counted.'],
   entries: ['All entries', 'Every entry behind the figures above, oldest first.'],
@@ -760,29 +754,36 @@ function renderCashbookReport(input, kind) {
     drawBand();
     let y = 108;
 
-    // THE BALANCE AT THE RIGHT OF THE TITLE (2026-09-29, the user's drawing: the
+    // THE FIGURES AT THE RIGHT OF THE TITLE (2026-09-29, the user's drawing: the
     // "Total Cash out" and "Final Balance" boxes struck out, the balance written
     // in red beside the book's name). An open book prints the figure the Final
-    // Balance box used to, in red. A CLOSED book prints what the owner's wallet
-    // stood at when it was closed — the wallet card's figure, sign and all,
-    // frozen at that moment — so its report reads the same every time it is
-    // downloaded; what the book cost goes under it. A whole wallet prints its
-    // balance, red when the company owes, green when there is advance in hand.
+    // Balance box used to, in red. A CLOSED book prints TWO, both as large (the
+    // user's next mark): what the owner's wallet stood at when it was closed —
+    // the wallet card's figure, sign and all, frozen at that moment, so the
+    // report reads the same every time it is downloaded — and what the book
+    // cost. A whole wallet prints its balance, red when the company owes, green
+    // when there is advance in hand.
     const signInk = (n) => (round2(n) < 0 ? OUT_INK : round2(n) > 0 ? IN_INK : INK);
-    const headline = book && book.closing
-      ? {
-        label: `Balance when closed${book.closing.at ? ` · ${fmtDate.format(new Date(book.closing.at))}` : ''}`,
-        value: rs(book.closing.balance),
-        color: signInk(book.closing.balance),
-        sub: `Spent on this book ${rs(book.closing.spent ?? bookSpent)}`,
-      }
-      : { label: 'Balance', value: rs(closing), color: book ? OUT_INK : signInk(closing) };
+    const headFigures = book && book.closing
+      ? [
+        {
+          label: `Balance when closed${book.closing.at ? ` · ${fmtDate.format(new Date(book.closing.at))}` : ''}`,
+          value: rs(book.closing.balance),
+          color: signInk(book.closing.balance),
+        },
+        { label: 'Spent on this book', value: rs(book.closing.spent ?? bookSpent), color: OUT_INK },
+      ]
+      : [{ label: 'Balance', value: rs(closing), color: book ? OUT_INK : signInk(closing) }];
     const HEAD_W = 190;
+    const FIGURE_H = 32; // a small label over a 15pt figure
     const headX = X0 + BLOCK_W - HEAD_W;
-    write(headline.label, headX, y + 1, { size: 7.8, color: FAINT, width: HEAD_W, align: 'right' });
-    write(headline.value, headX, y + 11, { bold: true, size: 15, color: headline.color, width: HEAD_W, align: 'right' });
-    if (headline.sub) write(headline.sub, headX, y + 31, { size: 7.6, color: MUTED, width: HEAD_W, align: 'right' });
-    // The left column stops short of it.
+    headFigures.forEach((f, i) => {
+      const fy = y + i * FIGURE_H;
+      write(f.label, headX, fy + 1, { size: 7.8, color: FAINT, width: HEAD_W, align: 'right' });
+      write(f.value, headX, fy + 11, { bold: true, size: 15, color: f.color, width: HEAD_W, align: 'right' });
+    });
+    const headBottom = y + headFigures.length * FIGURE_H;
+    // The left column stops short of them.
     const titleW = BLOCK_W - HEAD_W - 12;
 
     write(scopeName, X0, y, { bold: true, size: 12.5, width: titleW });
@@ -800,8 +801,9 @@ function renderCashbookReport(input, kind) {
     write([subtitle, book && book.note ? book.note : ''].filter(Boolean).join('  ·  '),
       X0, y, { size: 9.6, color: MUTED, width: titleW });
     y += 18;
-    // A headline with a line under it runs a little lower than two lines of text.
-    if (headline.sub && y < 108 + 44) y = 108 + 44;
+    // Two figures stacked run lower than the title's lines: start the duration
+    // box under whichever is taller.
+    if (y < headBottom + 6) y = headBottom + 6;
 
     // ---- duration ---------------------------------------------------------
     // With no range asked for, print the first and last entry dates rather than
@@ -907,15 +909,13 @@ function renderCashbookReport(input, kind) {
         write(fmtDate.format(day.date), DAY_X[0] + 6, ty, { size: 8.7, width: DAY_X[1] - DAY_X[0] - 12 });
         figure(String(day.count), 1, DAY_X, ty, {});
         figure(money(day.out), 2, DAY_X, ty, { color: day.out ? OUT_INK : FAINT });
-        figure(money(day.closing), 3, DAY_X, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
       }
     };
 
     // ---- each day, then what it went on -----------------------------------
     // The day's line is the day-wise line (bold, tinted); the category lines
-    // under it are indented and quieter, and leave the balance blank — a
-    // balance belongs to the end of a day, not to a heading within it.
+    // under it are indented and quieter.
     const drawDayCategories = () => {
       const xs = DAYCAT_X;
       // What one page can hold under its heads. A day that fits is kept whole;
@@ -930,7 +930,6 @@ function renderCashbookReport(input, kind) {
         write(label, xs[0] + 6, ty, { bold: true, size: 8.9, width: xs[1] - xs[0] - 12 });
         figure(String(day.count), 1, xs, ty, { bold: true });
         figure(money(day.out), 2, xs, ty, { bold: true, color: day.out ? OUT_INK : FAINT });
-        figure(money(day.closing), 3, xs, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
         for (const c of day.categories) {
           // A day that runs over a page carries its date across, so the lines
@@ -953,22 +952,11 @@ function renderCashbookReport(input, kind) {
 
     // ---- one line per category, for the whole report ----------------------
     // Money that moved only (summariseByCategory): a category with nothing but
-    // a rejected request is not a place the money went. Its Balance is Cash in
-    // less Cash out, so a heading only ever spent against reads negative — the
-    // wallet's own convention.
+    // a rejected request is not a place the money went. (It used to open on the
+    // balance carried in, so a Balance column could add up; that column went on
+    // 2026-09-29 and the opening line with it.)
     const drawCategories = () => {
       const xs = CAT_X;
-      // Money carried in from before the period opens the table, so its
-      // Balance column adds up to the Balance at the top of the page
-      // rather than disagreeing with it by exactly that much.
-      if (opening) {
-        ensureRoom(DAY_ROW_H);
-        drawRowFrame(y, DAY_ROW_H);
-        const ty = y + 8;
-        write('Opening balance', xs[0] + 6, ty, { size: 8.7, color: MUTED, width: xs[1] - xs[0] - 12 });
-        figure(money(opening), 3, xs, ty, { bold: true, color: opening < 0 ? OUT_INK : INK });
-        y += DAY_ROW_H;
-      }
       for (const c of byCategory.rows) {
         ensureRoom(DAY_ROW_H);
         drawRowFrame(y, DAY_ROW_H);
@@ -976,7 +964,6 @@ function renderCashbookReport(input, kind) {
         write(c.category, xs[0] + 6, ty, { bold: true, size: 8.7, width: xs[1] - xs[0] - 12 });
         figure(String(c.count), 1, xs, ty, {});
         figure(money(c.out), 2, xs, ty, { color: c.out ? OUT_INK : FAINT });
-        figure(money(c.balance), 3, xs, ty, { bold: true });
         y += DAY_ROW_H;
       }
     };
@@ -1168,7 +1155,7 @@ function renderCashbookReport(input, kind) {
       notes.push(`The ${attached.length === 1 ? 'bill is' : `${attached.length} bills are`} attached at the end of this`
         + ' report, one to a page. Tap "See bill" on a row to go to its bill, and "Back to the entry" on the bill to'
         + ` come back.${billLinks && attached.some((b) => billLinkFor(billLinks, b.entry))
-          ? ' Tap a thumbnail to open the full-size bill online.' : ''}`);
+          ? ' Tap a thumbnail to open the full-size bill online (on a computer, Ctrl+click it to keep this report open).' : ''}`);
     } else if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
       notes.push('"View bill" on a row opens that bill online.');
     }
@@ -1211,13 +1198,10 @@ function renderCashbookReport(input, kind) {
         write('Total', xs[0] + 6, ty, { bold: true, size: 9.3, width: xs[1] - xs[0] - 12 });
         // The day tables count every row as it was logged (entries.length), so
         // their Entries column visibly adds up; the category table counts only
-        // the rows that moved money, and so does its total. Every one of them
-        // closes on the Final Balance — the category table by way of its
-        // opening line.
+        // the rows that moved money, and so does its total.
         const count = key === 'categories' ? byCategory.counted : entries.length;
         figure(String(count), 1, xs, ty, sum);
         figure(money(totals.out), 2, xs, ty, { ...sum, color: OUT_INK });
-        figure(money(closing), 3, xs, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
       }
       y += TOT_H;
     };

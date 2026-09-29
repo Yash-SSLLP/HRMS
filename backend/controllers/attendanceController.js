@@ -105,8 +105,12 @@ function canViewOthersAttendance(user) {
   return isPortalViewer(user) || hasPermission(user, 'attendance.manage');
 }
 
-async function getMyProfileOrFail(userId, res) {
-  const profile = await EmployeeProfile.findOne({ user: userId }).populate('workLocationRef');
+// `withSite: false` skips the workLocationRef populate, which is a second round
+// trip that only the punch handlers (the geofence) read. (2026-09-29, speed
+// pass: GET /attendance/me never looks at the site.)
+async function getMyProfileOrFail(userId, res, { withSite = true } = {}) {
+  const query = EmployeeProfile.findOne({ user: userId });
+  const profile = await (withSite ? query.populate('workLocationRef') : query);
   if (!profile) {
     res.status(404);
     throw new Error('No employee profile linked to this account');
@@ -1254,14 +1258,22 @@ const orgDayDetails = asyncHandler(async (req, res) => {
  */
 // GET /api/attendance/me?year=&month=
 const listMine = asyncHandler(async (req, res) => {
-  const profile = await getMyProfileOrFail(req.user._id, res);
+  // No site populate: nothing below reads profile.workLocationRef (the response
+  // only carries the two punch flags). (2026-09-29, speed pass)
+  const profile = await getMyProfileOrFail(req.user._id, res, { withSite: false });
   const now = new Date();
   const year = Number(req.query.year) || now.getFullYear();
   const month = Number(req.query.month) || now.getMonth() + 1;
   const { start, end } = monthRange(year, month);
 
   const upto = capToToday(end);
-  const [records, holidays] = await Promise.all([
+  // (2026-09-29, speed pass: the open-shift and today's-leave lookups need only
+  // the profile id, so they ride in this one wait instead of two more after it.
+  // The leave lookup is started even when today's record turns out to carry a
+  // work-on-leave claim — a wasted read in that rare case, never a different
+  // answer — and its failure is held as a value so it is still logged and
+  // swallowed below exactly as before, not thrown out of the Promise.all.)
+  const [records, holidays, openShift, leaveLookup] = await Promise.all([
     Attendance.find({
       employee: profile._id,
       date: { $gte: start, $lt: upto },
@@ -1269,6 +1281,8 @@ const listMine = asyncHandler(async (req, res) => {
     // Holidays keep the full month — an upcoming holiday is a published plan,
     // not a claim about attendance that has already happened.
     require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date type').lean().catch(() => []),
+    openShiftRecord(profile._id, new Date()),
+    leaveCoveringDay(profile._id, startOfDay(new Date())).then((leave) => ({ leave }), (err) => ({ err })),
   ]);
 
   // The day the punch buttons act on. For an overnight shift that is still
@@ -1276,7 +1290,6 @@ const listMine = asyncHandler(async (req, res) => {
   // showing a night worker a fresh day with a Punch In button at 00:30 is how
   // a second record gets created for a shift they are in the middle of.
   const todayKey = startOfDay(new Date()).getTime();
-  const openShift = await openShiftRecord(profile._id, new Date());
   const today = (openShift && records.find((r) => String(r._id) === String(openShift._id)))
     || records.find((r) => startOfDay(r.date).getTime() === todayKey)
     || null;
@@ -1300,7 +1313,8 @@ const listMine = asyncHandler(async (req, res) => {
   let todayLeave = null;
   if (!today?.workOnLeave?.status) {
     try {
-      const leave = await leaveCoveringDay(profile._id, startOfDay(new Date()));
+      if (leaveLookup.err) throw leaveLookup.err;
+      const { leave } = leaveLookup;
       if (leave) {
         const top = await topLeaveApproverFor(profile);
         todayLeave = {

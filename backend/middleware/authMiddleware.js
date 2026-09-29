@@ -13,6 +13,16 @@ const User = require('../models/User');
 // on every single request.
 const SEEN_THROTTLE_MS = 2 * 60 * 1000;
 
+// (2026-09-29, speed pass) When this process last fired a lastSeenAt stamp for
+// each account. The document's own `lastSeenAt` cannot stop a burst: the app's
+// parallel launch requests each load the User before any stamp has landed, so
+// every one of them saw a stale value and fired its own updateOne. This map is
+// written synchronously, so the first request in the burst claims the stamp and
+// the rest skip it. Entries older than the throttle decide nothing (the stored
+// value is at least that new), so they are pruned once the map grows.
+const lastSeenStamps = new Map(); // userId -> ms of the stamp this process fired
+const LAST_SEEN_PRUNE_AT = 500;
+
 // Roles whose company wall comes from their own account (`User.companies`) or
 // who have none at all — everyone else's wall is their own profile's company.
 // God is here for the same reason CEO/MD are: it has no employee profile, so
@@ -34,41 +44,69 @@ const ACCOUNT_SCOPED_ROLES = ['SuperAdmin', 'CEO', 'MD', 'God', 'HRConsultancy']
  * silently never fire on exactly the routes that matter most (approving leave,
  * salary, attendance edits). Every document carries `_id` whatever the select,
  * so comparing ids works everywhere.
- * @param {object} user - the loaded User doc (mutated: gains scopeCompanyId, scopeProfileId)
- * @sideeffect Sets user.scopeCompanyId / user.scopeProfileId (ObjectId|null). Never persisted.
+ *
+ * (2026-09-29, speed pass) It also stashes the profile's `dateOfJoining` as
+ * `scopeJoinedOn`, so the notification inbox's joining-date cutoff
+ * (notificationController joinCutoff) does not read the same profile a second
+ * time. Left UNDEFINED for the roles skipped above — undefined means "this
+ * lookup never ran, ask the database", null means "no profile / no date".
+ * @param {object} user - the loaded User doc (mutated: gains scopeCompanyId, scopeProfileId, scopeJoinedOn)
+ * @sideeffect Sets user.scopeCompanyId / user.scopeProfileId (ObjectId|null) and
+ *   user.scopeJoinedOn (Date|null). Never persisted.
  */
 // Which company each account belongs to changes only when the Backend
 // reassigns somebody, so a short in-memory cache absorbs the per-request
 // lookup (chat polls alone would otherwise hit the shared cluster once per
 // poll per user). 60s bounds how stale a reassignment can look.
+//
+// (2026-09-29, speed pass) Each entry holds the lookup's PROMISE, stored the
+// moment the query starts: the app's ~10 parallel launch requests all miss an
+// empty cache together, and caching only finished results meant each of them
+// ran its own findOne. Now they share one. `at` stays null while the query is
+// in flight and is stamped when it lands, so the TTL still counts from when the
+// answer was read, exactly as before. A failed lookup is dropped at once, so the
+// next request asks again rather than inheriting the error for a minute.
 const SCOPE_COMPANY_TTL_MS = 60 * 1000;
-const scopeCompanyCache = new Map(); // userId -> { companyId, profileId, at }
+const scopeCompanyCache = new Map(); // userId -> { promise, at: ms|null }
 
 async function attachScopeCompany(user) {
   if (!user || ACCOUNT_SCOPED_ROLES.includes(user.role)) return;
   const key = String(user._id);
-  const hit = scopeCompanyCache.get(key);
-  if (hit && Date.now() - hit.at < SCOPE_COMPANY_TTL_MS) {
-    user.scopeCompanyId = hit.companyId;
-    user.scopeProfileId = hit.profileId;
-    return;
+  let hit = scopeCompanyCache.get(key);
+  if (!hit || (hit.at !== null && Date.now() - hit.at >= SCOPE_COMPANY_TTL_MS)) {
+    // Lazy require to avoid a model-load cycle at module init.
+    const EmployeeProfile = require('../models/EmployeeProfile');
+    const entry = { promise: null, at: null };
+    entry.promise = EmployeeProfile.findOne({ user: user._id }).select('company dateOfJoining').lean()
+      .then((prof) => {
+        entry.at = Date.now();
+        return {
+          companyId: (prof && prof.company) || null,
+          profileId: (prof && prof._id) || null,
+          joinedOn: (prof && prof.dateOfJoining) || null,
+        };
+      });
+    // Only this entry, and only if nothing (an invalidation, a newer lookup)
+    // has replaced it since. The awaiting request still sees the rejection.
+    entry.promise.catch(() => {
+      if (scopeCompanyCache.get(key) === entry) scopeCompanyCache.delete(key);
+    });
+    // Keep the cache from growing without bound on a long-lived process.
+    if (scopeCompanyCache.size >= 5000) scopeCompanyCache.clear();
+    scopeCompanyCache.set(key, entry);
+    hit = entry;
   }
-  // Lazy require to avoid a model-load cycle at module init.
-  const EmployeeProfile = require('../models/EmployeeProfile');
-  const prof = await EmployeeProfile.findOne({ user: user._id }).select('company').lean();
-  user.scopeCompanyId = (prof && prof.company) || null;
-  user.scopeProfileId = (prof && prof._id) || null;
-  scopeCompanyCache.set(key, {
-    companyId: user.scopeCompanyId, profileId: user.scopeProfileId, at: Date.now(),
-  });
-  // Keep the cache from growing without bound on a long-lived process.
-  if (scopeCompanyCache.size > 5000) scopeCompanyCache.clear();
+  const scope = await hit.promise;
+  user.scopeCompanyId = scope.companyId;
+  user.scopeProfileId = scope.profileId;
+  user.scopeJoinedOn = scope.joinedOn;
 }
 
 /**
  * Drop cached company scopes after a reassignment so the wall moves with the
  * person immediately instead of after the TTL. Call with the affected USER
- * ids (not profile ids); no ids = flush everything.
+ * ids (not profile ids); no ids = flush everything. Since the cache also
+ * carries the joining date (2026-09-29), call it when that is edited too.
  * @param {Array} [userIds]
  */
 function invalidateScopeCompany(userIds) {
@@ -231,11 +269,34 @@ const protect = asyncHandler(async (req, res, next) => {
   // document's validators or pre-save hooks (one of which re-hashes a password
   // and bumps tokenVersion), and it must not fight a concurrent request.
   // Fire-and-forget — a failed stamp must never fail the request it rode in on.
+  // The newer of the stored stamp and this process's own (lastSeenStamps above)
+  // decides, so a burst of parallel requests fires one write, not one each. No
+  // stored stamp at all still stamps at once, as it always did: that is also
+  // what a forced sign-out leaves behind (it $unsets lastSeenAt), and the map
+  // cannot tell that apart from a write still in flight.
   const now = Date.now();
-  if (!user.lastSeenAt || now - new Date(user.lastSeenAt).getTime() > SEEN_THROTTLE_MS) {
+  const seenKey = String(user._id);
+  const storedSeen = user.lastSeenAt ? new Date(user.lastSeenAt).getTime() : 0;
+  const firedSeen = lastSeenStamps.get(seenKey) || 0;
+  if (!storedSeen || now - Math.max(storedSeen, firedSeen) > SEEN_THROTTLE_MS) {
+    lastSeenStamps.set(seenKey, now);
+    if (lastSeenStamps.size > LAST_SEEN_PRUNE_AT) {
+      for (const [id, at] of lastSeenStamps) {
+        if (now - at > SEEN_THROTTLE_MS) lastSeenStamps.delete(id);
+      }
+    }
     user.lastSeenAt = new Date(now);
     User.updateOne({ _id: user._id }, { lastSeenAt: user.lastSeenAt })
-      .catch((err) => console.error('lastSeenAt stamp failed:', err.message));
+      .catch((err) => {
+        // Let the next request try again instead of waiting out the throttle.
+        if (lastSeenStamps.get(seenKey) === now) lastSeenStamps.delete(seenKey);
+        console.error('lastSeenAt stamp failed:', err.message);
+      });
+  } else if (now - storedSeen > SEEN_THROTTLE_MS) {
+    // Stale on this copy only because another request in the same burst already
+    // stamped it. Show this request's user what the database now holds — before
+    // the map, it would have carried its own fresh stamp here too.
+    user.lastSeenAt = new Date(firedSeen);
   }
   next();
 });

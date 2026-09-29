@@ -25,8 +25,18 @@ const COMPANY = require('../config/company');
 // Reading four small images from GridFS on every letter would be wasteful, and
 // branding changes roughly never. Same short-TTL shape services/templates.js
 // uses for template overrides.
-const TTL_MS = 30_000;
-let cache = { at: 0, value: null };
+// (2026-09-29, speed pass: 10 minutes, up from 30 s. Safe because every route
+// that changes the images — logo, letterhead and signature upload/delete in
+// controllers/adminController.js — calls invalidateBranding(), so an upload
+// shows at once whatever the TTL. A lookup that FAILED keeps the old 30 s, so
+// a transient GridFS/DB hiccup never pins the bundled fallback for 10 minutes.
+// The drop is per process: a second server process, if one ever runs, would
+// pick an upload up within 10 minutes rather than 30 s.)
+const TTL_MS = 10 * 60_000;
+const DEGRADED_TTL_MS = 30_000;
+let cache = { at: 0, value: null, ttl: TTL_MS };
+// Bumped by every invalidateBranding(); see getBranding.
+let generation = 0;
 
 const readFileSafe = (p) => {
   try {
@@ -44,12 +54,18 @@ const BUNDLED_LETTERHEAD = path.join(__dirname, '..', 'assets', 'letterhead.png'
  * Load the branding images.
  * @returns {Promise<{logo: Buffer|null, letterhead: Buffer|null, signatures: {ceo?: Sig, md?: Sig, hr?: Sig}}>}
  *   where Sig = { image: Buffer, name: string, title: string }.
- * @sideEffects Reads GridFS and the filesystem; result cached for 30s.
+ * @sideEffects Reads GridFS and the filesystem; result cached for 10 minutes
+ *   (30 s when a read failed).
  */
 async function getBranding() {
-  if (cache.value && Date.now() - cache.at < TTL_MS) return cache.value;
+  if (cache.value && Date.now() - cache.at < cache.ttl) return cache.value;
 
+  // An invalidateBranding() that lands while this lookup is in flight means what
+  // it read may already be stale — then it is returned but not cached, or the
+  // longer TTL would pin the old image for 10 minutes.
+  const startedAt = generation;
   const out = { logo: null, letterhead: null, signatures: {} };
+  let degraded = false;
   try {
     // Lazily required: letterPdf is also used by scripts with no DB connection,
     // and those must still render (with the bundled/env fallbacks).
@@ -58,21 +74,26 @@ async function getBranding() {
     const s = await Setting.getSettings();
     const b = s.branding || {};
 
-    if (b.logoPath) {
-      try { out.logo = await storage.readBuffer(b.logoPath); } catch { /* fall through */ }
-    }
-    if (b.letterheadPath) {
-      try { out.letterhead = await storage.readBuffer(b.letterheadPath); } catch { /* fall through */ }
-    }
-    for (const sig of b.signatures || []) {
-      if (!sig?.storagePath) continue;
-      try {
-        const image = await storage.readBuffer(sig.storagePath);
-        if (image) out.signatures[sig.key] = { image, name: sig.signatoryName || '', title: sig.signatoryTitle || '' };
-      } catch { /* skip this slot */ }
-    }
+    // (2026-09-29, speed pass: every image reads side by side rather than one
+    // after another.) A failed read is null — falls through to the env/bundled
+    // fallback, or skips that signature slot — and marks the result degraded.
+    const read = (p) => storage.readBuffer(p).catch(() => { degraded = true; return null; });
+    const sigs = [...(b.signatures || [])].filter((sig) => sig?.storagePath);
+    const [logo, letterhead, ...sigImages] = await Promise.all([
+      b.logoPath ? read(b.logoPath) : null,
+      b.letterheadPath ? read(b.letterheadPath) : null,
+      ...sigs.map((sig) => read(sig.storagePath)),
+    ]);
+    if (b.logoPath) out.logo = logo;
+    if (b.letterheadPath) out.letterhead = letterhead;
+    // Applied in list order, so a repeated key still ends on its LAST entry.
+    sigs.forEach((sig, i) => {
+      const image = sigImages[i];
+      if (image) out.signatures[sig.key] = { image, name: sig.signatoryName || '', title: sig.signatoryTitle || '' };
+    });
   } catch (err) {
     // No DB (scripts) or a read failure — fall back to env/bundled below.
+    degraded = true;
     console.error('branding lookup failed:', err.message);
   }
 
@@ -86,12 +107,17 @@ async function getBranding() {
     if (image) out.signatures.ceo = { image, name: '', title: '' };
   }
 
-  cache = { at: Date.now(), value: out };
+  if (generation === startedAt) {
+    cache = { at: Date.now(), value: out, ttl: degraded ? DEGRADED_TTL_MS : TTL_MS };
+  }
   return out;
 }
 
 // Called after an upload/delete so the next letter picks the change up at once
-// rather than up to 30s later.
-function invalidateBranding() { cache = { at: 0, value: null }; }
+// rather than up to 10 minutes later.
+function invalidateBranding() {
+  generation += 1;
+  cache = { at: 0, value: null, ttl: TTL_MS };
+}
 
 module.exports = { getBranding, invalidateBranding };

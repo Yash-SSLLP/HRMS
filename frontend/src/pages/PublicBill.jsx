@@ -35,6 +35,11 @@ export default function PublicBill() {
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  // BACK TO THE REPORT (2026-09-29). A photo clicked in a DOWNLOADED report
+  // opens here in the same tab — the browser's PDF viewer will not open a new
+  // one — so the way back is the tab's own history. Read once: with nothing
+  // behind this page (a new tab, a pasted link) there is nowhere to go back to.
+  const [canGoBack] = useState(() => typeof window !== 'undefined' && window.history.length > 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +90,14 @@ export default function PublicBill() {
   return (
     <div className="min-h-full flex items-center justify-center bg-gradient-to-br from-gray-100 via-gray-50 to-blue-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 px-4 py-10">
       <div className="w-full max-w-3xl bg-white shadow-lg rounded-2xl p-6 sm:p-8 border border-gray-100">
+        {canGoBack && (
+          <div className="mb-4">
+            <button type="button" onClick={() => window.history.back()}
+              className="inline-flex items-center gap-1.5 min-h-[40px] px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50">
+              <span aria-hidden="true">←</span> Back to the report
+            </button>
+          </div>
+        )}
         <div className="flex flex-col items-center text-center mb-5">
           <BrandLockup variant="stacked" />
           <h1 className="text-xl font-bold text-gray-900 mt-4">

@@ -1025,36 +1025,51 @@ const getMyKhata = asyncHandler(async (req, res) => {
     ledger.getOrCreateWallet(req.user._id, req.user),
     ledger.getOrCreateDefaultKhata(req.user._id, req.user),
   ]);
-  // Their own books plus the ones colleagues have shared with them and they
-  // accepted. `members.user` comes back populated from the ledger; the OWNER
-  // has to be attached here, because a shared book's card is captioned
-  // "Rahul's book" and cannot say so from an id. One query for the lot rather
-  // than one per row.
-  const khatas = await ledger.listKhatasOf(req.user._id, true);
-  await EmployeeKhata.populate(khatas, { path: 'employee', select: USER_FIELDS });
+  // (2026-09-29, speed pass: everything below reads side by side in ONE
+  // Promise.all — it used to be six waits in a row. Only the step above stays
+  // first, because on a first visit it CREATES the default book the list must
+  // show. The two Setting reads — the category list and the advance switch —
+  // stay separate calls so each keeps its own failure rule (the switch reads ON
+  // when the doc cannot be read); running together they cost one wait.)
+  const [khatas, pending, entries, cashOut, recentCategories, approvalRequired] = await Promise.all([
+    // Their own books plus the ones colleagues have shared with them and they
+    // accepted. `members.user` comes back populated from the ledger; the OWNER
+    // has to be attached here, because a shared book's card is captioned
+    // "Rahul's book" and cannot say so from an id. One query for the lot rather
+    // than one per row — chained on the list, since it needs the rows.
+    ledger.listKhatasOf(req.user._id, true).then(async (list) => {
+      await EmployeeKhata.populate(list, { path: 'employee', select: USER_FIELDS });
+      return list;
+    }),
 
-  // Invitations still waiting on an answer. Fetched separately from the list
-  // above and NOT folded into it: an invitation is not a book you have — you
-  // cannot file into it, and showing it among your books would offer a heading
-  // that will vanish the moment you decline it.
-  const pending = await EmployeeKhata.find({
-    isActive: true,
-    members: { $elemMatch: { user: req.user._id, status: 'invited' } },
-  })
-    .populate('employee', USER_FIELDS)
-    .sort({ updatedAt: -1 });
+    // Invitations still waiting on an answer. Fetched separately from the list
+    // above and NOT folded into it: an invitation is not a book you have — you
+    // cannot file into it, and showing it among your books would offer a heading
+    // that will vanish the moment you decline it.
+    EmployeeKhata.find({
+      isActive: true,
+      members: { $elemMatch: { user: req.user._id, status: 'invited' } },
+    })
+      .populate('employee', USER_FIELDS)
+      .sort({ updatedAt: -1 }),
 
-  const entries = await KhataEntry.find({ employee: req.user._id })
-    .populate('account', 'name')
-    .populate('expenseBook', 'name')
-    .sort({ date: -1, createdAt: -1 })
-    .limit(400);
+    KhataEntry.find({ employee: req.user._id })
+      .populate('account', 'name')
+      .populate('expenseBook', 'name')
+      .sort({ date: -1, createdAt: -1 })
+      .limit(400),
 
-  const sums = summariseEntries(entries);
-  const [cashOut, recentCategories] = await Promise.all([
     getCashOutCategories(),
     recentCategoriesFor(req.user._id),
+    // Whether a request of theirs will need an executive's sanction, so the
+    // form can say so before they send it rather than after. Only while the
+    // org switch is on (a Permissions toggle again since 2026-09-28), and never
+    // for a CEO/MD/Backend, who sanctions their own — theirs goes straight to
+    // accounts. Not read at all for them, as before.
+    ADVANCE_SANCTIONERS.includes(req.user.role) ? false : advanceApprovalRequired(),
   ]);
+
+  const sums = summariseEntries(entries);
 
   res.json({
     wallet: {
@@ -1099,11 +1114,9 @@ const getMyKhata = asyncHandler(async (req, res) => {
       // client re-deriving a money figure.
       claimable: ledger.round2(Math.max(0, -(wallet.balance || 0) - sums.pendingReimbursement)),
     },
-    // Whether a request of theirs will need an executive's sanction, so the
-    // form can say so before they send it rather than after. Only while the
-    // org switch is on (a Permissions toggle again since 2026-09-28), and never
-    // for a CEO/MD/Backend, who sanctions their own — theirs goes straight to accounts.
-    approvalRequired: !ADVANCE_SANCTIONERS.includes(req.user.role) && await advanceApprovalRequired(),
+    // Whether a request of theirs will need an executive's sanction — read in
+    // the Promise.all above.
+    approvalRequired,
     count: entries.length,
     // Passed explicitly rather than as `entries.map(publicEntry)`: Array.map
     // hands its callback the INDEX as a second argument, which would arrive as
@@ -1180,15 +1193,21 @@ const getMyBook = asyncHandler(async (req, res) => {
     // Throws 404/403 with a message of its own — a book somebody has no standing
     // on must not read as an empty book.
     book = await ledger.loadKhataForViewer(id, req.user._id);
-    // The owner, for "Rahul's book" and for the head of the members list.
-    await book.populate('employee', USER_FIELDS);
   }
 
   const { mongo, sort } = parseEntryFilters(req.query);
   const scope = isWallet ? { employee: req.user._id } : { expenseBook: book._id };
   const filter = { ...mongo, ...scope };
 
-  const [rows, total, agg] = await Promise.all([
+  // (2026-09-29, speed pass: the owner populate, the category list, the recent
+  // categories and the leavers check used to wait one after another behind the
+  // feed; they read nothing the feed writes, so they ride in the same
+  // Promise.all. The book itself still loads first — its 404/403 must stop the
+  // request before anything else is read. And `total` is the aggregation's own
+  // count now: it $matches the very same `filter` — the discriminator key
+  // included, which Mongoose adds to both — so a separate countDocuments was
+  // the same number asked for twice.)
+  const [rows, agg, cashOut, recentCategories, goneMembers] = await Promise.all([
     KhataEntry.find(filter)
       .populate('employee', USER_FIELDS)
       .populate('expenseBook', 'name')
@@ -1200,7 +1219,6 @@ const getMyBook = asyncHandler(async (req, res) => {
       .populate('execApprovedBy', 'firstName lastName role')
       .sort(sort)
       .limit(500),
-    KhataEntry.countDocuments(filter),
     // One pass over the filtered set for every figure on the summary card.
     // `filter` carries dates, strings and regexes but no id STRINGS — the two
     // scope keys are already ObjectIds — which matters because an aggregation
@@ -1271,13 +1289,18 @@ const getMyBook = asyncHandler(async (req, res) => {
         },
       },
     ]),
+    getCashOutCategories(),
+    recentCategoriesFor(req.user._id),
+    // Which members have left — see the members list below.
+    book ? departedUserIdSet(book.members.map((m) => m.user?._id || m.user)) : new Set(),
+    // The owner, for "Rahul's book" and for the head of the members list.
+    // Populated in place on `book`, so its result is not kept.
+    book ? book.populate('employee', USER_FIELDS) : null,
   ]);
 
   const sums = agg[0] || {};
-  const [cashOut, recentCategories] = await Promise.all([
-    getCashOutCategories(),
-    recentCategoriesFor(req.user._id),
-  ]);
+  // What matched the filter — `count` below is the same figure.
+  const total = sums.count || 0;
   const totals = {
     in: ledger.round2(sums.in || 0),
     out: ledger.round2(sums.out || 0),
@@ -1295,8 +1318,8 @@ const getMyBook = asyncHandler(async (req, res) => {
   // A declined invitation is left out entirely: the answer was no, and the row
   // only survives so that re-inviting them is a flip rather than a duplicate.
   // So is a member who has left — they are on the Employees page's Exited tab
-  // and nowhere else; the rows they filed still carry their name.
-  const goneMembers = book ? await departedUserIdSet(book.members.map((m) => m.user?._id || m.user)) : new Set();
+  // and nowhere else; the rows they filed still carry their name (`goneMembers`
+  // is read in the Promise.all above).
   const members = book
     ? [
       ownerMemberRow(book.employee),
@@ -4546,6 +4569,8 @@ const advanceReportXlsx = asyncHandler(async (req, res) => {
  */
 const RECEIPT_PAGE_CAP = 60;
 const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
+// How many bill downloads readBillsFor keeps in flight at once (2026-09-29).
+const BILL_READS_AT_ONCE = 4;
 
 /**
  * Pull the bill bytes for a set of rows out of storage, under both caps.
@@ -4555,9 +4580,15 @@ const RECEIPT_BYTES_CAP = 24 * 1024 * 1024;
  * of storage. Everything the page needs has to be in memory before the renderer
  * is called.
  *
- * One at a time rather than one Promise.all: sixty GridFS downloads fired at
+ * A few at a time rather than one Promise.all: sixty GridFS downloads fired at
  * once is a burst the connection pool does not need, and the loop stops the
  * moment a cap is reached instead of paying for reads nothing will draw.
+ * (2026-09-29, speed pass: up to BILL_READS_AT_ONCE reads now run AHEAD of the
+ * loop — it used to be strictly one at a time, a round trip per bill. The loop
+ * still USES them one by one in print order and checks both caps exactly where
+ * it always did, so which bills go in and `billsSkipped` are unchanged. The
+ * price: up to three reads started just before a cap is reached are dropped
+ * unused.)
  * SEVERAL BILLS PER ROW since 2026-09-28: a row's value is the ARRAY of its
  * files (the renderer takes `Buffer|Buffer[]`), and the page cap counts FILES,
  * not rows — ten photos on one expense are ten pages, not one.
@@ -4569,26 +4600,46 @@ async function readBillsFor(rows) {
   let files = 0;
   let bytes = 0;
   let billsSkipped = 0;
-  for (const e of rows) {
-    const list = bills.billsOf(e);
+
+  // Every bill in print order, so a read can be started before its turn.
+  const perRow = [];
+  for (const e of rows) perRow.push({ e, list: bills.billsOf(e) });
+  const queue = perRow.flatMap((r) => r.list);
+  // Settles, never rejects: a read started ahead and then dropped (a cap came
+  // first) must not surface as an unhandled rejection.
+  const read = (a) => storage.readBuffer(a.storagePath)
+    .then((buffer) => ({ buffer }), () => ({ failed: true }));
+  const ahead = new Map(); // queue position → its read
+  let started = 0;
+  let turn = 0;
+
+  for (const { e, list } of perRow) {
     if (!list.length) continue;
     const buffers = [];
-    for (const a of list) {
+    for (let k = 0; k < list.length; k += 1) {
+      const i = turn;
+      turn += 1;
       if (files >= RECEIPT_PAGE_CAP || bytes >= RECEIPT_BYTES_CAP) {
         billsSkipped += 1;
         continue;
       }
-      try {
-        const buffer = await storage.readBuffer(a.storagePath);
-        if (!buffer) { billsSkipped += 1; continue; }
-        buffers.push(buffer);
-        files += 1;
-        bytes += buffer.length;
-      } catch (_) {
+      // This bill's read and the next few, BILL_READS_AT_ONCE in flight at most.
+      while (started < queue.length && started < i + BILL_READS_AT_ONCE) {
+        ahead.set(started, read(queue[started]));
+        started += 1;
+      }
+      const got = await ahead.get(i);
+      ahead.delete(i);
+      if (got.failed) {
         // A missing or unreadable bill must not sink the whole report — but it is
         // still a bill the reader was expecting to see, so it is counted.
         billsSkipped += 1;
+        continue;
       }
+      if (!got.buffer) { billsSkipped += 1; continue; }
+      buffers.push(got.buffer);
+      files += 1;
+      bytes += got.buffer.length;
     }
     if (buffers.length) out.set(String(e._id), buffers);
   }
@@ -4771,27 +4822,34 @@ async function streamStatement(req, res, employeeId, opts = {}) {
     department: profile?.department,
   };
 
-  // Who pressed the button, which is NOT necessarily who the report is about:
-  // `profile` above belongs to the SUBJECT, and on the operator's route those are
-  // two different people. Stamping the subject's code next to the operator's name
-  // would make the document say a thing that is simply untrue.
-  const byProfile = String(req.user._id) === String(employee._id)
-    ? profile
-    : await EmployeeProfile.findOne({ user: req.user._id }).select('employeeCode designation').lean();
+  // Only on request: reading the bytes is a burst of storage downloads, and a
+  // big book lands as a much larger file. Every report type can carry them now,
+  // since every one of them ends with the rows they hang off.
+  const wantBills = String(req.query.bills) === '1';
+  // (2026-09-29, speed pass: the three reads below — whoever pressed the
+  // button, the bills, a closed book's frozen figures — used to wait one after
+  // another; none needs another's answer, so they wait together.)
+  const [byProfile, billRead, closing] = await Promise.all([
+    // Who pressed the button, which is NOT necessarily who the report is about:
+    // `profile` above belongs to the SUBJECT, and on the operator's route those
+    // are two different people. Stamping the subject's code next to the
+    // operator's name would make the document say a thing that is simply untrue.
+    String(req.user._id) === String(employee._id)
+      ? profile
+      : EmployeeProfile.findOne({ user: req.user._id }).select('employeeCode designation').lean(),
+    wantBills ? readBillsFor(rows) : { bills: null, billsSkipped: 0 },
+    // A closed book carries what it stood at when it closed (2026-09-29), so
+    // its report prints the same figure at the top every time.
+    khata ? closingFigures(khata) : null,
+  ]);
   const generatedBy = [
     `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
     [byProfile?.employeeCode, byProfile?.designation].filter(Boolean).join(', '),
   ].filter(Boolean).join(' — ');
 
   const { renderReport } = require('../services/cashbookEntriesPdf');
-  // Only on request: reading the bytes is a burst of storage downloads, and a
-  // big book lands as a much larger file. Every report type can carry them now,
-  // since every one of them ends with the rows they hang off.
-  const wantBills = String(req.query.bills) === '1';
   // (Not named `bills` — that is the utils/bills module in this file.)
-  const { bills: billBuffers, billsSkipped } = wantBills
-    ? await readBillsFor(rows)
-    : { bills: null, billsSkipped: 0 };
+  const { bills: billBuffers, billsSkipped } = billRead;
 
   // A THUMBNAIL IS TOO SMALL TO CHECK A FIGURE AGAINST. 34pt of a photographed
   // bill says a bill exists; it does not say what it is for or what it cost.
@@ -4811,9 +4869,8 @@ async function streamStatement(req, res, employeeId, opts = {}) {
     company: require('../config/company'),
     logo: branding.logo || null,
     employee: employeeBlock,
-    // A closed book carries what it stood at when it closed (2026-09-29), so
-    // its report prints the same figure at the top every time.
-    book: khata ? { name: khata.name, note: khata.note, ownerName, closing: await closingFigures(khata) } : null,
+    // A closed book's frozen figures — read in the Promise.all above.
+    book: khata ? { name: khata.name, note: khata.note, ownerName, closing } : null,
     range: { from, to },
     opening,
     entries: rows,

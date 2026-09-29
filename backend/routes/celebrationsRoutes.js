@@ -8,6 +8,7 @@ const {
   todayCelebrations,
   upcomingCelebrations,
   monthCalendar,
+  dayAgenda,
   sendWish,
   receivedWishes, dismissWish, thankWish,
 } = require('../controllers/celebrationsController');
@@ -24,6 +25,10 @@ router.get('/today', todayCelebrations);
 router.get('/upcoming', upcomingCelebrations);
 // GET /calendar — month calendar of celebrations; protected.
 router.get('/calendar', monthCalendar);
+// GET /day?date=YYYY-MM-DD — one day of that calendar plus who is on leave,
+// leaving and joining (the last two for CEO/MD/God or exit/employee managers);
+// protected. 400 on an unreadable date. (2026-09-29)
+router.get('/day', dayAgenda);
 // GET /wishes/received — wishes received by the current user; protected.
 router.get('/wishes/received', receivedWishes);
 // PATCH /wishes/:id/dismiss — clear one wish off the dashboard card; protected.

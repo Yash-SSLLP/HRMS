@@ -1180,30 +1180,58 @@ const whoIsOnLeave = asyncHandler(async (req, res) => {
   const asked = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00+05:30`) : null;
   const day = startOfDayIST(asked && !Number.isNaN(asked.getTime()) ? asked : new Date());
   const key = ymdIST(day);
-  const tomorrow = new Date(day.getTime() + 24 * 60 * 60 * 1000);
   const isToday = key === ymdIST();
-  const answer = (offDay, people) => res.json({ date: key, isToday, offDay, people });
+  const { offDay, people } = await peopleOnLeave(req, key);
+  res.json({ date: key, isToday, offDay, people });
+});
+
+/**
+ * The core of whoIsOnLeave: who is on leave on one IST day, as this viewer may
+ * be told it — every rule documented above (Sunday / holiday → an off day with
+ * nobody; approved and covering the day; minus given-back `workedDays`; company
+ * wall; hidden, inactive and exited people left out; one row per person, full
+ * day over half; sorted by name).
+ *
+ * (2026-09-29) Split out so the calendar's day agenda (celebrationsController
+ * dayAgenda, GET /celebrations/day) answers "who is on leave" with these exact
+ * rules rather than a second copy of them.
+ * @param {import('express').Request} req - supplies the viewer (wall, hidden ids)
+ * @param {string} dateYmd - the IST day, 'YYYY-MM-DD'
+ * @returns {Promise<{offDay: ({kind: string, label: string}|null), people: Object[]}>}
+ */
+async function peopleOnLeave(req, dateYmd) {
+  const asked = new Date(`${dateYmd}T00:00:00+05:30`);
+  if (Number.isNaN(asked.getTime())) throw new Error('peopleOnLeave needs a YYYY-MM-DD day');
+  const day = startOfDayIST(asked);
+  const key = ymdIST(day);
+  const tomorrow = new Date(day.getTime() + 24 * 60 * 60 * 1000);
+  const answer = (offDay, people) => ({ offDay, people });
 
   const [Y, M, D] = key.split('-').map(Number);
   if (new Date(Date.UTC(Y, M - 1, D)).getUTCDay() === 0) {
     return answer({ kind: 'sunday', label: 'Sunday' }, []);
   }
-  // A range rather than an exact match, so a holiday stored at either IST or UTC
-  // midnight is found — leave counting keys holidays by IST day the same way.
-  const holiday = await Holiday.findOne({ date: { $gte: day, $lt: tomorrow } }).select('name').lean();
+  // (2026-09-29, speed pass) The holiday, the leaves and the hidden ids share no
+  // input, so they are read together rather than one after another. On a holiday
+  // the other two are wasted reads, which is cheaper than a third serial round
+  // trip on every other day; the answers below are unchanged.
+  const [holiday, leaves, hidden] = await Promise.all([
+    // A range rather than an exact match, so a holiday stored at either IST or
+    // UTC midnight is found — leave counting keys holidays by IST day the same way.
+    Holiday.findOne({ date: { $gte: day, $lt: tomorrow } }).select('name').lean(),
+    // startDate/endDate sit at UTC midnight and `day` at IST midnight, hence
+    // [day, tomorrow) rather than `$lte: day` — see leaveCoveringDay.
+    LeaveRequest.find({
+      status: 'Approved',
+      startDate: { $lt: tomorrow },
+      endDate: { $gte: day },
+      workedDays: { $ne: key },
+    }).select('employee isHalfDay halfDaySession startDate endDate').lean(),
+    hiddenUserIds(req.user),
+  ]);
   if (holiday) return answer({ kind: 'holiday', label: holiday.name || 'Holiday' }, []);
-
-  // startDate/endDate sit at UTC midnight and `day` at IST midnight, hence
-  // [day, tomorrow) rather than `$lte: day` — see leaveCoveringDay.
-  const leaves = await LeaveRequest.find({
-    status: 'Approved',
-    startDate: { $lt: tomorrow },
-    endDate: { $gte: day },
-    workedDays: { $ne: key },
-  }).select('employee isHalfDay halfDaySession startDate endDate').lean();
   if (!leaves.length) return answer(null, []);
 
-  const hidden = await hiddenUserIds(req.user);
   const profiles = await EmployeeProfile.find({
     _id: { $in: [...new Set(leaves.map((l) => String(l.employee)))] },
     ...companyScopeFilter(req),
@@ -1238,7 +1266,7 @@ const whoIsOnLeave = asyncHandler(async (req, res) => {
     });
   }
   return answer(null, [...rows.values()].sort((a, b) => a.name.localeCompare(b.name)));
-});
+}
 
 /**
  * Record a single day of leave for SOMEBODY ELSE, already approved.
@@ -2804,6 +2832,8 @@ module.exports = {
   getMyBalance,
   listMyRequests,
   whoIsOnLeave,
+  // The on-leave rules without the HTTP wrapper, for the calendar's day agenda.
+  peopleOnLeave,
   applyForLeave,
   previewLeave,
   cancelMyRequest,

@@ -67,6 +67,7 @@ import { DateSortButton } from '../components/DateSort';
 import { confirmDialog } from '../components/dialogs';
 import { useAuthStore } from '../store/authStore';
 import { saveBlobResponse } from '../utils/download';
+import { openReportViewer } from '../utils/reportView';
 import { getFiledLocationFields } from '../utils/geo';
 import { toYMD } from '../utils/time';
 
@@ -875,15 +876,24 @@ export default function EmployeeKhata() {
    * @param {'pdf'|'xlsx'} fmt
    */
   const downloadReport = async (fmt) => {
+    const params = {
+      ...filterParams(report.khata),
+      report: report.kind,
+      // Every report ends with its rows now, so any of them can carry the
+      // bills beside those rows — the PDF only; the spreadsheet links them.
+      ...(fmt === 'pdf' && report.bills ? { bills: 1 } : {}),
+    };
+    // THE PDF OPENS IN OUR VIEWER TAB (2026-09-29), so a bill thumbnail in it
+    // opens a new tab instead of replacing the report — see
+    // pages/ReportViewer.jsx. Opened here, before any await, or the popup
+    // blocker stops it; the report is built in that tab. Blocked anyway? The
+    // download below, exactly as before.
+    if (fmt === 'pdf' && openReportViewer('/khata/me/statement.pdf', params, 'cashbook-statement.pdf')) {
+      setReport(null);
+      return;
+    }
     setDownloading(true);
     try {
-      const params = {
-        ...filterParams(report.khata),
-        report: report.kind,
-        // Every report ends with its rows now, so any of them can carry the
-        // bills beside those rows — the PDF only; the spreadsheet links them.
-        ...(fmt === 'pdf' && report.bills ? { bills: 1 } : {}),
-      };
       const res = await api.get(fmt === 'xlsx' ? '/khata/me/report.xlsx' : '/khata/me/statement.pdf', {
         params, responseType: 'blob',
       });
@@ -1700,7 +1710,7 @@ export default function EmployeeKhata() {
               </button>
               <button type="button" onClick={() => downloadReport('pdf')} disabled={downloading}
                 className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                {downloading ? 'Building…' : 'Download PDF'}
+                {downloading ? 'Building…' : 'Open PDF'}
               </button>
             </div>
           </div>
