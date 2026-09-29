@@ -176,7 +176,7 @@ const MOVEMENT_FILTERS = [
 // REPORT_KINDS, picked off `?report=`. Every one of them ends with the full
 // list of entries (2026-09-26), so a summary can be checked against its rows.
 const REPORT_TYPES = [
-  ['entries', 'All entries', 'Every row in date order, with the running balance and the bills.'],
+  ['entries', 'All entries', 'Every row in date order — a book\'s spending with its total, or a whole wallet with its running balance — and the bills.'],
   ['daywise_category', 'Day-wise with category summary', 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.'],
 ];
 

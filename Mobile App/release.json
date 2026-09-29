@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.47",
-  "versionCode": 128,
-  "notes": "Tasks: \"More Time Asked\" now lists only unfinished tasks whose request for more time is still waiting for an answer — once it is granted or refused, or the task is done, it leaves the list.\n\nMy Cashbook: when there is nothing to claim, tapping \"Ask for reimbursement\" now tells you why — for example the advance you still have in hand — instead of opening all your entries.\n\nEmployee Cashbook for the CEO and MD: it now shows just the advance decisions — no Approval tab and no advances waiting to be paid out, which are the accounts team's work. Advance requests are approved or declined one at a time.\n\nAlso: the in-app Help guide is updated."
+  "versionName": "2.8.48",
+  "versionCode": 129,
+  "notes": "Employee Cashbook → Ledger: Employee, Status and Reason are now dropdowns. The employee one has a search box that finds a person by name, code, designation or email, and the filter words follow the app language.\n\nEmployee Cashbook → Statement PDF: now opens on \"All entries\" with the bills attached, the same as the website, so a statement from the phone is the same document as one from the web.\n\nCashbook reports: a book's report lists what each entry cost, with the book's balance in red beside its name. A closed book shows the wallet balance as it stood when the book was closed, so its report reads the same every time.\n\nAlso: the in-app Help guide is updated."
 }

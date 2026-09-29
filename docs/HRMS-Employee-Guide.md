@@ -266,8 +266,10 @@ An invitation waits for the other person to **accept** it, and it appears at the
 
 There are two to choose from, and **both end with the full list of entries**, so a summary can always be checked against the entries behind it:
 
-- **All entries** — every entry line by line, oldest first, with a running balance.
+- **All entries** — every entry line by line, oldest first. A book's report lists what each entry cost and adds them up, with the book's balance in red beside its name at the top; a report of all your books keeps the money in, the money out and a running balance.
 - **Day-wise with category summary** — each day and what it went on, category by category, on the first page; a category-wise summary of the whole period on the next; then every entry from a fresh page.
+
+Once a book is **closed**, the figure beside its name is your wallet balance as it stood the moment the book was closed (a minus means the company owes you), with what the book cost underneath. It is fixed at that moment, so the report of a closed book reads the same every time you download it.
 
 Leave **Attach the bills** ticked (it is ticked for you) and every bill is put at the end of the report in full, one to a page — photos, iPhone photos and PDF invoices alike. Each entry shows its bill as a small picture beside what it was for: tap the picture to open the full-size bill online, or **See bill** to jump to its page inside the report, and **Back to the entry** to come back. The bills travel inside the file, so they are there for whoever you send the report to.
 

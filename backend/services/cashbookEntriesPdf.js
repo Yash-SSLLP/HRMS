@@ -21,7 +21,7 @@
  * all four are one family: the page size, the pale blue-lavender masthead, the
  * palette, the Indian-grouped whole-rupee figures and the footer line are the
  * same on each, and a person downloading them in a row must not feel they came
- * from different systems. Only the tables between the totals boxes and the
+ * from different systems. Only the tables between the header and the
  * footer differ. (The category ARITHMETIC still lives in that file —
  * summariseByCategory — which is what `scripts/testKhataLedger.js` pins.)
  *
@@ -39,11 +39,14 @@
  * THE BALANCE COLUMN is `walletBalanceAfter` — the PERSON's balance as it stood
  * when that row posted, which is the number the app showed them at the time. It
  * is a historical fact carried on the row, not something recomputed here. The
- * Final Balance in the footer and in the box at the top is, by contrast,
+ * Final Balance in the footer and the Balance beside the title is, by contrast,
  * `opening + Cash in − Cash out` over the FILTERED set: it answers "what does
  * this selection add up to?", which is a different question and may legitimately
  * differ from the last row's wallet balance once a filter is applied. Both are
- * printed, neither is fudged into agreeing with the other.
+ * printed, neither is fudged into agreeing with the other. (A CLOSED book is
+ * the one exception at the top: beside its title goes the owner's wallet as it
+ * stood when the book was closed — EmployeeKhata.closingWalletBalance — so the
+ * report of a finished book reads the same every time it is downloaded.)
  *
  * THE BILLS ARE IN THE DOCUMENT, NOT BEHIND A LINK (2026-09-26, user report:
  * "attached bills are not able to open and it not fully attached", from the
@@ -182,9 +185,14 @@ function columns(parts) {
   return xs;
 }
 
-// Date | Details | Category | Mode | Cash in | Cash out | Balance
-// Details is the widest: it carries the bill thumbnail at its right (2026-09-29).
-const ENTRY_X = columns([0.11, 0.37, 0.13, 0.09, 0.10, 0.10, 0.10]);
+// THE ENTRIES TABLE (2026-09-29, the user struck out Mode, Cash in and Balance
+// on a book's report). A BOOK prints Date | Details | Category | Amount — its
+// money is spending, with a refund or a reversal shown as a minus that takes
+// the total down. A whole WALLET (the operator's statement of a person) keeps
+// Cash in and Balance, because advances come in there; only Mode went.
+// Details is the widest: it carries the bill thumbnail at its right.
+const ENTRY_BOOK_X = columns([0.13, 0.52, 0.17, 0.18]);
+const ENTRY_X = columns([0.11, 0.39, 0.14, 0.12, 0.12, 0.12]);
 // THE SUMMARY TABLES CARRY NO CASH IN COLUMN (2026-09-29, user's red marks on
 // the day-by-category and by-category tables): a book is spending, and a
 // column of zeros beside it was noise. Money in still moves the balances.
@@ -203,8 +211,15 @@ const TABLES = {
   entries: {
     xs: ENTRY_X,
     heads: [
-      { label: 'Date' }, { label: 'Details' }, { label: 'Category' }, { label: 'Mode' },
+      { label: 'Date' }, { label: 'Details' }, { label: 'Category' },
       { label: 'Cash in', align: 'right' }, { label: 'Cash out', align: 'right' }, { label: 'Balance', align: 'right' },
+    ],
+  },
+  // The same table on a BOOK's report (see ENTRY_BOOK_X).
+  entriesBook: {
+    xs: ENTRY_BOOK_X,
+    heads: [
+      { label: 'Date' }, { label: 'Details' }, { label: 'Category' }, { label: 'Amount', align: 'right' },
     ],
   },
   days: {
@@ -377,7 +392,7 @@ function totalsFor(entries = []) {
  *
  * Pure — no pdfkit, no database — so `scripts/testKhataLedger.js` can assert the
  * arithmetic straight off a fixture. The running balance starts at `opening` and
- * only posted rows (Approved or Reversed) move it, exactly as the totals boxes do.
+ * only posted rows (Approved or Reversed) move it, exactly as the totals do.
  *
  * Each day also carries `categories`: what that day went on, one line per
  * category in first-seen order. A category line counts EVERY row filed under it,
@@ -437,7 +452,7 @@ function groupByDay(entries = [], opening = 0) {
  * Render one cashbook report.
  *
  * Every report type goes through here; `kind` picks the tables between the
- * totals boxes and the footer (LAYOUTS) and nothing else, which is what keeps
+ * header and the footer (LAYOUTS) and nothing else, which is what keeps
  * the documents recognisably the same document.
  *
  * @param {Object} input - see renderReport's JSDoc
@@ -456,6 +471,8 @@ function renderCashbookReport(input, kind) {
 
   const totals = totalsFor(entries);
   const closing = round2(opening + totals.net);
+  // What a book cost under these filters: its spending less any money back.
+  const bookSpent = round2(totals.out - totals.in);
   const days = groupByDay(entries, opening);
   // Money that moved, one line per category — the same fold the category
   // summary has always printed, so its figures do not change with its layout.
@@ -699,7 +716,11 @@ function renderCashbookReport(input, kind) {
     // ---- table head, repeated on every page ------------------------------
     // `table` is whichever of TABLES is being drawn; each section sets it, so a
     // page break in the middle of any table repeats THAT table's heads.
-    let table = TABLES[sections[0]];
+    // A book's entries table has its own, narrower set of columns (ENTRY_BOOK_X).
+    const bookMode = Boolean(book);
+    const EX = bookMode ? ENTRY_BOOK_X : ENTRY_X;
+    const tableFor = (key) => (key === 'entries' && bookMode ? TABLES.entriesBook : TABLES[key]);
+    let table = tableFor(sections[0]);
 
     const drawTableHead = (top) => {
       const { xs, heads } = table;
@@ -739,21 +760,48 @@ function renderCashbookReport(input, kind) {
     drawBand();
     let y = 108;
 
-    write(scopeName, X0, y, { bold: true, size: 12.5, width: BLOCK_W });
+    // THE BALANCE AT THE RIGHT OF THE TITLE (2026-09-29, the user's drawing: the
+    // "Total Cash out" and "Final Balance" boxes struck out, the balance written
+    // in red beside the book's name). An open book prints the figure the Final
+    // Balance box used to, in red. A CLOSED book prints what the owner's wallet
+    // stood at when it was closed — the wallet card's figure, sign and all,
+    // frozen at that moment — so its report reads the same every time it is
+    // downloaded; what the book cost goes under it. A whole wallet prints its
+    // balance, red when the company owes, green when there is advance in hand.
+    const signInk = (n) => (round2(n) < 0 ? OUT_INK : round2(n) > 0 ? IN_INK : INK);
+    const headline = book && book.closing
+      ? {
+        label: `Balance when closed${book.closing.at ? ` · ${fmtDate.format(new Date(book.closing.at))}` : ''}`,
+        value: rs(book.closing.balance),
+        color: signInk(book.closing.balance),
+        sub: `Spent on this book ${rs(book.closing.spent ?? bookSpent)}`,
+      }
+      : { label: 'Balance', value: rs(closing), color: book ? OUT_INK : signInk(closing) };
+    const HEAD_W = 190;
+    const headX = X0 + BLOCK_W - HEAD_W;
+    write(headline.label, headX, y + 1, { size: 7.8, color: FAINT, width: HEAD_W, align: 'right' });
+    write(headline.value, headX, y + 11, { bold: true, size: 15, color: headline.color, width: HEAD_W, align: 'right' });
+    if (headline.sub) write(headline.sub, headX, y + 31, { size: 7.6, color: MUTED, width: HEAD_W, align: 'right' });
+    // The left column stops short of it.
+    const titleW = BLOCK_W - HEAD_W - 12;
+
+    write(scopeName, X0, y, { bold: true, size: 12.5, width: titleW });
     y += 19;
 
     const who = [employee.employeeCode, employee.designation, employee.department]
       .filter(Boolean).join(' · ');
     if (who) {
-      write(who, X0, y, { size: 8.2, color: FAINT, width: BLOCK_W });
+      write(who, X0, y, { size: 8.2, color: FAINT, width: titleW });
       y += 12;
     }
 
     // The subtitle carries the book's own note when it has one: "Site A - Tirupur
     // trip, Aug" tells the reader what the book is for far better than its name.
     write([subtitle, book && book.note ? book.note : ''].filter(Boolean).join('  ·  '),
-      X0, y, { size: 9.6, color: MUTED, width: BLOCK_W });
+      X0, y, { size: 9.6, color: MUTED, width: titleW });
     y += 18;
+    // A headline with a line under it runs a little lower than two lines of text.
+    if (headline.sub && y < 108 + 44) y = 108 + 44;
 
     // ---- duration ---------------------------------------------------------
     // With no range asked for, print the first and last entry dates rather than
@@ -789,24 +837,8 @@ function renderCashbookReport(input, kind) {
       }
     }
 
-    // ---- totals boxes -----------------------------------------------------
-    // Two (2026-09-29, the user struck out "Total Cash in" and "Awaiting
-    // confirmation"): what went out, and where it leaves the balance.
-    const boxes = [
-      { label: 'Total Cash out', value: rs(totals.out), color: OUT_INK },
-      { label: 'Final Balance', value: rs(closing), color: closing < 0 ? OUT_INK : INK },
-    ];
-    const GAP = 10;
-    const boxW = (BLOCK_W - GAP * (boxes.length - 1)) / boxes.length;
-    const BOX_H = 48;
-    boxes.forEach((b, i) => {
-      const bx = X0 + i * (boxW + GAP);
-      box(bx, y, boxW, BOX_H, null, BORDER, 0.8);
-      write(b.label, bx + 9, y + 8, { size: 8, color: MUTED, width: boxW - 18 });
-      write(b.value, bx + 9, y + 21, { bold: true, size: 13.5, color: b.color, width: boxW - 18 });
-      if (b.hint) write(b.hint, bx + 9, y + 37, { size: 6.6, color: FAINT, width: boxW - 18 });
-    });
-    y += BOX_H + 10;
+    // (The Total Cash out / Final Balance boxes went on 2026-09-29 — the user
+    // struck them out; the figure that matters is beside the title now.)
 
     // ---- the count --------------------------------------------------------
     // Two numbers, because they differ the moment a rejected or still-waiting
@@ -845,7 +877,7 @@ function renderCashbookReport(input, kind) {
      * together — a title alone at the foot of a page is a title for nothing.
      */
     const startSection = (key, first) => {
-      table = TABLES[key];
+      table = tableFor(key);
       const titleH = titled ? SECTION_HEAD_H : 0;
       // EVERY SECTION AFTER THE FIRST OPENS A PAGE OF ITS OWN (2026-09-29,
       // user: day by day on the first page, "By category should start from new
@@ -927,7 +959,7 @@ function renderCashbookReport(input, kind) {
     const drawCategories = () => {
       const xs = CAT_X;
       // Money carried in from before the period opens the table, so its
-      // Balance column adds up to the Final Balance at the top of the page
+      // Balance column adds up to the Balance at the top of the page
       // rather than disagreeing with it by exactly that much.
       if (opening) {
         ensureRoom(DAY_ROW_H);
@@ -967,17 +999,17 @@ function renderCashbookReport(input, kind) {
 
         // Date cell — the day on top, the 12-hour clock under it.
         const d = new Date(e.date);
-        write(fmtDay.format(d), ENTRY_X[0] + 6, y + PAD_TOP, {
-          bold: true, size: 8.4, color: bodyInk, width: ENTRY_X[1] - ENTRY_X[0] - 12,
+        write(fmtDay.format(d), EX[0] + 6, y + PAD_TOP, {
+          bold: true, size: 8.4, color: bodyInk, width: EX[1] - EX[0] - 12,
         });
-        write(fmtTime.format(d).toUpperCase(), ENTRY_X[0] + 6, y + PAD_TOP + LINE_1, {
-          size: 6.8, color: FAINT, width: ENTRY_X[1] - ENTRY_X[0] - 12,
+        write(fmtTime.format(d).toUpperCase(), EX[0] + 6, y + PAD_TOP + LINE_1, {
+          size: 6.8, color: FAINT, width: EX[1] - EX[0] - 12,
         });
 
         // Details cell — the remark, then the quiet line; the bill's thumbnail
         // at the cell's right edge, beside both (2026-09-29).
-        const dx = ENTRY_X[1] + 6;
-        const dw = ENTRY_X[2] - ENTRY_X[1] - 12 - (bill ? THUMB + 6 : 0);
+        const dx = EX[1] + 6;
+        const dw = EX[2] - EX[1] - 12 - (bill ? THUMB + 6 : 0);
         write(e.purpose || '—', dx, y + PAD_TOP, { size: 8.6, color: bodyInk, width: dw });
         // The status of a row that is not money, spelled out. It sits at the
         // right of the second line, so it is measured and drawn BEFORE the meta
@@ -1043,7 +1075,7 @@ function renderCashbookReport(input, kind) {
           // own pages at the end hold every picture and every page of it. A
           // row with more than one bill says how many on the tile's corner.
           const file = bill.files[0];
-          const tx = ENTRY_X[2] - 6 - THUMB;
+          const tx = EX[2] - 6 - THUMB;
           const ty = y + THUMB_PAD;
           if (file.kind === 'pdf') {
             drawPdfTile(tx, ty, file);
@@ -1078,26 +1110,34 @@ function renderCashbookReport(input, kind) {
           hotspot(tx, ty, THUMB, THUMB, link || target);
         }
 
-        write(e.category || '—', ENTRY_X[2] + 6, y + PAD_TOP + 2,
-          { size: 8.2, color: dead ? FAINT : MUTED, width: ENTRY_X[3] - ENTRY_X[2] - 12 });
-        write(e.paymentMode || '—', ENTRY_X[3] + 6, y + PAD_TOP + 2,
-          { size: 8.2, color: dead ? FAINT : MUTED, width: ENTRY_X[4] - ENTRY_X[3] - 12 });
+        // (No Mode column since 2026-09-29 — the user struck it out.)
+        write(e.category || '—', EX[2] + 6, y + PAD_TOP + 2,
+          { size: 8.2, color: dead ? FAINT : MUTED, width: EX[3] - EX[2] - 12 });
 
-        // Money coming to the person green, money leaving red, and only ever in
-        // one of the two columns — the other stays blank so the eye can run down
-        // a single side.
         const fy = y + PAD_TOP + 2;
         const amt = money(amountOf(e));
-        if (e.direction === 'to_employee') {
-          figure(amt, 4, ENTRY_X, fy, { color: dead ? FAINT : IN_INK, struck: dead });
+        if (bookMode) {
+          // A BOOK'S ONE AMOUNT COLUMN: spending in red; money back into the
+          // book (a refund, the reversal of an expense) in green with a minus,
+          // because it takes the book's total down.
+          const back = e.direction === 'to_employee';
+          figure(back ? `−${amt}` : amt, 3, EX, fy,
+            { color: dead ? FAINT : (back ? IN_INK : OUT_INK), struck: dead });
         } else {
-          figure(amt, 5, ENTRY_X, fy, { color: dead ? FAINT : OUT_INK, struck: dead });
-        }
-        // The wallet balance as it stood when this row posted. Blank on a dead
-        // row: nothing moved, so there is no "after".
-        if (!dead && e.walletBalanceAfter !== undefined && e.walletBalanceAfter !== null) {
-          figure(money(e.walletBalanceAfter), 6, ENTRY_X, fy,
-            { color: Number(e.walletBalanceAfter) < 0 ? OUT_INK : INK });
+          // A WALLET: money coming to the person green, money leaving red, and
+          // only ever in one of the two columns — the other stays blank so the
+          // eye can run down a single side.
+          if (e.direction === 'to_employee') {
+            figure(amt, 3, EX, fy, { color: dead ? FAINT : IN_INK, struck: dead });
+          } else {
+            figure(amt, 4, EX, fy, { color: dead ? FAINT : OUT_INK, struck: dead });
+          }
+          // The wallet balance as it stood when this row posted. Blank on a
+          // dead row: nothing moved, so there is no "after".
+          if (!dead && e.walletBalanceAfter !== undefined && e.walletBalanceAfter !== null) {
+            figure(money(e.walletBalanceAfter), 5, EX, fy,
+              { color: Number(e.walletBalanceAfter) < 0 ? OUT_INK : INK });
+          }
         }
 
         y += rowH;
@@ -1105,8 +1145,8 @@ function renderCashbookReport(input, kind) {
     };
 
     // ---- a table's Total row -----------------------------------------------
-    // Shaded like the header and carrying the same figures as the boxes at the
-    // top, so a reader who scrolled past them can close each table out on the
+    // Shaded like the header and closing on the same balance as the top of the
+    // page, so a reader who scrolled past it can close each table out on the
     // same numbers. The LAST table asks for room for the small print as well,
     // in one go: the note about bills that were left out is the one line a
     // reader must not lose, and breaking after the total would strand it on a
@@ -1156,11 +1196,16 @@ function renderCashbookReport(input, kind) {
         // Right-aligned across the four text columns, so the word sits hard
         // against the first figure it is totalling.
         doc.font(F.bold).fontSize(9.3).fillColor(INK)
-          .text('Total', ENTRY_X[0] + 6, ty,
-            { width: ENTRY_X[4] - ENTRY_X[0] - 12, align: 'right', lineBreak: false });
-        figure(money(totals.in), 4, ENTRY_X, ty, { ...sum, color: IN_INK });
-        figure(money(totals.out), 5, ENTRY_X, ty, { ...sum, color: OUT_INK });
-        figure(money(closing), 6, ENTRY_X, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
+          .text('Total', EX[0] + 6, ty,
+            { width: EX[3] - EX[0] - 12, align: 'right', lineBreak: false });
+        if (bookMode) {
+          // What the book cost under these filters: spending less money back.
+          figure(money(bookSpent), 3, EX, ty, { ...sum, color: OUT_INK });
+        } else {
+          figure(money(totals.in), 3, EX, ty, { ...sum, color: IN_INK });
+          figure(money(totals.out), 4, EX, ty, { ...sum, color: OUT_INK });
+          figure(money(closing), 5, EX, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
+        }
       } else {
         const { xs } = table;
         write('Total', xs[0] + 6, ty, { bold: true, size: 9.3, width: xs[1] - xs[0] - 12 });
@@ -1227,7 +1272,7 @@ function renderCashbookReport(input, kind) {
       doc.font(F.regular).fontSize(8.4);
       const backW = doc.widthOfString(back);
       const d = new Date(e.date);
-      write([`${fmtDate.format(d)}, ${fmtTime.format(d).toUpperCase()}`, e.code, e.category, e.paymentMode]
+      write([`${fmtDate.format(d)}, ${fmtTime.format(d).toUpperCase()}`, e.code, e.category]
         .filter(Boolean).join('  ·  '), X0, top, { size: 8.4, color: MUTED, width: BLOCK_W - backW - 16 });
       if (b.anchor) linkRun(back, X0 + BLOCK_W - backW, top, { back: b.anchor }, { size: 8.4, width: backW + 1 });
       top += 14;
@@ -1340,7 +1385,10 @@ function renderCashbookReport(input, kind) {
  * @param {Object} input.company           - require('../config/company')
  * @param {Buffer|null} input.logo         - branding.getBranding().logo
  * @param {Object} input.employee          - { name, employeeCode, designation, department }
- * @param {Object|null} input.book         - { name, note, ownerName }; null for the whole wallet
+ * @param {Object|null} input.book         - { name, note, ownerName, closing }; null for the whole wallet.
+ *   `closing` is set only on a CLOSED book: { balance, spent, at } — the owner's
+ *   wallet balance (+ advance in hand, − the company owes) and what the book had
+ *   cost when it was closed; printed beside the title in place of the balance.
  * @param {{from: Date|null, to: Date|null}} input.range
  * @param {number} input.opening           - opening running balance
  * @param {Array}  input.entries           - flat rows, OLDEST FIRST: { _id, date, code,

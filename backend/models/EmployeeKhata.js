@@ -122,6 +122,17 @@ const employeeKhataSchema = new mongoose.Schema(
     closedAt: { type: Date, default: null },
     closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     closedByOwner: { type: Boolean, default: false },
+    // WHAT IT STOOD AT WHEN IT WAS CLOSED (2026-09-29, user: "when a cashbook
+    // got closed, this amount at that time only should be mentioned at the top
+    // — so on closing any book, its PDF comes out the same every time"). The
+    // OWNER's wallet balance at that moment, with the wallet card's sign
+    // (+ advance in hand, − the company owes them), and what the book had cost.
+    // Printed at the top of every report of the closed book; cleared on re-open
+    // and taken again on the next close. Null on a book closed before this
+    // existed — the report then works it out as of `closedAt` (see
+    // khataController.closingFigures).
+    closingWalletBalance: { type: Number, default: null },
+    closingSpent: { type: Number, default: null },
 
     note: { type: String, trim: true, maxlength: 300 },
 

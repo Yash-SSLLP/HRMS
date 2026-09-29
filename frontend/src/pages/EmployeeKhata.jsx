@@ -181,7 +181,7 @@ const ROLE_PILLS = {
 // REPORT_KINDS. Every one of them ends with the full list of entries
 // (2026-09-26), so a summary can be checked against the rows behind it.
 const REPORT_KINDS = [
-  { value: 'entries', label: 'All entries', hint: 'Every row, oldest first, with a running balance. The one to send when somebody asks what the advance went on.' },
+  { value: 'entries', label: 'All entries', hint: 'Every row, oldest first — a book\'s spending with its total, or all your books with a running balance. The one to send when somebody asks what the advance went on.' },
   { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.' },
 ];
 

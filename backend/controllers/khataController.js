@@ -2410,6 +2410,56 @@ const updateMyKhata = asyncHandler(async (req, res) => {
 const REOPEN_REFUSAL = 'Only the CEO, MD, an Admin or a cashbook manager can re-open a closed book.';
 
 /**
+ * FREEZE WHAT A BOOK STOOD AT WHEN IT CLOSES (2026-09-29, user: "when a
+ * cashbook got closed, this amount at that time only should be mentioned at
+ * the top — so on closing any book, its PDF comes out the same every time").
+ * The owner's wallet balance (replayed first, so it is exact — with the wallet
+ * card's sign: + advance in hand, − the company owes them) and the book's own
+ * total. Every close path calls this; every re-open calls clearClosing.
+ * @param {object} khata - the book document being closed (not yet saved)
+ */
+async function takeClosing(khata) {
+  const ownerId = khata.employee?._id || khata.employee;
+  const balance = await ledger.recomputeWalletBalance(ownerId);
+  khata.closingWalletBalance = ledger.round2(balance || 0);
+  khata.closingSpent = ledger.round2(khata.spent || 0);
+}
+
+/** A re-opened book is live again: nothing frozen until it next closes. */
+function clearClosing(khata) {
+  khata.closingWalletBalance = null;
+  khata.closingSpent = null;
+}
+
+/**
+ * The frozen figures for a CLOSED book's report, or null for an open one.
+ *
+ * A book closed before the snapshot existed has none stored, so it is worked
+ * out as of `closedAt` from what the ledger held then — the owner's posted rows
+ * filed at or before that moment — without writing anything, so it too reads
+ * the same every time.
+ * @param {object} khata - the book (populated or not)
+ * @returns {Promise<{balance: number, spent: number|null, at: Date|null}|null>}
+ */
+async function closingFigures(khata) {
+  if (!khata || khata.isActive !== false) return null;
+  if (khata.closingWalletBalance !== null && khata.closingWalletBalance !== undefined) {
+    return { balance: khata.closingWalletBalance, spent: khata.closingSpent ?? null, at: khata.closedAt || null };
+  }
+  const ownerId = khata.employee?._id || khata.employee;
+  const at = khata.closedAt || khata.updatedAt || new Date();
+  const [wallet, rows] = await Promise.all([
+    ledger.getOrCreateWallet(ownerId),
+    KhataEntry.find({ employee: ownerId, status: { $in: ledger.POSTED_STATUSES }, createdAt: { $lte: at } })
+      .sort({ date: 1, createdAt: 1 })
+      .select('direction amount date')
+      .lean(),
+  ]);
+  const { closing } = ledger.replayBalance(wallet?.openingBalance || 0, rows);
+  return { balance: ledger.round2(closing), spent: null, at: khata.closedAt || null };
+}
+
+/**
  * Close a book I opened.
  *
  * The owner's own act since 2026-09-26 (it used to be the company's alone):
@@ -2438,6 +2488,8 @@ const closeMyKhata = asyncHandler(async (req, res) => {
   khata.closedAt = new Date();
   khata.closedBy = req.user._id;
   khata.closedByOwner = true;
+  // Frozen for its reports from now on (2026-09-29).
+  await takeClosing(khata);
   await khata.save();
 
   // The colleagues filing into it lose it too, and would otherwise find out by
@@ -3730,6 +3782,8 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
       khata.closedAt = nextActive ? null : new Date();
       khata.closedBy = nextActive ? null : req.user._id;
       khata.closedByOwner = false;
+      // Frozen on close, live again on re-open (2026-09-29).
+      if (nextActive) clearClosing(khata); else await takeClosing(khata);
     }
     khata.isActive = nextActive;
   }
@@ -3795,6 +3849,7 @@ const reopenKhata = asyncHandler(async (req, res) => {
   khata.closedAt = null;
   khata.closedBy = null;
   khata.closedByOwner = false;
+  clearClosing(khata);
   await khata.save();
 
   await notify({
@@ -4756,7 +4811,9 @@ async function streamStatement(req, res, employeeId, opts = {}) {
     company: require('../config/company'),
     logo: branding.logo || null,
     employee: employeeBlock,
-    book: khata ? { name: khata.name, note: khata.note, ownerName } : null,
+    // A closed book carries what it stood at when it closed (2026-09-29), so
+    // its report prints the same figure at the top every time.
+    book: khata ? { name: khata.name, note: khata.note, ownerName, closing: await closingFigures(khata) } : null,
     range: { from, to },
     opening,
     entries: rows,
