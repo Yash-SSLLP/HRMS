@@ -52,13 +52,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
   FiX, FiPlus, FiLink, FiPaperclip, FiImage, FiBell, FiFlag, FiRepeat,
-  FiCalendar, FiAward, FiUsers, FiEye, FiTag, FiTrash2, FiCheck, FiSettings,
+  FiCalendar, FiAward, FiUsers, FiEye, FiTrash2, FiCheck,
   FiGitBranch, FiUserCheck,
 } from 'react-icons/fi';
 import { VoiceRecorder } from './VoiceNote';
 import ReminderEditor from './ReminderEditor';
 import PeoplePicker from './PeoplePicker';
-import CategoryManager from './CategoryManager';
 import { PieceEditor, emptyPiece, filledPieces, pieceItems } from './DelegateModal';
 import { priorityColor, tintStyle, useIsDark } from './taskColors';
 import * as T from '../../api/tasks';
@@ -66,7 +65,7 @@ import Stepper from './Stepper';
 import ReminderPattern, { repeatingRule } from './ReminderPattern';
 import {
   TASK_PRIORITY, FREQUENCY_LABELS, WEEKDAYS, WEEKDAY_NAMES,
-  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel, time12,
+  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel,
   reminderLabel, reminderPattern,
 } from '../../utils/taskLifecycle';
 
@@ -114,13 +113,11 @@ function splitReminders(list = []) {
 }
 
 /**
- * What a schedule is chased with until somebody chooses: a daily routine every
- * two hours until done (the user's own example); anything else once, an hour
- * before it is due.
+ * What a schedule is chased with until somebody chooses: every two hours, 9 AM
+ * to 9 PM, until done — whatever the frequency since 2026-09-29 (the user:
+ * reminders are "by default Repeat Until Done"; the "before" offsets went).
  */
-const remindersFor = (frequency) => (frequency === 'DAILY'
-  ? { every: repeatingRule('HOURLY'), before: [] }
-  : { every: null, before: [60] });
+const remindersFor = () => ({ every: repeatingRule('HOURLY'), before: [] });
 
 /** A fresh recurring pattern — daily at 6 pm from today, chased every 2 hours. */
 function emptyRecur() {
@@ -215,10 +212,6 @@ export default function AssignTaskModal({
   const [showReminders, setShowReminders] = useState(false);
   const [showLinks, setShowLinks] = useState(false);
   const [linkDraft, setLinkDraft] = useState('');
-  const [newCategory, setNewCategory] = useState('');
-  const [addingCategory, setAddingCategory] = useState(false);
-  const [categories, setCategories] = useState([]);
-  const [managingCategories, setManagingCategories] = useState(false);
   const [saving, setSaving] = useState(false);
   const [more, setMore] = useState(false);
 
@@ -241,7 +234,9 @@ export default function AssignTaskModal({
       ...EMPTY,
       points: meta?.defaultPoints ?? 100,
       dueDate: defaultDue(),
-      reminders: meta?.defaultReminders || [],
+      // None of your own until the bell opens the editor (2026-09-29, like the
+      // app): the task then gets the company's usual reminder.
+      reminders: [],
       assignees: presetAssignees || [],
       ...(prefill || {}),
       ...(prefill?.dueDate ? { dueDate: toLocalInput(prefill.dueDate) } : {}),
@@ -312,6 +307,10 @@ export default function AssignTaskModal({
           startDate: istYmd(sc.startDate) || todayYmd(),
           until: istYmd(sc.until),
           ...splitReminders(sc.reminders || []),
+          // The "before" chips are gone (2026-09-29): its offsets join the
+          // other kept rules, shown to be taken off.
+          before: [],
+          otherReminders: (sc.reminders || []).filter((r) => r.when !== 'EVERY'),
           remindersTouched: true,
         });
       })
@@ -320,7 +319,6 @@ export default function AssignTaskModal({
     return () => { live = false; };
   }, [open, scheduleId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { setCategories(meta?.categories || []); }, [meta?.categories]);
 
   // ===== Whose task is it? =====
   const people = meta?.people || [];
@@ -370,17 +368,6 @@ export default function AssignTaskModal({
   };
   const leadDays = DEFAULT_LEAD_DAYS[recur.frequency] ?? 0;
 
-  /**
-   * How long each occurrence is on their list before it is due. A "before"
-   * reminder earlier than that could never go — it would fall before the task
-   * exists (a daily 6 PM task appears at 9 AM: "1 day before" is never sent).
-   */
-  const lifetimeMin = (() => {
-    const [h, m] = String(recur.time || '18:00').split(':').map((n) => parseInt(n, 10) || 0);
-    const due = h * 60 + m;
-    if (leadDays) return leadDays * 1440 + due - 9 * 60;
-    return due < 10 * 60 ? 60 : due - 9 * 60;
-  })();
   /** A new weekly or monthly reminder starts on the task's own days. */
   const reminderHints = {
     firstBeatAfter: (() => {
@@ -398,21 +385,6 @@ export default function AssignTaskModal({
 
   // ===== Actions =====
 
-  const addCategory = useCallback(async () => {
-    const name = newCategory.trim();
-    if (!name) return;
-    setAddingCategory(true);
-    try {
-      const { category } = await T.createCategory(name);
-      setCategories((cs) => (cs.some((c) => c._id === category._id) ? cs : [...cs, category]));
-      set({ category: category.name });
-      setNewCategory('');
-    } catch (err) {
-      toast.error(err?.response?.data?.message || 'Could not add that category.');
-    } finally {
-      setAddingCategory(false);
-    }
-  }, [newCategory, set]);
 
   const pickFiles = useCallback((e) => {
     const chosen = [...(e.target.files || [])];
@@ -531,7 +503,7 @@ export default function AssignTaskModal({
         repeat: { frequency: 'ONCE' },
         // The reminder grant's (2026-09-28): nothing sent without it, and the
         // task gets the company's defaults.
-        ...(canRemind ? { reminders: form.reminders } : {}),
+        ...(canRemind && form.reminders.length ? { reminders: form.reminders } : {}),
         links: form.links,
         ...(linkedTask ? { linkedTask } : {}),
         ...(onBehalf ? { onBehalfOf: onBehalf } : {}),
@@ -648,6 +620,29 @@ export default function AssignTaskModal({
             maxLength={5000}
           />
 
+          {/* ── Who ───────────────────────────────────────────────── */}
+          {/* NO CATEGORY FIELD (2026-09-29, user: "remove Category from Task
+              Assigning", web and app). A new task goes with none; an edit
+              keeps what it had. */}
+          <div>
+            <PeoplePicker
+              label="Assign to"
+              icon={FiUsers}
+              people={people}
+              value={form.assignees}
+              onChange={(ids) => set({ assignees: ids })}
+              // "Myself" heads the list, and an empty box means the same thing
+              // — the server assigns it to whoever set it.
+              allowSelf
+              selfId={myId}
+              placeholder="Myself — or search anyone"
+              hint={form.assignees.length ? null
+                : onBehalf ? `Nobody chosen: it will be assigned to ${onBehalfName}.`
+                  : 'Nobody chosen: it will be assigned to you.'}
+            />
+          </div>
+
+          {/* Under "Assign to" since 2026-09-29 (user: "switch these two"). */}
           {/* ── On whose behalf ──────────────────────────────────── */}
           {/* Not when editing a schedule — whose it is was settled when it was set. */}
           {meta?.canAssignOnBehalf && !scheduleId && (
@@ -664,75 +659,6 @@ export default function AssignTaskModal({
                 : 'Leave empty to set it yourself.'}
             />
           )}
-
-          {/* ── Who, and under what ──────────────────────────────── */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <PeoplePicker
-              label="Assign to"
-              icon={FiUsers}
-              people={people}
-              value={form.assignees}
-              onChange={(ids) => set({ assignees: ids })}
-              // "Myself" heads the list, and an empty box means the same thing
-              // — the server assigns it to whoever set it.
-              allowSelf
-              selfId={myId}
-              placeholder="Myself — or search anyone"
-              hint={form.assignees.length ? null
-                : onBehalf ? `Nobody chosen: it will be assigned to ${onBehalfName}.`
-                  : 'Nobody chosen: it will be assigned to you.'}
-            />
-
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <label className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
-                  <FiTag size={12} /> Category
-                </label>
-                {/* Adding is everybody's; renaming and removing are a
-                    SuperAdmin's alone — see components/task/CategoryManager. */}
-                {meta?.canManageCategories && (
-                  <button
-                    type="button"
-                    onClick={() => setManagingCategories(true)}
-                    className="inline-flex items-center gap-1 rounded px-1 text-[11px] text-gray-400 hover:text-blue-600"
-                    title="Rename or remove categories"
-                  >
-                    <FiSettings size={11} /> Manage
-                  </button>
-                )}
-              </div>
-              <select
-                value={form.category}
-                onChange={(e) => set({ category: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-3 text-sm min-h-[40px]"
-              >
-                <option value="">No category</option>
-                {categories.map((c) => (
-                  <option key={c._id || c.name} value={c.name}>{c.name}</option>
-                ))}
-              </select>
-              {/* The + from the brief: a category nobody has to wait for. */}
-              <div className="mt-1.5 flex gap-1.5">
-                <input
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } }}
-                  placeholder="New category…"
-                  className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 text-xs min-h-[32px]"
-                  maxLength={80}
-                />
-                <button
-                  type="button"
-                  onClick={addCategory}
-                  disabled={!newCategory.trim() || addingCategory}
-                  className={`min-h-[32px] min-w-[32px] ${iconBtn} shrink-0 disabled:opacity-40`}
-                  aria-label="Add this category"
-                >
-                  <FiPlus size={14} />
-                </button>
-              </div>
-            </div>
-          </div>
 
           <PeoplePicker
             label="Keep in the loop"
@@ -1107,49 +1033,14 @@ export default function AssignTaskModal({
                   value={recur.every}
                   onChange={(every) => setRecur({ every, remindersTouched: true })}
                   hints={reminderHints}
+                  hourlyOnly
                 />
               </div>
 
-              <div className="space-y-2 border-t border-gray-100 pt-3">
-                <p className="text-sm font-medium text-gray-700">Also remind before it is due</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {BEFORE_CHOICES.map(({ mins, label }) => {
-                    const on = recur.before.includes(mins);
-                    const tooEarly = mins > lifetimeMin;
-                    return (
-                      <button
-                        key={mins}
-                        type="button"
-                        aria-pressed={on}
-                        // Picking one that could never go is refused; one an older
-                        // schedule already has can still be taken off.
-                        disabled={tooEarly && !on}
-                        title={tooEarly ? 'Earlier than it appears in their Tasks — it would never be sent.' : undefined}
-                        onClick={() => setRecur({
-                          remindersTouched: true,
-                          before: on ? recur.before.filter((m) => m !== mins) : [...recur.before, mins].sort((a, b) => a - b),
-                        })}
-                        className={`rounded-lg border px-3 text-xs font-medium transition min-h-[32px] disabled:cursor-not-allowed disabled:opacity-40 ${
-                          on && tooEarly ? 'border-red-300 bg-red-50 text-red-700'
-                            : on ? 'accent-border accent-bg on-accent'
-                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                        }`}
-                      >
-                        {label} before
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="text-[11px] text-gray-400">
-                  {recur.before.length
-                    ? `Once each, counted back from ${time12(recur.time || '18:00')}.`
-                    : 'None — only the reminder above, if it is on.'}
-                  {recur.before.some((m) => m > lifetimeMin) && (
-                    <span className="font-medium text-red-600">
-                      {' '}The one in red falls before it appears in their Tasks, so it would never be sent — take it off.
-                    </span>
-                  )}
-                </p>
+              {/* "ALSO REMIND BEFORE IT IS DUE" IS GONE (2026-09-29, user: remove
+                  Before and After — a reminder repeats until done, hourly). A
+                  saved schedule's offsets are among the kept rules below. */}
+              <div className="space-y-2">
                 {recur.otherReminders.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {recur.otherReminders.map((r, i) => (
@@ -1213,7 +1104,10 @@ export default function AssignTaskModal({
                 </button>
                 {/* The reminder grant's alone (2026-09-28). */}
                 {canRemind && (
-                  <button type="button" onClick={() => setShowReminders((v) => !v)} title="Set reminders"
+                  <button type="button" onClick={() => {
+                    if (!showReminders && !form.reminders.length) set({ reminders: [repeatingRule('HOURLY')] });
+                    setShowReminders((v) => !v);
+                  }} title="Set reminders"
                     className={`min-h-[40px] min-w-[40px] ${iconBtn} ${form.reminders.length ? 'accent-border accent-text' : ''}`}>
                     <FiBell size={16} />
                     {form.reminders.length > 0 && (
@@ -1328,24 +1222,6 @@ export default function AssignTaskModal({
           </div>
         </div>
       </div>
-
-      <CategoryManager
-        open={managingCategories}
-        onClose={() => setManagingCategories(false)}
-        onChanged={async () => {
-          // The list may have lost or renamed the one that is selected, so it
-          // is reloaded and a selection that no longer exists is cleared —
-          // leaving a task filed under a category nobody can see again is
-          // exactly what the manage screen is there to end.
-          try {
-            const { categories: fresh } = await T.listCategories();
-            setCategories(fresh || []);
-            if (form.category && !(fresh || []).some((c) => c.name === form.category)) {
-              set({ category: '' });
-            }
-          } catch { /* the picker keeps what it has */ }
-        }}
-      />
     </div>
   );
 }

@@ -41,6 +41,12 @@ const settingSchema = new mongoose.Schema(
     // Conversations are never deleted — turning it back on restores everything.
     chatEnabled: { type: Boolean, default: false },
 
+    // Translating what people typed (task titles, remarks, names, notifications)
+    // into a reader's app language with the Claude API — services/translate.js.
+    // A Super Admin's switch (2026-09-29: "so that we can restrict the use of
+    // the API key"). Off = English as typed, and no API call is made.
+    typedTextTranslation: { type: Boolean, default: true },
+
     // Daily push reminders (services/attendanceReminderWorker.js), each with its
     // own IST time so a SuperAdmin can move them without a deploy. Stored as
     // hour+minute rather than a string so the worker never has to parse, and

@@ -23,8 +23,10 @@ import { priorityColor, useIsDark, tintStyle } from './taskColors';
 import { RANGES, TASK_PRIORITY } from '../../utils/taskLifecycle';
 
 /** What "no filter" is — and so what Reset goes back to. The page opens on this. */
+// No due-date window by default (2026-09-29 — the user removed the "Due: This
+// month" chip, web and app): every task, whenever it is due.
 export const DEFAULT_FILTERS = {
-  range: 'month',
+  range: 'all',
   from: '',
   to: '',
   department: '',

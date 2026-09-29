@@ -177,9 +177,7 @@ const MOVEMENT_FILTERS = [
 // list of entries (2026-09-26), so a summary can be checked against its rows.
 const REPORT_TYPES = [
   ['entries', 'All entries', 'Every row in date order, with the running balance and the bills.'],
-  ['daywise', 'Day-wise summary', 'One line per day — what went in, what went out, where it closed. Then every entry.'],
-  ['daywise_category', 'Day-wise with category summary', 'Each day and what it went on, category by category, then a category-wise summary. Then every entry.'],
-  ['category', 'Category-wise summary', 'What was spent under each heading, totalled. Then every entry.'],
+  ['daywise_category', 'Day-wise with category summary', 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.'],
 ];
 
 const blankEntry = {

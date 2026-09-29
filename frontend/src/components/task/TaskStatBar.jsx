@@ -19,10 +19,12 @@
  * SELECTION IS PAINT ONLY: a tint and a 3px bar along the bottom, drawn
  * absolutely so it takes no space.
  */
-import { FiLayers, FiAlertCircle, FiClock, FiEye, FiCheckCircle, FiPlayCircle } from 'react-icons/fi';
-import { STAT_BAR, statValue } from '../../utils/taskLifecycle';
+import {
+  FiLayers, FiAlertCircle, FiClock, FiEye, FiCheckCircle, FiPlayCircle, FiWatch,
+} from 'react-icons/fi';
+import { STAT_BAR_FIGURES, statValue } from '../../utils/taskLifecycle';
 
-const ICONS = { FiLayers, FiAlertCircle, FiClock, FiEye, FiCheckCircle, FiPlayCircle };
+const ICONS = { FiLayers, FiAlertCircle, FiClock, FiEye, FiCheckCircle, FiPlayCircle, FiWatch };
 
 export default function TaskStatBar({ counters = {}, active = '', onPick, loading = false }) {
   return (
@@ -31,7 +33,9 @@ export default function TaskStatBar({ counters = {}, active = '', onPick, loadin
       role="group"
       aria-label="Task figures"
     >
-      {STAT_BAR.map(({ key, label, icon, colour }) => {
+      {/* Completed moved to the button beside Filter (2026-09-29); its place
+          is More Time Asked. */}
+      {STAT_BAR_FIGURES.map(({ key, label, icon, colour }) => {
         const Icon = ICONS[icon] || FiLayers;
         const on = active === key || (!active && key === 'total');
         const value = statValue(counters, key);

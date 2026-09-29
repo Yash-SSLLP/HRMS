@@ -128,13 +128,26 @@ function pickCategory(list, value) {
  * category since retired has to stay correctable without being forced off it.
  * @param {string[]} list - the list in force (getCashOutCategories().list)
  * @param {*} value - what the client sent
- * @param {{current?: string}} [opts]
+ * @param {{current?: string, other?: string}} [opts] - `other`: the text typed
+ *   under "Other", which wins over `value` and skips the list
  * @returns {string|undefined} undefined on a correction that leaves it alone
  * @throws {Error} `.statusCode = 400`
  */
 function resolveExpenseCategory(list, value, opts = {}) {
   const editing = Object.prototype.hasOwnProperty.call(opts, 'current');
   const sent = String(value ?? '').replace(/\s+/g, ' ').trim();
+
+  /**
+   * "OTHER" (2026-09-29, user: "if they select Other then user can fill the
+   * text in that"). The app offers Other under the company's list and sends
+   * what was typed as `otherCategory`; that text IS the category — it is not
+   * held to the list, since it is exactly what the list did not have.
+   */
+  const other = String(opts.other ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_CATEGORY_LENGTH);
+  if (other) {
+    if (editing && other.toLowerCase() === String(opts.current || '').trim().toLowerCase()) return undefined;
+    return other;
+  }
 
   if (editing) {
     if (!sent) return undefined;

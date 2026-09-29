@@ -38,7 +38,7 @@ import { Navigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import {
   FiPlus, FiFilter, FiSearch, FiX, FiBookmark, FiBarChart2, FiChevronLeft, FiChevronRight,
-  FiArrowLeft, FiDownload,
+  FiArrowLeft, FiCheckCircle,
 } from 'react-icons/fi';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -58,7 +58,9 @@ import TaskTemplates from '../components/task/TaskTemplates';
 import TaskDashboard from '../components/task/TaskDashboard';
 import ExtensionModal from '../components/task/ExtensionModal';
 import * as T from '../api/tasks';
-import { RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor, statQueryFor } from '../utils/taskLifecycle';
+import {
+  RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor, statQueryFor, statValue,
+} from '../utils/taskLifecycle';
 
 /**
  * Everything `?tab=` has ever meant here. The piles are the page; the rest are
@@ -68,6 +70,9 @@ import { RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor, statQueryFor } from '
  * their own and an old link to the tab is forwarded there.
  */
 const TAB_IDS = ['mine', 'delegated', 'loop', 'all', 'report', 'templates', 'dashboard', 'kanban', 'requests', 'recurring'];
+
+/** Completed's colour and words, for the button beside Filter. */
+const COMPLETED = STAT_BAR.find((s) => s.key === 'completed');
 
 const PAGE_SIZE = 50;
 
@@ -134,7 +139,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   /** `{ id, to, edit }` — the task opened over the list (`edit`: its editor already open). */
   const [openTask, setOpenTask] = useState(null);
-  const [exporting, setExporting] = useState(false);
   /** `{ key, task, swipe? }` — a status move waiting on its remark. */
   const [action, setAction] = useState(null);
   const [delegating, setDelegating] = useState(null);
@@ -215,25 +219,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
     setStat('');
     setTab(key);
   }, [setTab]);
-
-  // ===== The report (2026-09-28) =====
-
-  /**
-   * EXPORT — the list as an Excel report. Exactly what is on screen: the same
-   * query (pile, window, filters, search, the figure picked, the order), every
-   * page of it. `figure` only names the figure on the report's summary sheet.
-   */
-  const exportReport = useCallback(async () => {
-    setExporting(true);
-    try {
-      const { page: _p, limit: _l, withScopes: _w, ...query } = params;
-      await T.exportTasks({ ...query, figure: stat || 'total' });
-    } catch (err) {
-      toast.error(err?.message || 'Could not export the tasks.');
-    } finally {
-      setExporting(false);
-    }
-  }, [params, stat]);
 
   // ===== The status dropdown =====
 
@@ -382,11 +367,8 @@ export default function Tasks({ base = '/employee/tasks' }) {
     assignedTo: pile === 'mine' ? '' : filters.assignedTo,
     assignedBy: pile === 'delegated' ? '' : filters.assignedBy,
   });
-  // Narrowed BY THE READER. The page opens on "Due: This month", and that
-  // default window must not turn a pile's own empty message into "Nothing
-  // matches", as if a filter had been set.
-  const narrowed = Boolean(debounced || stat
-    || chips.some((c) => c.key !== 'range' || filters.range !== DEFAULT_FILTERS.range));
+  // Narrowed BY THE READER — a figure, a search or any chip.
+  const narrowed = Boolean(debounced || stat || chips.length);
 
   // ===== Render =====
 
@@ -515,18 +497,21 @@ export default function Tasks({ base = '/employee/tasks' }) {
               )}
             </button>
 
-            {/* The list as an Excel report (2026-09-28) — what is on screen,
-                every page of it. Icon-only on a phone, where the row is full. */}
+            {/* COMPLETED (2026-09-29 — where Export was, web and app): the
+                finished work, one click; again for Total. Its place in the bar
+                is More Time Asked. Icon and count only on a phone. */}
             <button
               type="button"
-              onClick={exportReport}
-              disabled={exporting || loading}
-              title="Export these tasks to Excel — the pile, filters and figure you have picked"
-              aria-label="Export to Excel"
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-gray-300 hover:text-blue-600 disabled:opacity-60 min-h-[40px]"
+              onClick={() => setStat((s) => (s === 'completed' ? '' : 'completed'))}
+              aria-pressed={stat === 'completed'}
+              title="Show completed tasks only"
+              aria-label={`Completed: ${loading ? 'loading' : statValue(counters, 'completed')}`}
+              style={stat === 'completed' ? { borderColor: COMPLETED.colour, color: COMPLETED.colour, backgroundColor: `color-mix(in srgb, ${COMPLETED.colour} 8%, var(--surface))` } : undefined}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 text-sm font-semibold text-gray-700 shadow-sm transition hover:border-gray-300 min-h-[40px]"
             >
-              <FiDownload size={15} className={exporting ? 'animate-pulse' : ''} />
-              <span className="hidden sm:inline">{exporting ? 'Exporting…' : 'Export'}</span>
+              <FiCheckCircle size={15} style={{ color: COMPLETED.colour }} />
+              <span className="hidden sm:inline">Completed</span>
+              <span className="tabular-nums">{loading ? '·' : statValue(counters, 'completed')}</span>
             </button>
           </div>
 
@@ -553,7 +538,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
               {chips.length > 1 && (
                 <button
                   type="button"
-                  onClick={() => setFilters((f) => ({ ...DEFAULT_FILTERS, range: 'all', sort: f.sort, dir: f.dir }))}
+                  onClick={() => setFilters((f) => ({ ...DEFAULT_FILTERS, sort: f.sort, dir: f.dir }))}
                   className="px-2 text-xs font-medium text-gray-500 transition hover:text-blue-600 min-h-[28px]"
                 >
                   Clear all

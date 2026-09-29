@@ -182,10 +182,11 @@ const ROLE_PILLS = {
 // (2026-09-26), so a summary can be checked against the rows behind it.
 const REPORT_KINDS = [
   { value: 'entries', label: 'All entries', hint: 'Every row, oldest first, with a running balance. The one to send when somebody asks what the advance went on.' },
-  { value: 'daywise', label: 'Day-wise summary', hint: 'One line per day — what came in, what went out, where the day closed. Then every entry.' },
-  { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category, then a category-wise summary. Then every entry.' },
-  { value: 'category', label: 'Category-wise summary', hint: 'What was spent under each heading, totalled. Then every entry.' },
+  { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.' },
 ];
+
+// The Category dropdown's "Other" — the words typed under it are the category.
+const OTHER_CATEGORY = '__other__';
 
 const blankRequest = { amount: '', purpose: '', date: today() };
 // `category` starts EMPTY rather than on the list's first entry: the list is in
@@ -285,6 +286,8 @@ export default function EmployeeKhata() {
   const [error, setError] = useState('');
   const [modal, setModal] = useState(null); // 'request' | 'expense' | 'refund' | 'settle' | 'claim'
   const [form, setForm] = useState(blankRequest);
+  // The words typed under the Category dropdown's "Other" (2026-09-29).
+  const [otherCategory, setOtherCategory] = useState('');
   // THE BILLS — several per entry since 2026-09-28 (components/BillPicker):
   // the new files, and on a correction which of the ones already attached stay.
   const [bills, setBills] = useState([]);
@@ -364,6 +367,11 @@ export default function EmployeeKhata() {
   // first is the top of the dropdown. Empty means no list has been set up, and
   // the expense form then asks for no category (the server files it as Expense).
   const categories = data?.categories || [];
+  // What THIS person filed their last 20 expenses under, most used first — at
+  // the top of the Category dropdown (2026-09-29, web and app).
+  const recentCategories = (data?.recentCategories || [])
+    .filter((c) => String(c).toLowerCase() !== 'other');
+  const onList = (c) => categories.some((x) => x.toLowerCase() === String(c || '').toLowerCase());
   // What "Ask for reimbursement" is for: everything the wallet has gone
   // negative by, less anything already claimed and not yet paid. Worked out by
   // the server; the button is shut whenever it is nothing.
@@ -421,24 +429,6 @@ export default function EmployeeKhata() {
     return [...matched].sort((a, b) => sign * (col.get(a) - col.get(b)));
   }, [entries, query, filters, sort]);
 
-  /**
-   * The figures for what is on screen, on the server's own rule: only POSTED
-   * rows are money (isPosted). A rejected one never happened and a pending one
-   * has not happened yet — both still listed, never added up. A reversed row
-   * and the reversal that cancels it are BOTH counted, so the pair adds up to
-   * nothing — exactly what the PDF does.
-   */
-  const filteredTotals = useMemo(() => {
-    let cashIn = 0;
-    let cashOut = 0;
-    visibleEntries.forEach((e) => {
-      if (!isPosted(e)) return;
-      if (e.direction === 'to_employee') cashIn += Number(e.amount) || 0;
-      else cashOut += Number(e.amount) || 0;
-    });
-    return { in: cashIn, out: cashOut, net: cashIn - cashOut };
-  }, [visibleEntries]);
-
   const activeFilterCount = Object.values(filters).filter(Boolean).length
     + (query ? 1 : 0)
     + (sort.key !== DEFAULT_SORT.key || sort.dir !== DEFAULT_SORT.dir ? 1 : 0);
@@ -458,6 +448,7 @@ export default function EmployeeKhata() {
   ));
 
   const open = (which) => {
+    setOtherCategory('');
     setForm({
       ...BLANKS[which],
       date: today(),
@@ -491,6 +482,7 @@ export default function EmployeeKhata() {
    * asked to "correct this expense" about money that came back is confusing.
    */
   const openEdit = (entry) => {
+    setOtherCategory('');
     setForm({
       khata: String(entry.khata || ''),
       amount: String(entry.amount ?? ''),
@@ -558,6 +550,23 @@ export default function EmployeeKhata() {
       toast.error('Choose a category for this expense');
       return;
     }
+    // "Other" needs its words — unless the company's own list has an "Other".
+    const listOther = categories.find((c) => c.toLowerCase() === 'other') || '';
+    if (form.category === OTHER_CATEGORY && !otherCategory.trim() && !listOther) {
+      toast.error('Type what the expense was for under Other');
+      return;
+    }
+    // A category on the list goes as it is; "Other" with words, or a most-used
+    // one that is not on the list, goes as `otherCategory` — the server takes
+    // that text as the category, off the list (2026-09-29).
+    let sendCategory = form.category;
+    let sendOther = '';
+    if (form.category === OTHER_CATEGORY) {
+      if (otherCategory.trim()) { sendCategory = 'Other'; sendOther = otherCategory.trim(); } else sendCategory = listOther;
+    } else if (form.category && categories.length && !onList(form.category)) {
+      sendOther = form.category;
+    }
+    const payload = { ...form, category: sendCategory, ...(sendOther ? { otherCategory: sendOther } : {}) };
     // The bill is the only control on an expense — or a refund — now that they
     // post on the spot. Checked here as well as on the server so the failure is
     // immediate rather than a round trip after they hit Send. On a correction
@@ -579,7 +588,7 @@ export default function EmployeeKhata() {
         // existing one alone. One endpoint for both movements — the server
         // decides what may be edited (ledger.expenseEditability).
         const fd = new FormData();
-        Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
+        Object.entries(payload).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
         // Every new bill under the one field name, plus which of the attached
         // ones stay — the server deletes the rest once the edit is saved.
         bills.forEach((f) => fd.append('receipt', f));
@@ -598,7 +607,7 @@ export default function EmployeeKhata() {
         // Multipart, because a spend, a refund or a hand-back is worth a slip
         // against it.
         const fd = new FormData();
-        Object.entries(form).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
+        Object.entries(payload).forEach(([k, v]) => { if (v !== '' && v != null) fd.append(k, v); });
         // Every bill, one part each under the same field name (2026-09-28).
         bills.forEach((f) => fd.append('receipt', f));
         // Where the entry is being filed from, taken at the moment of filing.
@@ -758,6 +767,29 @@ export default function EmployeeKhata() {
     }
   };
 
+  /**
+   * DELETE an expense the company has not confirmed yet (2026-09-29, web and
+   * app: "give an option to employee in cashbook to delete an expense before it
+   * got approval"). The same window as correcting it (canEditMine). The server
+   * removes the row and its bills and replays the wallet and the book.
+   */
+  const deleteEntry = async (entry) => {
+    const ok = await confirmDialog({
+      title: 'Delete this expense?',
+      message: `${money(entry.amount)} for "${entry.purpose || entry.category || 'this entry'}" will be removed, with its bills. This cannot be undone.`,
+      tone: 'danger',
+      confirmText: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.delete(`/khata/me/expenses/${entry._id}`);
+      toast.success(res.data?.message || 'Deleted');
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not delete it');
+    }
+  };
+
   const leaveBook = async (book) => {
     setMenuFor('');
     const ok = await confirmDialog({
@@ -829,7 +861,9 @@ export default function EmployeeKhata() {
 
   const openReport = (khata) => {
     setMenuFor('');
-    setReport({ khata: khata || '', kind: 'entries', bills: false });
+    // Bills ON by default, like the app (2026-09-29: "pdf from web and mobile
+    // should be same") — each attached in full at the end of the report.
+    setReport({ khata: khata || '', kind: 'entries', bills: true });
   };
 
   /**
@@ -1198,6 +1232,16 @@ export default function EmployeeKhata() {
 
       <div className="flex items-center justify-between gap-3 mb-2">
         <h2 className="text-sm font-semibold text-gray-700">Statement</h2>
+        {/* THE TOTAL EXPENSE, between the title and the report (2026-09-29, web
+            and app): the book shown, or every book of yours. */}
+        <span className="ml-auto text-right">
+          <span className="block text-[11px] text-gray-400">
+            {filters.khata ? 'Spent on this book' : 'Spent'}
+          </span>
+          <span className="text-sm font-semibold tabular-nums text-red-700">
+            {money(filters.khata ? (khatas.find((k) => String(k._id) === String(filters.khata))?.spent || 0) : totalSpent)}
+          </span>
+        </span>
         <button onClick={() => openReport(filters.khata)} disabled={loading}
           className="text-xs px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
           Download report
@@ -1233,31 +1277,8 @@ export default function EmployeeKhata() {
             </button>
           </form>
 
-          <select value={filters.status} onChange={(e) => setFilter('status', e.target.value)}
-            aria-label="Filter by status" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
-            <option value="">All statuses</option>
-            {STATUS_FILTERS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-          </select>
-
-          <select value={filters.type} onChange={(e) => setFilter('type', e.target.value)}
-            aria-label="Filter by entry type" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
-            <option value="">All types</option>
-            {TYPE_FILTERS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-          </select>
-
-          {/* The same state the book cards toggle, so the two can never point at
-              different books. Closed books are offered too: their entries are
-              still on the statement. */}
-          <select value={filters.khata} onChange={(e) => setFilter('khata', e.target.value)}
-            aria-label="Filter by book" className="border rounded-lg px-3 py-2 text-sm text-gray-700 max-w-[14rem]">
-            <option value="">All books</option>
-            {khatas.map((k) => <option key={k._id} value={k._id}>{k.name}</option>)}
-          </select>
-
-          <input type="date" value={filters.from} onChange={(e) => setFilter('from', e.target.value)}
-            aria-label="From date" className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
-          <input type="date" value={filters.to} onChange={(e) => setFilter('to', e.target.value)}
-            aria-label="To date" className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
+          {/* THE FILTER SELECTS ARE GONE (2026-09-29, web and app — the user's
+              red marks): search, and the book cards above pick a book. */}
 
           {/* The date order, said in words in its tooltip rather than left to
               an arrow, and reachable on a narrow screen where the table has
@@ -1282,34 +1303,12 @@ export default function EmployeeKhata() {
         </div>
       </div>
 
-      {/* What is on screen, added up — so the figures and the rows underneath
-          them are talking about the same set, and so is the report. */}
-      {!loading && (
-        <div className="bg-white shadow rounded-lg px-4 py-3 mb-2 flex flex-wrap items-center gap-x-8 gap-y-2">
-          <div>
-            <span className="block text-xs text-gray-500">Total in</span>
-            <span className="text-sm font-semibold text-emerald-700">{money(filteredTotals.in)}</span>
-          </div>
-          <div>
-            <span className="block text-xs text-gray-500">Total out</span>
-            <span className="text-sm font-semibold text-red-700">{money(filteredTotals.out)}</span>
-          </div>
-          <div>
-            <span className="block text-xs text-gray-500">Net</span>
-            <span className={`text-sm font-semibold ${filteredTotals.net < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-              {money(filteredTotals.net)}
-            </span>
-          </div>
-          <p className="text-xs text-gray-500 ml-auto max-w-md">
-            Only money that has moved is counted: rejected requests are listed below struck through, and
-            a reversed entry counts together with the reversal that cancels it, so the two add up to nothing.
-            {/* The server hands over the most recent 400 rows. Once that is
-                full, everything above is describing a slice of the statement,
-                and the report — which is built on the server — is the only
-                place the whole thing exists. */}
-            {truncated && ' Your most recent 400 entries are shown; download a report for the full period.'}
-          </p>
-        </div>
+      {/* (The Total in / Total out / Net strip went on 2026-09-29 with the
+          app's summary card.) */}
+      {!loading && truncated && (
+        <p className="text-xs text-gray-500 mb-2">
+          Your most recent 400 entries are shown; download a report for the full period.
+        </p>
       )}
 
       <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -1392,10 +1391,17 @@ export default function EmployeeKhata() {
                       </button>
                     )}
                     {canEditMine(e, khatas) && (
-                      <button onClick={() => openEdit(e)}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline mt-0.5">
-                        Edit — not yet confirmed by the company
-                      </button>
+                      <span className="flex flex-wrap items-center gap-x-3 mt-0.5">
+                        <button onClick={() => openEdit(e)}
+                          className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
+                          Edit — not yet confirmed by the company
+                        </button>
+                        {/* Delete — the same window as Edit (2026-09-29). */}
+                        <button onClick={() => deleteEntry(e)}
+                          className="text-xs text-red-600 hover:text-red-800 hover:underline">
+                          Delete
+                        </button>
+                      </span>
                     )}
                     {BOOK_FORMS.includes(e.type) && e.confirmedByCompany && (
                       <p className="text-xs text-gray-500 mt-0.5">Confirmed by the company</p>
@@ -1812,6 +1818,11 @@ export default function EmployeeKhata() {
               </>
             )}
 
+            <label className="block text-sm text-gray-700 mb-1">Date</label>
+            <input type="date" value={form.date}
+              onChange={(e) => setForm({ ...form, date: e.target.value })}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+
             <label className="block text-sm text-gray-700 mb-1">
               {modal === 'request' ? 'What is it for?'
                 : modal === 'expense' ? 'What did you buy?'
@@ -1846,27 +1857,45 @@ export default function EmployeeKhata() {
                     placeholder="Choose a category…"
                     onChange={(e) => setForm({ ...form, category: e.target.value })}
                     className="w-full">
-                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                    {form.category && !categories.some((c) => c.toLowerCase() === form.category.toLowerCase()) && (
-                      <option value={form.category}>{`${form.category} (no longer on the list)`}</option>
+                    {/* Your most used first (last 20 expenses), then the
+                        company's list, then Other — 2026-09-29. */}
+                    {recentCategories.length > 0 && (
+                      <optgroup label="Most used">
+                        {recentCategories.map((c) => <option key={`r-${c}`} value={c}>{c}</option>)}
+                      </optgroup>
+                    )}
+                    <optgroup label={recentCategories.length ? 'All categories' : 'Categories'}>
+                      {categories
+                        .filter((c) => c.toLowerCase() !== 'other'
+                          && !recentCategories.some((r) => r.toLowerCase() === c.toLowerCase()))
+                        .map((c) => <option key={c} value={c}>{c}</option>)}
+                      <option value={OTHER_CATEGORY}>Other</option>
+                    </optgroup>
+                    {form.category && form.category !== OTHER_CATEGORY && !onList(form.category)
+                      && !recentCategories.some((r) => r.toLowerCase() === form.category.toLowerCase()) && (
+                      <option value={form.category}>{form.category}</option>
                     )}
                   </SearchableSelect>
                 </div>
-                <p className="text-xs text-gray-500 mb-3">What it was for, from the company&apos;s list.</p>
+                {form.category === OTHER_CATEGORY ? (
+                  <input type="text" value={otherCategory} maxLength={60} autoFocus
+                    onChange={(e) => setOtherCategory(e.target.value)}
+                    placeholder="Type the category"
+                    aria-label="Type the category"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+                ) : (
+                  <p className="text-xs text-gray-500 mb-3">What it was for — your most used first.</p>
+                )}
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">Date</label>
-            <input type="date" value={form.date}
-              onChange={(e) => setForm({ ...form, date: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
-
             {(BOOK_FORMS.includes(modal) || modal === 'settle') && (
               <>
+                {/* NO "How did you pay?" OR REFERENCE ON AN EXPENSE (2026-09-29,
+                    web and app). It files as Cash; a correction keeps what it had. */}
+                {modal !== 'expense' && (<>
                 <label className="block text-sm text-gray-700 mb-1">
-                  {modal === 'expense' ? 'How did you pay?'
-                    : modal === 'refund' ? 'How did it come back?'
-                      : 'How did you return it?'}
+                  {modal === 'refund' ? 'How did it come back?' : 'How did you return it?'}
                 </label>
                 <select value={form.paymentMode}
                   onChange={(e) => setForm({ ...form, paymentMode: e.target.value })}
@@ -1879,6 +1908,7 @@ export default function EmployeeKhata() {
                   onChange={(e) => setForm({ ...form, referenceNo: e.target.value })}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
                   placeholder="Bill / UPI / cheque number" />
+                </>)}
 
                 {/* SEVERAL BILLS, one entry (2026-09-28): take photo after
                     photo, or pick several files at once — each one a tile that

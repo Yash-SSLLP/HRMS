@@ -23,6 +23,9 @@ const deviceTokenSchema = new mongoose.Schema(
     // never as "old".
     appVersion: { type: String, trim: true, default: null },
     appVersionCode: { type: Number, default: null },
+    // The app language this device is set to (X-App-Lang when it registered;
+    // null = English) — a push is translated into it (2026-09-29).
+    lang: { type: String, default: null },
     lastSeenAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

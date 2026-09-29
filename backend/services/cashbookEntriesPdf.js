@@ -116,7 +116,12 @@ const LINE_2 = 10;
 const PAD_BOTTOM = 5;
 const ROW_H = PAD_TOP + LINE_1 + LINE_2 + PAD_BOTTOM;
 const THUMB = 34;                 // bill thumbnail edge, per the spec
-const THUMB_TOP = PAD_TOP + LINE_1 + LINE_2;
+// THE THUMBNAIL SITS AT THE RIGHT OF THE DETAILS CELL, beside the remark
+// (2026-09-29, user: "the screenshot should come in right side of that Title so
+// that row will take less vertical space") — a row with a bill is the
+// thumbnail's height plus this much above and below, not three lines deep.
+const THUMB_PAD = 5;
+const BILL_ROW_H = Math.max(ROW_H, THUMB + THUMB_PAD * 2);
 const DAY_ROW_H = 24.5;           // the day-wise table has no second line
 const SUB_ROW_H = 19;             // a category line under its day
 // A day's own line in the day-by-category table, tinted a shade lighter than
@@ -178,13 +183,17 @@ function columns(parts) {
 }
 
 // Date | Details | Category | Mode | Cash in | Cash out | Balance
-const ENTRY_X = columns([0.12, 0.34, 0.14, 0.10, 0.10, 0.10, 0.10]);
-// Date | Entries | Cash in | Cash out | Closing balance
-const DAY_X = columns([0.22, 0.14, 0.21, 0.21, 0.22]);
-// Date, then its categories | Entries | Cash in | Cash out | Closing balance
-const DAYCAT_X = columns([0.30, 0.12, 0.19, 0.19, 0.20]);
-// Category | Entries | Cash in | Cash out | Balance
-const CAT_X = columns([0.34, 0.12, 0.18, 0.18, 0.18]);
+// Details is the widest: it carries the bill thumbnail at its right (2026-09-29).
+const ENTRY_X = columns([0.11, 0.37, 0.13, 0.09, 0.10, 0.10, 0.10]);
+// THE SUMMARY TABLES CARRY NO CASH IN COLUMN (2026-09-29, user's red marks on
+// the day-by-category and by-category tables): a book is spending, and a
+// column of zeros beside it was noise. Money in still moves the balances.
+// Date | Entries | Cash out | Closing balance
+const DAY_X = columns([0.32, 0.18, 0.25, 0.25]);
+// Date, then its categories | Entries | Cash out | Closing balance
+const DAYCAT_X = columns([0.40, 0.15, 0.22, 0.23]);
+// Category | Entries | Cash out | Balance
+const CAT_X = columns([0.46, 0.14, 0.20, 0.20]);
 
 /**
  * Each table's columns: edges and heads. The heads are drawn again at the top of
@@ -201,21 +210,21 @@ const TABLES = {
   days: {
     xs: DAY_X,
     heads: [
-      { label: 'Date' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
+      { label: 'Date' }, { label: 'Entries', align: 'right' },
       { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
     ],
   },
   dayCategories: {
     xs: DAYCAT_X,
     heads: [
-      { label: 'Date / Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
+      { label: 'Date / Category' }, { label: 'Entries', align: 'right' },
       { label: 'Cash out', align: 'right' }, { label: 'Closing balance', align: 'right' },
     ],
   },
   categories: {
     xs: CAT_X,
     heads: [
-      { label: 'Category' }, { label: 'Entries', align: 'right' }, { label: 'Cash in', align: 'right' },
+      { label: 'Category' }, { label: 'Entries', align: 'right' },
       { label: 'Cash out', align: 'right' }, { label: 'Balance', align: 'right' },
     ],
   },
@@ -781,21 +790,12 @@ function renderCashbookReport(input, kind) {
     }
 
     // ---- totals boxes -----------------------------------------------------
-    // A fourth box only when something is actually waiting: an empty
-    // "Awaiting confirmation ₹0" reads as a problem rather than as its absence.
+    // Two (2026-09-29, the user struck out "Total Cash in" and "Awaiting
+    // confirmation"): what went out, and where it leaves the balance.
     const boxes = [
-      { label: 'Total Cash in', value: rs(totals.in), color: IN_INK },
       { label: 'Total Cash out', value: rs(totals.out), color: OUT_INK },
       { label: 'Final Balance', value: rs(closing), color: closing < 0 ? OUT_INK : INK },
     ];
-    if (totals.unconfirmedCount) {
-      boxes.push({
-        label: 'Awaiting confirmation',
-        value: rs(totals.unconfirmed),
-        color: MUTED,
-        hint: `${totals.unconfirmedCount} ${totals.unconfirmedCount === 1 ? 'entry' : 'entries'}`,
-      });
-    }
     const GAP = 10;
     const boxW = (BLOCK_W - GAP * (boxes.length - 1)) / boxes.length;
     const BOX_H = 48;
@@ -846,9 +846,14 @@ function renderCashbookReport(input, kind) {
      */
     const startSection = (key, first) => {
       table = TABLES[key];
-      if (!first) y += 18;
       const titleH = titled ? SECTION_HEAD_H : 0;
-      if (y + titleH + HEAD_H + ROW_H > BOTTOM_LIMIT) {
+      // EVERY SECTION AFTER THE FIRST OPENS A PAGE OF ITS OWN (2026-09-29,
+      // user: day by day on the first page, "By category should start from new
+      // page, all entries should start from new page", then the bills).
+      if (!first) {
+        newPage();
+        y = CONTINUE_TOP;
+      } else if (y + titleH + HEAD_H + ROW_H > BOTTOM_LIMIT) {
         newPage();
         y = CONTINUE_TOP;
       }
@@ -869,9 +874,8 @@ function renderCashbookReport(input, kind) {
         const ty = y + 8;
         write(fmtDate.format(day.date), DAY_X[0] + 6, ty, { size: 8.7, width: DAY_X[1] - DAY_X[0] - 12 });
         figure(String(day.count), 1, DAY_X, ty, {});
-        figure(money(day.in), 2, DAY_X, ty, { color: day.in ? IN_INK : FAINT });
-        figure(money(day.out), 3, DAY_X, ty, { color: day.out ? OUT_INK : FAINT });
-        figure(money(day.closing), 4, DAY_X, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
+        figure(money(day.out), 2, DAY_X, ty, { color: day.out ? OUT_INK : FAINT });
+        figure(money(day.closing), 3, DAY_X, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
       }
     };
@@ -893,9 +897,8 @@ function renderCashbookReport(input, kind) {
         const ty = y + 8;
         write(label, xs[0] + 6, ty, { bold: true, size: 8.9, width: xs[1] - xs[0] - 12 });
         figure(String(day.count), 1, xs, ty, { bold: true });
-        figure(money(day.in), 2, xs, ty, { bold: true, color: day.in ? IN_INK : FAINT });
-        figure(money(day.out), 3, xs, ty, { bold: true, color: day.out ? OUT_INK : FAINT });
-        figure(money(day.closing), 4, xs, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
+        figure(money(day.out), 2, xs, ty, { bold: true, color: day.out ? OUT_INK : FAINT });
+        figure(money(day.closing), 3, xs, ty, { bold: true, color: day.closing < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
         for (const c of day.categories) {
           // A day that runs over a page carries its date across, so the lines
@@ -910,8 +913,7 @@ function renderCashbookReport(input, kind) {
           const sy = y + 5.5;
           write(c.category, xs[0] + 16, sy, { size: 8.2, color: MUTED, width: xs[1] - xs[0] - 22 });
           figure(String(c.count), 1, xs, sy, { size: 8.2, color: MUTED });
-          figure(money(c.in), 2, xs, sy, { size: 8.2, color: c.in ? IN_INK : FAINT });
-          figure(money(c.out), 3, xs, sy, { size: 8.2, color: c.out ? OUT_INK : FAINT });
+          figure(money(c.out), 2, xs, sy, { size: 8.2, color: c.out ? OUT_INK : FAINT });
           y += SUB_ROW_H;
         }
       }
@@ -932,7 +934,7 @@ function renderCashbookReport(input, kind) {
         drawRowFrame(y, DAY_ROW_H);
         const ty = y + 8;
         write('Opening balance', xs[0] + 6, ty, { size: 8.7, color: MUTED, width: xs[1] - xs[0] - 12 });
-        figure(money(opening), 4, xs, ty, { bold: true, color: opening < 0 ? OUT_INK : INK });
+        figure(money(opening), 3, xs, ty, { bold: true, color: opening < 0 ? OUT_INK : INK });
         y += DAY_ROW_H;
       }
       for (const c of byCategory.rows) {
@@ -941,9 +943,8 @@ function renderCashbookReport(input, kind) {
         const ty = y + 8;
         write(c.category, xs[0] + 6, ty, { bold: true, size: 8.7, width: xs[1] - xs[0] - 12 });
         figure(String(c.count), 1, xs, ty, {});
-        figure(money(c.in), 2, xs, ty, { color: c.in ? IN_INK : FAINT });
-        figure(money(c.out), 3, xs, ty, { color: c.out ? OUT_INK : FAINT });
-        figure(money(c.balance), 4, xs, ty, { bold: true });
+        figure(money(c.out), 2, xs, ty, { color: c.out ? OUT_INK : FAINT });
+        figure(money(c.balance), 3, xs, ty, { bold: true });
         y += DAY_ROW_H;
       }
     };
@@ -955,7 +956,7 @@ function renderCashbookReport(input, kind) {
     const drawEntries = () => {
       for (const e of entries) {
         const bill = attachedByRow.get(String(e._id));
-        const rowH = bill ? THUMB_TOP + THUMB + 6 : ROW_H;
+        const rowH = bill ? BILL_ROW_H : ROW_H;
         ensureRoom(rowH);
         const dead = isDead(e);
         const bodyInk = dead ? FAINT : INK;
@@ -973,9 +974,10 @@ function renderCashbookReport(input, kind) {
           size: 6.8, color: FAINT, width: ENTRY_X[1] - ENTRY_X[0] - 12,
         });
 
-        // Details cell — the remark, then the quiet line, then the bills.
+        // Details cell — the remark, then the quiet line; the bill's thumbnail
+        // at the cell's right edge, beside both (2026-09-29).
         const dx = ENTRY_X[1] + 6;
-        const dw = ENTRY_X[2] - ENTRY_X[1] - 12;
+        const dw = ENTRY_X[2] - ENTRY_X[1] - 12 - (bill ? THUMB + 6 : 0);
         write(e.purpose || '—', dx, y + PAD_TOP, { size: 8.6, color: bodyInk, width: dw });
         // The status of a row that is not money, spelled out. It sits at the
         // right of the second line, so it is measured and drawn BEFORE the meta
@@ -990,7 +992,7 @@ function renderCashbookReport(input, kind) {
           const tint = dead ? { bg: '#FDECEA', fg: OUT_INK }
             : e.status === 'Reversed' ? { bg: '#EEF0F4', fg: MUTED }
               : { bg: '#FFF6E5', fg: '#8A6100' };
-          chip(statusLabel, ENTRY_X[2] - 6 - statusW, y + PAD_TOP + LINE_1 - 1, tint);
+          chip(statusLabel, dx + dw - statusW, y + PAD_TOP + LINE_1 - 1, tint);
         }
         // Where the full-size bill is. In THIS document when it was attached —
         // the row jumps to its page, which works in any viewer, offline, for
@@ -1037,31 +1039,43 @@ function renderCashbookReport(input, kind) {
             { size: 6.8, width: metaW - usedW - sepW });
         }
         if (bill) {
-          let bxx = dx;
-          // Two tiles at most — the row is a pointer; the bill's own pages at
-          // the end hold every picture and every page of it.
-          for (const file of bill.files.slice(0, 2)) {
-            if (file.kind === 'pdf') {
-              drawPdfTile(bxx, y + THUMB_TOP, file);
-            } else {
-              doc.save();
-              doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).clip();
-              // `fit`, not `cover`: a bill is usually a tall photo and cropping
-              // to fill the square lands on the blank middle of the paper.
-              try {
-                doc.image(opened.get(file.data), bxx, y + THUMB_TOP,
-                  { fit: [THUMB, THUMB], align: 'center', valign: 'center' });
-              } catch (_) { /* the frame alone is harmless */ }
-              doc.restore();
-            }
-            // The whole square opens the bill. Drawn in link blue so the tile
-            // reads as clickable rather than as decoration — it is the
-            // affordance, and a reader has no other cue.
-            doc.roundedRect(bxx, y + THUMB_TOP, THUMB, THUMB, 3).lineWidth(0.8).stroke(LINK_INK);
-            doc.strokeColor(BORDER);
-            hotspot(bxx, y + THUMB_TOP, THUMB, THUMB, target);
-            bxx += THUMB + 5;
+          // ONE tile, right of the remark — the row is a pointer; the bill's
+          // own pages at the end hold every picture and every page of it. A
+          // row with more than one bill says how many on the tile's corner.
+          const file = bill.files[0];
+          const tx = ENTRY_X[2] - 6 - THUMB;
+          const ty = y + THUMB_PAD;
+          if (file.kind === 'pdf') {
+            drawPdfTile(tx, ty, file);
+          } else {
+            doc.save();
+            doc.roundedRect(tx, ty, THUMB, THUMB, 3).clip();
+            // `fit`, not `cover`: a bill is usually a tall photo and cropping
+            // to fill the square lands on the blank middle of the paper.
+            try {
+              doc.image(opened.get(file.data), tx, ty,
+                { fit: [THUMB, THUMB], align: 'center', valign: 'center' });
+            } catch (_) { /* the frame alone is harmless */ }
+            doc.restore();
           }
+          if (bill.files.length > 1) {
+            const more = `+${bill.files.length - 1}`;
+            doc.font(F.bold).fontSize(6);
+            const mw = doc.widthOfString(more) + 5;
+            doc.roundedRect(tx + THUMB - mw - 1, ty + THUMB - 10, mw, 9, 2).fill(LINK_INK);
+            doc.fillColor('#FFFFFF').font(F.bold).fontSize(6)
+              .text(more, tx + THUMB - mw - 1, ty + THUMB - 8.4, { width: mw, align: 'center', lineBreak: false });
+            doc.fillColor(INK);
+          }
+          // Drawn in link blue so the tile reads as clickable. THE PHOTO OPENS
+          // THE FULL-SIZE BILL ON THE WEBSITE (2026-09-29, user: "on clicking
+          // on that photo it should go to the website and open the full size
+          // photo") — the signed no-login bill page. "See bill N" beside it
+          // still jumps to the bill's page inside this file; with no web
+          // address to give, the photo does the same.
+          doc.roundedRect(tx, ty, THUMB, THUMB, 3).lineWidth(0.8).stroke(LINK_INK);
+          doc.strokeColor(BORDER);
+          hotspot(tx, ty, THUMB, THUMB, link || target);
         }
 
         write(e.category || '—', ENTRY_X[2] + 6, y + PAD_TOP + 2,
@@ -1112,8 +1126,9 @@ function renderCashbookReport(input, kind) {
     // sentence is an instruction the reader cannot follow.
     if (attached.length) {
       notes.push(`The ${attached.length === 1 ? 'bill is' : `${attached.length} bills are`} attached at the end of this`
-        + ' report, one to a page. Tap a thumbnail or "See bill" on a row to go to its bill, and "Back to the entry"'
-        + ' on the bill to come back.');
+        + ' report, one to a page. Tap "See bill" on a row to go to its bill, and "Back to the entry" on the bill to'
+        + ` come back.${billLinks && attached.some((b) => billLinkFor(billLinks, b.entry))
+          ? ' Tap a thumbnail to open the full-size bill online.' : ''}`);
     } else if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
       notes.push('"View bill" on a row opens that bill online.');
     }
@@ -1156,9 +1171,8 @@ function renderCashbookReport(input, kind) {
         // opening line.
         const count = key === 'categories' ? byCategory.counted : entries.length;
         figure(String(count), 1, xs, ty, sum);
-        figure(money(totals.in), 2, xs, ty, { ...sum, color: IN_INK });
-        figure(money(totals.out), 3, xs, ty, { ...sum, color: OUT_INK });
-        figure(money(closing), 4, xs, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
+        figure(money(totals.out), 2, xs, ty, { ...sum, color: OUT_INK });
+        figure(money(closing), 3, xs, ty, { ...sum, color: closing < 0 ? OUT_INK : INK });
       }
       y += TOT_H;
     };

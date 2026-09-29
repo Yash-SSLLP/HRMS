@@ -69,7 +69,9 @@ export function repeatingRule(pattern, prev = null, hints = {}) {
       weekday: hints.weekday ?? 1,
     };
   }
-  return { ...head, unit: 'HOURS', amount: 2 };
+  // The window is written into the rule (9 AM – 9 PM, user 2026-09-29), not
+  // left to the server's default, so what the form shows is what is saved.
+  return { ...head, unit: 'HOURS', amount: 2, from: DEFAULT_REMIND_WINDOW.from, to: DEFAULT_REMIND_WINDOW.to };
 }
 
 /**
@@ -105,8 +107,14 @@ function TimeBox({ label, value, onChange }) {
   );
 }
 
+/**
+ * `hourlyOnly` (2026-09-29, user: "except Hourly remove other options"): no
+ * shape segments — only how often and the From / Until window. Both task forms
+ * use it; a rule saved earlier in another shape keeps its own controls until
+ * it is taken off, and switching the reminder back on is always hourly.
+ */
 export default function ReminderPattern({
-  value, onChange, allowOff = true, hints = {}, title = 'Keep reminding until it is done',
+  value, onChange, allowOff = true, hints = {}, title = 'Keep reminding until it is done', hourlyOnly = false,
 }) {
   // The last shape it had, so switching it off and on again does not lose it.
   const last = useRef(value);
@@ -117,7 +125,11 @@ export default function ReminderPattern({
     if (key === pattern) return;
     onChange?.(repeatingRule(key, value, hints));
   };
-  const toggle = () => onChange?.(value ? null : (last.current || repeatingRule('HOURLY', null, hints)));
+  const toggle = () => {
+    if (value) { onChange?.(null); return; }
+    const prev = last.current;
+    onChange?.(prev && (!hourlyOnly || reminderPattern(prev) === 'HOURLY') ? prev : repeatingRule('HOURLY', prev, hints));
+  };
 
   // An older "every 90 minutes" rule reads in whole hours here; touching it saves hours.
   const hours = value?.unit === 'MINUTES'
@@ -144,7 +156,7 @@ export default function ReminderPattern({
       {/* Equal segments, the border on the base — choosing one cannot move the
           others. Four across, like Repeats — two by two below 360px, where the
           modal leaves a four-across row too narrow for "Monthly". */}
-      {value && (
+      {value && !hourlyOnly && (
         <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 min-[360px]:grid-cols-4" role="tablist" aria-label="How often to remind">
           {REMINDER_PATTERNS.map((s) => {
             const on = pattern === s.key;

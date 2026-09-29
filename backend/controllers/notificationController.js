@@ -8,6 +8,8 @@ const asyncHandler = require('express-async-handler');
 const Notification = require('../models/Notification');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const { isExternalRole } = require('../utils/visibility');
+// Notification text in the reader's app language (2026-09-29).
+const { localise } = require('../services/translate');
 
 // Scope notifications to the portal a dual-role user is currently viewing.
 // 'admin' → admin + all; 'employee' → employee + all; anything else → no scoping.
@@ -67,6 +69,7 @@ const listNotifications = asyncHandler(async (req, res) => {
     Notification.find(filter).sort({ createdAt: -1 }).limit(limit).lean(),
     Notification.countDocuments({ ...filter, readAt: null }),
   ]);
+  await localise(req, notifications);
   res.json({ unreadCount, notifications });
 });
 

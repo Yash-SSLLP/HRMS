@@ -15,6 +15,7 @@
     "seed:festivals": "node scripts/seedFestivals.js",
     "seed:departments": "node scripts/seedDepartments.js",
     "test:khata": "node scripts/testKhataLedger.js",
+    "test:translate": "node scripts/testTranslate.js",
     "test:khata:db": "node scripts/testKhataIntegration.js",
     "test:salary": "node scripts/testSalaryRevision.js",
     "test:salary-approval": "node scripts/testSalaryApproval.js",
@@ -48,6 +49,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
     "archiver": "^5.3.2",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.10.0",

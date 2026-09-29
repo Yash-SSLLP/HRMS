@@ -607,7 +607,24 @@ export const STAT_BAR = [
     key: 'completed', label: 'Completed', icon: 'FiCheckCircle', colour: '#079455',
     query: { status: STATUS.COMPLETED },
   },
+  {
+    // MORE TIME ASKED (2026-09-29, web and app): every task somebody has asked
+    // more time on, whatever the answer. Not one of the disjoint slices. It
+    // takes Completed's place in the bar; Completed is the button beside Filter.
+    key: 'moreTime', label: 'More Time Asked', icon: 'FiWatch', colour: '#B54708',
+    query: { moreTime: '1' },
+  },
 ];
+
+/** The figures drawn in the bar (Completed is its own button since 2026-09-29). */
+export const STAT_BAR_FIGURES = STAT_BAR.filter((s) => s.key !== 'completed');
+
+/** Where the latest ask for more time stands — the row's chip (server `lastExtension`). */
+export const EXTENSION_LOOK = {
+  PENDING: { label: 'More time: Pending', cls: 'border-amber-200 bg-amber-50 text-amber-700' },
+  APPROVED: { label: 'More time: Approved', cls: 'border-green-200 bg-green-50 text-green-700' },
+  DECLINED: { label: 'More time: Declined', cls: 'border-red-200 bg-red-50 text-red-700' },
+};
 
 /**
  * A stat-bar figure out of the server's counters — one counter per figure,

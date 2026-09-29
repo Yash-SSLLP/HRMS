@@ -1051,7 +1051,10 @@ const getMyKhata = asyncHandler(async (req, res) => {
     .limit(400);
 
   const sums = summariseEntries(entries);
-  const cashOut = await getCashOutCategories();
+  const [cashOut, recentCategories] = await Promise.all([
+    getCashOutCategories(),
+    recentCategoriesFor(req.user._id),
+  ]);
 
   res.json({
     wallet: {
@@ -1063,6 +1066,9 @@ const getMyKhata = asyncHandler(async (req, res) => {
     // means the company has not set one up, and the form then asks for no
     // category at all (services/cashOutCategories.js).
     categories: cashOut.list,
+    // This reader's most used categories over their last 20 expenses — the web
+    // form puts them at the top of the dropdown (2026-09-29).
+    recentCategories,
     // Every book, each with what it has cost — and the SAME remaining advance,
     // because there is only one pot behind all of them.
     khatas: khatas.map((k) => publicKhata(k, req.user._id)),
@@ -1135,6 +1141,35 @@ const getMyKhata = asyncHandler(async (req, res) => {
  * @returns {{book: object|null, members: Object[], totals: object, canPost: boolean,
  *            entries: Object[], count: number, total: number}}
  */
+/**
+ * The categories this person filed their last 20 expenses under, most used
+ * first (ties: the more recent first). User, 2026-09-29: "to choose category
+ * show on the top which are most used by that user in last 20 transaction".
+ * Their own expenses only, across every book — it is a habit of theirs, not of
+ * a book's. Rejected rows count too: the choice was still made.
+ * @param {ObjectId} userId
+ * @returns {Promise<string[]>}
+ */
+async function recentCategoriesFor(userId) {
+  const rows = await KhataEntry.find({ employee: userId, movement: 'expense' })
+    .sort({ createdAt: -1 })
+    .limit(20)
+    .select('category')
+    .lean();
+  const tally = new Map();
+  rows.forEach((r, i) => {
+    const name = String(r.category || '').trim();
+    if (!name || name === 'Expense') return;
+    const key = name.toLowerCase();
+    const cur = tally.get(key) || { name, count: 0, first: i };
+    cur.count += 1;
+    tally.set(key, cur);
+  });
+  return [...tally.values()]
+    .sort((a, b) => b.count - a.count || a.first - b.first)
+    .map((t) => t.name);
+}
+
 const getMyBook = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const isWallet = id === 'wallet';
@@ -1239,7 +1274,10 @@ const getMyBook = asyncHandler(async (req, res) => {
   ]);
 
   const sums = agg[0] || {};
-  const cashOut = await getCashOutCategories();
+  const [cashOut, recentCategories] = await Promise.all([
+    getCashOutCategories(),
+    recentCategoriesFor(req.user._id),
+  ]);
   const totals = {
     in: ledger.round2(sums.in || 0),
     out: ledger.round2(sums.out || 0),
@@ -1282,6 +1320,9 @@ const getMyBook = asyncHandler(async (req, res) => {
     // it is offered — sent with the feed so the sheet never needs a request of
     // its own. Empty means no list has been set up (see getMyKhata).
     categories: cashOut.list,
+    // What THIS reader filed their last 20 expenses under, most used first —
+    // the app puts these at the top of the Category dropdown (2026-09-29).
+    recentCategories,
     // `count` is what came back, `total` is what matched. They differ once a
     // book runs past the cap, and the feed says so rather than pretending.
     count: rows.length,
@@ -1446,7 +1487,8 @@ const recordMyExpense = asyncHandler(async (req, res) => {
   // One of the company's Cash Out categories, in the list's own spelling — or,
   // while no list has been set up, whatever was sent (else 'Expense'). Checked
   // before anything posts, like the bill below.
-  const category = resolveExpenseCategory((await getCashOutCategories()).list, req.body.category);
+  const category = resolveExpenseCategory((await getCashOutCategories()).list, req.body.category,
+    { other: req.body.otherCategory });
   // Before anything posts — see above. An expense with no bill behind it is the
   // one thing this flow cannot allow, now that it self-approves. Several bills
   // to one expense are fine (2026-09-28); none is not.
@@ -1612,10 +1654,12 @@ function expenseChanges(body, res) {
  * @param {object} entry - The row being corrected.
  * @throws {Error} `.statusCode = 400` for a category that is not on the list.
  */
-async function holdCategoryToList(changes, entry) {
+async function holdCategoryToList(changes, entry, other = '') {
+  // Typed under "Other" (2026-09-29): that text is the category, off the list.
+  if (String(other || '').trim()) changes.category = String(other);
   if (changes.category === undefined) return;
   const { list } = await getCashOutCategories();
-  const next = resolveExpenseCategory(list, changes.category, { current: entry.category });
+  const next = resolveExpenseCategory(list, changes.category, { current: entry.category, other });
   if (next === undefined) delete changes.category;
   else changes.category = next;
 }
@@ -1693,7 +1737,7 @@ const updateMyExpense = asyncHandler(async (req, res) => {
 
   const changes = expenseChanges(req.body, res);
   // Before the bills are touched, so a refused category leaves nothing behind.
-  await holdCategoryToList(changes, entry);
+  await holdCategoryToList(changes, entry, req.body.otherCategory);
   const billEdit = await editBills(entry, req, res);
   changes.receiptReplaced = billEdit.changed ? billEdit.summary : false;
 
@@ -1712,6 +1756,94 @@ const updateMyExpense = asyncHandler(async (req, res) => {
     wallet: publicWallet(wallet),
     khata: khata ? publicKhata(khata) : null,
     message: changed ? 'Updated. It still counts against your advance.' : 'Nothing was changed.',
+  });
+});
+
+/**
+ * DELETE an expense of mine the company has not confirmed yet (2026-09-29,
+ * user: "give an option to employee in cashbook to delete an expense before it
+ * got approval").
+ *
+ * The SAME WINDOW as correcting it — ledger.expenseEditability's employee half:
+ * the person who filed it, an expense (or refund) that is posted but not yet
+ * confirmed by the company, not reversed, in a book that is still open. Once
+ * the company confirms it, it is corrected by a reversal like any posted money.
+ *
+ * A REAL DELETE, not a reversal: nobody on the company side has looked at it
+ * yet, and a reversal pair would leave two rows on every statement for a slip
+ * of the thumb. Both balances are replayed after it goes (the wallet and the
+ * book), so the figures are as if it had never been filed. The trail is an
+ * AuditLog row — code, amount, book and what it was for — and its bills are
+ * removed from storage only after the row is gone.
+ *
+ * The delete is conditional on the row STILL being unconfirmed, so a company
+ * confirmation landing at the same moment wins rather than being lost.
+ * @route DELETE /api/khata/me/expenses/:id
+ * @returns {{ok: boolean, wallet: object, khata: object|null, message: string}}
+ */
+const deleteMyExpense = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'Invalid entry');
+  const entry = await KhataEntry.findById(req.params.id);
+  if (!entry) bad(res, 'That entry no longer exists', 404);
+  if (String(entry.employee) !== String(req.user._id)) bad(res, 'That entry is not yours', 403);
+
+  const book = entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null;
+  const rights = ledger.expenseEditability(entry, book);
+  if (entry.confirmedByCompany && ledger.BOOK_MOVEMENTS.includes(entry.movement)) {
+    bad(res, 'The company has confirmed this expense, so it can no longer be deleted. Ask the company to reverse it if it is wrong.');
+  }
+  if (!rights.employee) {
+    bad(res, (rights.reason || 'This expense was recorded by the company, so only they can remove it.')
+      .replace('can no longer be changed', 'can no longer be deleted')
+      .replace('cannot be edited', 'cannot be deleted')
+      .replace('can be edited', 'can be deleted'));
+  }
+
+  const billPaths = bills.billsOf(entry).map((b) => b.storagePath).filter(Boolean);
+  const gone = await KhataEntry.deleteOne({
+    _id: entry._id,
+    employee: req.user._id,
+    status: 'Approved',
+    confirmedByCompany: { $ne: true },
+    reversedBy: null,
+  });
+  if (!gone.deletedCount) {
+    bad(res, 'The company confirmed this expense a moment ago, so it can no longer be deleted.', 409);
+  }
+
+  // Replayed without it: the book's total and the wallet (and every later
+  // row's running balance).
+  await ledger.recomputeFor({ expenseBook: entry.expenseBook, employee: entry.employee });
+  await bills.removeFiles(billPaths);
+
+  try {
+    const AuditLog = require('../models/AuditLog');
+    await AuditLog.create({
+      entity: 'KhataEntry',
+      entityId: entry._id,
+      entityLabel: [
+        entry.code, `₹${ledger.round2(entry.amount)}`, book?.name, entry.category, entry.purpose,
+      ].filter(Boolean).join(' · ').slice(0, 300),
+      field: 'status',
+      fromStatus: `${entry.movement} (not confirmed)`,
+      toStatus: 'deleted by the employee',
+      by: req.user._id,
+      byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+      byRole: req.user.role,
+    });
+  } catch (err) {
+    // The money is already right; a missing trail line must not undo that.
+    console.error('audit (expense delete) failed:', err.message);
+  }
+
+  const wallet = await ledger.getOrCreateWallet(req.user._id);
+  const khata = entry.expenseBook ? await EmployeeKhata.findById(entry.expenseBook) : null;
+  res.json({
+    ok: true,
+    wallet: publicWallet(wallet),
+    khata: khata ? publicKhata(khata, req.user._id) : null,
+    // Worded for either kind — an expense or a refund comes off the same way.
+    message: `Deleted. ${entry.code || 'The entry'} no longer counts on your wallet${book ? ` or in "${book.name}"` : ''}.`,
   });
 });
 
@@ -3145,7 +3277,7 @@ const updateEntry = asyncHandler(async (req, res) => {
   const changes = expenseChanges(req.body, res);
   // Same rule as the employee's own correction: a new category must be on the
   // list, an unchanged one is left alone.
-  await holdCategoryToList(changes, entry);
+  await holdCategoryToList(changes, entry, req.body.otherCategory);
   const billEdit = await editBills(entry, req, res);
   changes.receiptReplaced = billEdit.changed ? billEdit.summary : false;
 
@@ -4994,7 +5126,7 @@ const publicReceipt = asyncHandler(async (req, res) => {
 
 module.exports = {
   // employee self-service
-  getMyKhata, getMyBook, requestAdvance, recordMyExpense, recordMyRefund, updateMyExpense,
+  getMyKhata, getMyBook, requestAdvance, recordMyExpense, recordMyRefund, updateMyExpense, deleteMyExpense,
   declareSettlement, requestReimbursement,
   // the Category dropdown on an expense
   getCategories, updateCategories,

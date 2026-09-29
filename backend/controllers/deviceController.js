@@ -4,6 +4,7 @@
  */
 const asyncHandler = require('express-async-handler');
 const DeviceToken = require('../models/DeviceToken');
+const { langOf } = require('../services/translate');
 
 /**
  * Register (or re-own) an Expo push token for the current user.
@@ -44,6 +45,9 @@ const registerDevice = asyncHandler(async (req, res) => {
         platform,
         deviceName,
         ...versionFields,
+        // The app language, from the header every request carries (2026-09-29);
+        // an app switched back to English, or an older build, clears it.
+        lang: langOf(req),
         lastSeenAt: new Date(),
       },
     },

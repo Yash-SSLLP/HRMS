@@ -962,6 +962,9 @@ const orgSettingsPayload = (s) => {
   return {
     includeExecutivesInLists: !!s.includeExecutivesInLists,
     chatEnabled: !!s.chatEnabled,
+    // Claude translating what people typed, for app readers in another
+    // language (2026-09-29). Default ON.
+    typedTextTranslation: s.typedTextTranslation !== false,
     // Does an employee's cash advance need a CEO/MD sanction first? A setting
     // again since 2026-09-28 (always-on 2026-09-26 → 28). Default ON.
     khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
@@ -1177,8 +1180,17 @@ const getBrandingSignature = asyncHandler(async (req, res) => {
 // employee-selection pickers, and whether the chat module is switched on.
 const getOrgSettings = asyncHandler(async (req, res) => {
   const Setting = require('../models/Setting');
-  res.json(orgSettingsPayload(await Setting.getSettings()));
+  res.json({ ...orgSettingsPayload(await Setting.getSettings()), translation: await translationUsage() });
 });
+
+/** What the translator spent this month and last, for beside its switch. Never fails the page. */
+async function translationUsage() {
+  try {
+    return await require('../services/translate').usageSummary();
+  } catch (_) {
+    return null;
+  }
+}
 
 // What a `branding.manage` holder may see and change: the letterhead images and
 // the footer printed under them. Deliberately NOT the whole org-settings payload
@@ -1238,6 +1250,10 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   if (req.body.chatEnabled !== undefined) {
     s.chatEnabled = !!req.body.chatEnabled;
   }
+  const translationFlip = req.body.typedTextTranslation !== undefined;
+  if (translationFlip) {
+    s.typedTextTranslation = !!req.body.typedTextTranslation;
+  }
   // THE CEO/MD SANCTION ON CASH ADVANCES — a toggle again since 2026-09-28
   // (user: "give this a toggle in permission so that we can set is it CEO/MD
   // approval mandatory for any advance or not"). What a flip does to requests
@@ -1283,7 +1299,13 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
   }
   // `advancesMoved` only when the switch actually flipped, so the page can say
   // "3 requests moved to …" — and nothing when an unrelated setting was saved.
-  res.json({ ...orgSettingsPayload(s), ...(advanceFlip ? { advancesMoved: advancesMoved || 0 } : {}) });
+  // This process obeys the translation switch at once (others within 30 s).
+  if (translationFlip) require('../services/translate').setEnabled(s.typedTextTranslation);
+  res.json({
+    ...orgSettingsPayload(s),
+    translation: await translationUsage(),
+    ...(advanceFlip ? { advancesMoved: advancesMoved || 0 } : {}),
+  });
 });
 
 

@@ -40,6 +40,8 @@ const storage = require('../services/storage');
 const { pickableUserFilter } = require('../utils/peoplePicker');
 const { departedUserIdSet } = require('../utils/departed');
 const { viewerCompanyScope } = require('../utils/employeeScope');
+// What people typed, in the reader's app language (2026-09-29) — see there.
+const { localise } = require('../services/translate');
 const {
   KIND_TASK, KIND_REQUEST, TASK_KINDS, STATUS, TASK_STATUS, OPEN_STATUS, TASK_PRIORITY,
   DEFAULT_PRIORITY, FREQUENCY, FREQUENCIES, FREQUENCY_LABELS, WEEKDAYS,
@@ -138,7 +140,7 @@ const CURRENT_RANGES = ['today', 'week', 'month'];
 async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   const {
     scope = 'all', range = 'all', from, to,
-    category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late,
+    category, assignedTo, assignedBy, frequency, priority, status, q, kind, overdue, late, moreTime,
     includeSubtasks, parentTask, department,
     // `overrides` lets a caller pin one parameter without faking a request
     // object. Spreading an Express `req` copies own properties only and quietly
@@ -295,6 +297,10 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   if (late === 'true' || late === '1') and.push({ completedLate: true });
   else if (late === 'false' || late === '0') and.push({ completedLate: { $ne: true } });
 
+  // MORE TIME ASKED (2026-09-29) — the app's "More Time Asked" figure: every
+  // task somebody has asked more time on, whatever the answer was.
+  if (moreTime === 'true' || moreTime === '1') and.push({ 'extensions.0': { $exists: true } });
+
   /**
    * THE SEARCH BOX — the task, and the people on either side of it.
    *
@@ -377,6 +383,9 @@ async function countersFor(filter) {
         delayed: countIf({
           $and: [{ $eq: ['$status', STATUS.COMPLETED] }, { $eq: ['$completedLate', true] }],
         }),
+        // Not one of the disjoint slices — any task with an ask for more time
+        // on it, whatever its status (the app's "More Time Asked" figure).
+        moreTime: countIf({ $gt: [{ $size: { $ifNull: ['$extensions', []] } }, 0] }),
       },
     },
   ]);
@@ -391,6 +400,7 @@ async function countersFor(filter) {
     inTime: c.inTime || 0,
     delayed: c.delayed || 0,
     cancelled: c.cancelled || 0,
+    moreTime: c.moreTime || 0,
   };
 }
 
@@ -516,6 +526,21 @@ function decorate(row) {
     // The whole list is rarely wanted on a row; the count is, so "extended
     // twice, asking again" reads without opening anything.
     extensionRequests: (row.extensions || []).length,
+    // The LATEST ask for more time and where it stands (2026-09-29, user: "show
+    // if any more time is asked and what is the status for that") — the app's
+    // card prints it beside the code: Pending, Approved or Declined.
+    lastExtension: (() => {
+      const list = row.extensions || [];
+      const x = list[list.length - 1];
+      return x ? {
+        status: x.status || EXTENSION_STATUS.PENDING,
+        toDate: x.toDate || null,
+        requestedByName: x.requestedByName || '',
+        requestedAt: x.requestedAt || null,
+        decidedByName: x.decidedByName || '',
+        decidedAt: x.decidedAt || null,
+      } : null;
+    })(),
 
     // ===== 2026-09-27 =====
     // A daily occurrence — only ever marked done.
@@ -693,7 +718,7 @@ const listTasks = asyncHandler(async (req, res) => {
    * the bar describes what the rows are picked from — and `total` below still
    * counts the rows themselves, for the pages.
    */
-  const FIGURES_IGNORE = { status: '', overdue: '', late: '', q: '' };
+  const FIGURES_IGNORE = { status: '', overdue: '', late: '', moreTime: '', q: '' };
   const narrowed = Object.keys(FIGURES_IGNORE)
     .some((k) => req.query[k] !== undefined && String(req.query[k]).trim() !== '');
   const barFilter = narrowed ? await buildQuery(req, FIGURES_IGNORE) : filter;
@@ -706,6 +731,10 @@ const listTasks = asyncHandler(async (req, res) => {
       await buildQuery(req, { scope: key, ...FIGURES_IGNORE })
     )),
   ]);
+
+  const listRows = rows.map((row, i) => listRow(req.user, row, (page - 1) * limit + i + 1));
+  // Titles and names in the reader's app language, when they chose one.
+  await localise(req, listRows);
 
   res.json({
     ...(withScopes ? { scopes: Object.fromEntries(scopeKeys.map((k, i) => [k, scopeCounters[i]])) } : {}),
@@ -722,7 +751,7 @@ const listTasks = asyncHandler(async (req, res) => {
     // "51", not "1" again — because a number that restarts is not a serial, it
     // is a row index, and quoting "number 3" then becomes ambiguous the moment
     // anybody turns a page.
-    tasks: rows.map((row, i) => listRow(req.user, row, (page - 1) * limit + i + 1)),
+    tasks: listRows,
     page,
     limit,
     total,
@@ -797,7 +826,7 @@ const exportTasks = asyncHandler(async (req, res) => {
   const filter = await buildQuery(req);
   const { sort, key: sortKey, dir: sortDir } = resolveSort(req.query);
 
-  const FIGURES_IGNORE = { status: '', overdue: '', late: '', q: '' };
+  const FIGURES_IGNORE = { status: '', overdue: '', late: '', moreTime: '', q: '' };
   const [rows, total, counters] = await Promise.all([
     sortedRows(filter, sort, sortKey, 0, EXPORT_MAX_ROWS),
     Task.countDocuments(filter),
@@ -991,10 +1020,13 @@ const getTask = asyncHandler(async (req, res) => {
   ]);
 
   const pieces = children.map((c, i) => listRow(req.user, c, i + 1));
+  const taskOut = decorate(task.toObject());
+  // Title, description, remarks and names in the reader's app language.
+  await localise(req, taskOut, pieces, updates);
 
   res.json({
     task: {
-      ...decorate(task.toObject()),
+      ...taskOut,
       /**
        * THE OLD SHAPE, DERIVED (2026-09-22).
        *
@@ -1036,9 +1068,9 @@ const getChildren = asyncHandler(async (req, res) => {
     .sort({ createdAt: 1 })
     .lean();
 
-  res.json({
-    children: children.map((c, i) => listRow(req.user, c, i + 1)),
-  });
+  const pieceRows = children.map((c, i) => listRow(req.user, c, i + 1));
+  await localise(req, pieceRows);
+  res.json({ children: pieceRows });
 });
 
 /**
@@ -1986,7 +2018,9 @@ const acceptTask = asyncHandler(async (req, res) => {
     user: req.user,
     note: parseBody(req).note,
   });
-  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task), unchanged: Boolean(unchanged) });
+  const changedTask = decorate(task.toObject());
+  await localise(req, changedTask);
+  res.json({ task: changedTask, can: access.capabilitiesFor(req.user, task), unchanged: Boolean(unchanged) });
 });
 
 const declineTask = asyncHandler(async (req, res) => {
@@ -1997,7 +2031,9 @@ const declineTask = asyncHandler(async (req, res) => {
     user: req.user,
     reason: body.reason || body.note,
   });
-  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task) });
+  const changedTask = decorate(task.toObject());
+  await localise(req, changedTask);
+  res.json({ task: changedTask, can: access.capabilitiesFor(req.user, task) });
 });
 
 const delegateTask = asyncHandler(async (req, res) => {
@@ -2280,7 +2316,9 @@ const removeSubtask = asyncHandler(async (req, res) => {
     subtaskId: req.params.subId,
     user: req.user,
   });
-  res.json({ task: decorate(task.toObject()), can: access.capabilitiesFor(req.user, task) });
+  const changedTask = decorate(task.toObject());
+  await localise(req, changedTask);
+  res.json({ task: changedTask, can: access.capabilitiesFor(req.user, task) });
 });
 
 /**

@@ -134,6 +134,9 @@ export default function TaskRow({
               {task.code && (
                 <span className="shrink-0 font-mono text-[11px] text-gray-400">{task.code}</span>
               )}
+              {/* More time asked, and where it stands — beside the code, as on
+                  the app (2026-09-29). */}
+              <ExtensionChip task={task} className="shrink-0" />
               <Link
                 to={`${base}/${task._id}`}
                 onClick={openFromTitle}
@@ -238,7 +241,6 @@ export default function TaskRow({
             <OverdueChip task={task} />
             <PriorityChip priority={task.priority} />
             <PiecesChip task={task} />
-            <ExtensionChip task={task} />
             <TransferredChip task={task} />
             <PointsChip task={task} earned={task.status === 'COMPLETED'} />
           </div>

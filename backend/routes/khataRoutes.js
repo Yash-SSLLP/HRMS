@@ -114,6 +114,8 @@ router.post('/me/expense', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.reco
 router.post('/me/refund', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.recordMyRefund);
 // PUT /me/expenses/:id — correct an expense of mine the company has not confirmed yet; protected + multer single 'receipt'.
 router.put('/me/expenses/:id', receiptUpload.array(BILL_FIELD, MAX_BILLS), ctrl.updateMyExpense);
+// DELETE /me/expenses/:id — delete an expense of mine the company has not confirmed yet (2026-09-29).
+router.delete('/me/expenses/:id', ctrl.deleteMyExpense);
 // POST /me/reimbursement — claim back what the company owes me, when I have spent past my advance; protected.
 router.post('/me/reimbursement', ctrl.requestReimbursement);
 // POST /me/settle — declare unspent cash returned to the company (always parks); protected + multer single 'receipt'.

@@ -126,6 +126,28 @@ const NotApplicable = ({ hint }) => (
  * On a phone the switch drops BELOW the text — beside it, a three-line
  * description was squeezed into a ~150px column a dozen lines tall.
  */
+/**
+ * The translation switch's explanation, with what it has cost (2026-09-29).
+ * `t` is the server's `translation` block (services/translate.usageSummary);
+ * the same words are on the web and in the app.
+ */
+function translationText(on, t) {
+  const usd = (n) => {
+    const v = Number(n) || 0;
+    return v > 0 && v < 0.01 ? 'less than $0.01' : `$${v.toFixed(2)}`;
+  };
+  const parts = [on
+    ? 'On. For anyone who set the app to Hindi, Kannada, Tamil, Telugu or Malayalam, what other people typed — task titles and descriptions, remarks, names and notifications — is translated by the Claude API. Each text is translated once per language and saved, so it is paid for once. Switch it off to stop all use of the API key; everybody then reads it as it was typed.'
+    : 'Off. Task titles, remarks, names and notifications are shown as they were typed, and the API key is not used. Switch it on to translate them for anyone who set the app to Hindi, Kannada, Tamil, Telugu or Malayalam.'];
+  if (t) {
+    if (!t.keySet) parts.push('No API key is set on the server, so nothing is translated even when this is on.');
+    const m = t.thisMonth || {};
+    parts.push(`This month: ${m.calls || 0} call${m.calls === 1 ? '' : 's'}, ${m.strings || 0} text${m.strings === 1 ? '' : 's'} translated, about ${usd(m.costUsd)}`
+      + `${t.lastMonth?.calls ? ` (last month about ${usd(t.lastMonth.costUsd)})` : ''}. Model: ${t.model}.`);
+  }
+  return parts.join(' ');
+}
+
 function SettingRow({ title, description, checked, onChange, busy, onLabel, offLabel }) {
   return (
     <div className="flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-6 py-4">
@@ -174,6 +196,9 @@ function AccessTab({ showGuide, setShowGuide }) {
   // Org-wide feature switches.
   const [org, setOrg] = useState({
     chatEnabled: false,
+    // Claude translating what people typed (2026-09-29). Default ON.
+    typedTextTranslation: true,
+    translation: null,
     // A switch again since 2026-09-28 (the user's "toggle in permission …
     // CEO/MD approval mandatory for any advance or not"). Default ON.
     khataAdvanceApprovalRequired: true,
@@ -192,6 +217,8 @@ function AccessTab({ showGuide, setShowGuide }) {
   // by the next toggle.
   const readOrg = (d = {}) => ({
     chatEnabled: !!d.chatEnabled,
+    typedTextTranslation: d.typedTextTranslation !== false,
+    translation: d.translation || null,
     khataAdvanceApprovalRequired: d.khataAdvanceApprovalRequired !== false,
     documentFooter: {
       helpline: d.documentFooter?.helpline || '',
@@ -582,6 +609,17 @@ function AccessTab({ showGuide, setShowGuide }) {
             busy={orgBusy}
             onLabel="Enabled" offLabel="Disabled"
             onChange={() => toggleOrg('chatEnabled', 'Could not update the chat setting')} />
+
+          {/* THE API KEY'S OFF SWITCH (2026-09-29, user: "give an option in
+              Super Admin to turn this off … so that we can restrict the use of
+              API key usage"), with what it has cost this month. */}
+          <SettingRow
+            title="Translate typed text (Claude API)"
+            description={translationText(org.typedTextTranslation, org.translation)}
+            checked={org.typedTextTranslation}
+            busy={orgBusy}
+            onLabel="On" offLabel="Off"
+            onChange={() => toggleOrg('typedTextTranslation', 'Could not update the translation setting')} />
 
           {/* A SWITCH AGAIN (2026-09-28 — the user: "give this a toggle in
               permission so that we can set is it CEO/MD approval mandatory for

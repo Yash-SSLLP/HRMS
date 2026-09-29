@@ -16,10 +16,15 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <App />
       <DialogHost />
+      {/* SMALL, SHORT, AT THE BOTTOM (2026-09-29, user — same as the app):
+          a translucent dark pill, ~2 s, no progress bar or ×; a click
+          dismisses it. index.css "Toasts — bottom pill" draws it. */}
       <ToastContainer
-        position="top-right"
-        autoClose={4000}
-        newestOnTop
+        position="bottom-center"
+        autoClose={2000}
+        hideProgressBar
+        closeButton={false}
+        limit={2}
         closeOnClick
         pauseOnHover
         draggable

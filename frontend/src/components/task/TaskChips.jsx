@@ -23,7 +23,7 @@ import {
 } from 'react-icons/fi';
 import {
   statusLabel, statusStyle, dueLabel, DUE_TONES, repeatLabel,
-  isOverdue, clampProgress, dayLabel,
+  isOverdue, clampProgress, dayLabel, EXTENSION_LOOK,
 } from '../../utils/taskLifecycle';
 import { accentFor, priorityColor, useTintStyle } from './taskColors';
 
@@ -200,16 +200,20 @@ export function ReviewChip({ task, yours = false, className = '' }) {
  * blocker.
  */
 export function ExtensionChip({ task, className = '' }) {
-  const ask = task?.pendingExtension;
-  if (!ask) return null;
-  const who = ask.requestedByName ? `${ask.requestedByName} asked` : 'Asked';
-  const till = ask.toDate ? ` to move the deadline to ${dayLabel(ask.toDate)}` : '';
+  // The LATEST ask and where it stands (2026-09-29, web and app: "show if any
+  // more time is asked and what is the status for that"). An older server only
+  // sends the pending one.
+  const last = task?.lastExtension || (task?.pendingExtension ? { ...task.pendingExtension, status: 'PENDING' } : null);
+  const look = last && EXTENSION_LOOK[last.status || 'PENDING'];
+  if (!look) return null;
+  const who = last.requestedByName ? `${last.requestedByName} asked` : 'Asked';
+  const till = last.toDate ? ` to move the deadline to ${dayLabel(last.toDate)}` : '';
+  const decided = last.status !== 'PENDING' && last.decidedByName
+    ? ` — ${last.status === 'APPROVED' ? 'approved' : 'declined'} by ${last.decidedByName}` : '';
+  const why = task?.pendingExtension?.reason ? ` — ${task.pendingExtension.reason}` : '';
   return (
-    <span
-      className={`${CHIP} border border-amber-200 bg-amber-50 text-amber-700 ${className}`}
-      title={`${who}${till}${ask.reason ? ` — ${ask.reason}` : ''}`}
-    >
-      <FiClock size={11} className="shrink-0" /> more time asked
+    <span className={`${CHIP} border ${look.cls} ${className}`} title={`${who}${till}${decided}${why}`}>
+      <FiClock size={11} className="shrink-0" /> {look.label}
     </span>
   );
 }
@@ -305,13 +309,13 @@ export function RangeChips({ ranges, value, onChange }) {
 export function EmptyTasks({
   scope, onAssign, filtered = false, olderHint = true, completedHint = false,
 }) {
-  // Said of the default "This month" window: open work always shows, so an
-  // empty pile means nothing is open — and finished work from other months is
-  // one chip away.
+  // Said of a "This month"-style window: open work always shows, so an empty
+  // pile means nothing is open — and finished work from other months is one
+  // chip away.
   const older = olderHint ? ' Finished work from other months is under Due: All time.' : '';
   // Total lists open work only (2026-09-28), so a pile of finished tasks opens
   // empty — say where they went rather than "nothing assigned to you".
-  const done = completedHint ? ' Finished tasks are under Completed.' : '';
+  const done = completedHint ? ' Finished tasks are under Completed, beside Filter.' : '';
   const lines = {
     mine: [completedHint ? 'Nothing open on your plate' : 'Nothing assigned to you',
       `Tasks people set for you — and the ones you set yourself — land here.${done || older}`],

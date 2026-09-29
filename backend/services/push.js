@@ -195,8 +195,36 @@ async function pushToTokens(tokens, { title, body, data, badge } = {}) {
 async function pushToUsers(userIds, payload) {
   const ids = (Array.isArray(userIds) ? userIds : [userIds]).filter(Boolean);
   if (!ids.length) return { sent: 0 };
-  const devices = await DeviceToken.find({ user: { $in: ids } }).select('token').lean();
-  return pushToTokens(devices.map((d) => d.token), payload);
+  const devices = await DeviceToken.find({ user: { $in: ids } }).select('token lang').lean();
+
+  /**
+   * IN EACH DEVICE'S APP LANGUAGE (2026-09-29). Devices set to English (or
+   * from before the language was recorded) get the payload as written; the
+   * rest are grouped by language and get the title and body translated — or
+   * the English, if the translation is not back within a few seconds.
+   */
+  const byLang = new Map();
+  devices.forEach((d) => {
+    const lang = d.lang || '';
+    if (!byLang.has(lang)) byLang.set(lang, []);
+    byLang.get(lang).push(d.token);
+  });
+  const results = await Promise.all([...byLang].map(async ([lang, tokens]) => {
+    if (!lang) return pushToTokens(tokens, payload);
+    let localised = payload;
+    try {
+      // Lazily required: push.js loads before most services at boot.
+      const { translateStrings } = require('./translate');
+      const words = await translateStrings([payload?.title, payload?.body].filter(Boolean), lang, 'text', { waitMs: 6000 });
+      localised = {
+        ...payload,
+        title: words.get(String(payload?.title || '').trim()) || payload?.title,
+        body: payload?.body ? (words.get(String(payload.body).trim()) || payload.body) : payload?.body,
+      };
+    } catch (_) { /* English it is */ }
+    return pushToTokens(tokens, localised);
+  }));
+  return { sent: results.reduce((n, r) => n + (Number(r?.sent) || 0), 0) };
 }
 
 module.exports = { pushToTokens, pushToUsers };
