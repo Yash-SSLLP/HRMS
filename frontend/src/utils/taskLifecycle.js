@@ -608,8 +608,9 @@ export const STAT_BAR = [
     query: { status: STATUS.COMPLETED },
   },
   {
-    // MORE TIME ASKED (2026-09-29, web and app): every task somebody has asked
-    // more time on, whatever the answer. Not one of the disjoint slices. It
+    // MORE TIME ASKED (2026-09-29, web and app): unfinished tasks whose request
+    // for more time is still waiting for an answer. Not one of the disjoint
+    // slices. It
     // takes Completed's place in the bar; Completed is the button beside Filter.
     key: 'moreTime', label: 'More Time Asked', icon: 'FiWatch', colour: '#B54708',
     query: { moreTime: '1' },

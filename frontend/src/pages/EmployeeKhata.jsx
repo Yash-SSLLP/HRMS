@@ -1010,6 +1010,11 @@ export default function EmployeeKhata() {
               money but have already claimed it: the line above covers that. */}
           {display.direction !== 'owed' && (
             <p className="text-xs text-gray-500 mt-2">
+              {/* Said plainly when they are holding company cash (2026-09-29,
+                  as in the app: "it should say having advance in hand"). */}
+              {display.direction === 'holding'
+                ? `You have ${money(display.amount)} of advance in hand, so there is nothing to reimburse yet. `
+                : ''}
               Ask for reimbursement opens when you have spent more than you were advanced — it asks the
               company to pay the difference back.
             </p>

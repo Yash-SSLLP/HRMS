@@ -297,9 +297,16 @@ async function buildQuery(req, overrides = {}, { strictRange = false } = {}) {
   if (late === 'true' || late === '1') and.push({ completedLate: true });
   else if (late === 'false' || late === '0') and.push({ completedLate: { $ne: true } });
 
-  // MORE TIME ASKED (2026-09-29) — the app's "More Time Asked" figure: every
-  // task somebody has asked more time on, whatever the answer was.
-  if (moreTime === 'true' || moreTime === '1') and.push({ 'extensions.0': { $exists: true } });
+  // MORE TIME ASKED — the "More Time Asked" figure: an UNFINISHED task whose
+  // request for more time is still WAITING for an answer (user, 2026-09-29:
+  // "only show those which are incomplete and asked for pending overtime
+  // request"). A granted or refused ask, or a finished task, drops out.
+  if (moreTime === 'true' || moreTime === '1') {
+    and.push({
+      status: { $in: spellingsOf(...OPEN_STATUS) },
+      extensions: { $elemMatch: { status: EXTENSION_STATUS.PENDING } },
+    });
+  }
 
   /**
    * THE SEARCH BOX — the task, and the people on either side of it.
@@ -383,9 +390,25 @@ async function countersFor(filter) {
         delayed: countIf({
           $and: [{ $eq: ['$status', STATUS.COMPLETED] }, { $eq: ['$completedLate', true] }],
         }),
-        // Not one of the disjoint slices — any task with an ask for more time
-        // on it, whatever its status (the app's "More Time Asked" figure).
-        moreTime: countIf({ $gt: [{ $size: { $ifNull: ['$extensions', []] } }, 0] }),
+        // Not one of the disjoint slices — an unfinished task with a request
+        // for more time still waiting for an answer ("More Time Asked"). The
+        // same rule as buildQuery's `moreTime`, so the figure matches its rows.
+        moreTime: countIf({
+          $and: [
+            { $in: ['$status', OPEN_STATUS] },
+            {
+              $gt: [{
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$extensions', []] },
+                    as: 'x',
+                    cond: { $eq: ['$$x.status', EXTENSION_STATUS.PENDING] },
+                  },
+                },
+              }, 0],
+            },
+          ],
+        }),
       },
     },
   ]);

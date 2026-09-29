@@ -390,6 +390,12 @@ export default function AdminKhata() {
   // read-only CEO/MD account may make here. Mirrors requireAdvanceApprover on
   // the server, which is what actually enforces it.
   const isApprover = isSuperAdmin || isExecViewer(user);
+  /**
+   * THE CEO/MD'S VIEW (2026-09-29, as in the app): no Approval tab and no
+   * "Approved — to pay out" — confirming expenses and paying out are the
+   * accounts team's work. An old link to the Approval tab lands on Overview.
+   */
+  const execView = isExecViewer(user);
   // Downloading the ledger is a grant of its own, separate from reaching this
   // page — a SuperAdmin ticks it per person on the Permissions page. Hiding the
   // button when it is missing keeps the UI honest; the server refuses anyway.
@@ -400,7 +406,8 @@ export default function AdminKhata() {
   const mayReopen = canReopenBook(user);
 
   const [rawTab, setTab] = useTabParam('overview', [...TABS.map(([k]) => k), ...Object.keys(TAB_ALIASES)]);
-  const tab = TAB_ALIASES[rawTab] || rawTab;
+  const tabAsked = TAB_ALIASES[rawTab] || rawTab;
+  const tab = execView && tabAsked === 'approval' ? 'overview' : tabAsked;
   const [ov, setOv] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [rows, setRows] = useState([]);   // one per employee, each with their khatas[]
@@ -425,14 +432,13 @@ export default function AdminKhata() {
   const reimbursePick = useSelection(reimburseRows);
   const advancePick = useSelection(advanceRows);
   const otherPick = useSelection(otherRows);
-  const sanctionPick = useSelection(sanctions);
   // The pay-out slice on screen — what the bulk bar and the approve modal act on.
   const pendingPick = tab === 'reimburse' ? reimbursePick : tab === 'advance' ? advancePick : otherPick;
   /** Each queue tab's red count — counted from the very rows it draws. */
   const tabCounts = {
     reimburse: reimburseRows.length,
-    advance: (isApprover ? sanctions.length : 0) + advanceRows.length,
-    approval: otherRows.length + expenses.length,
+    advance: (isApprover ? sanctions.length : 0) + (execView ? 0 : advanceRows.length),
+    approval: execView ? 0 : otherRows.length + expenses.length,
   };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -985,15 +991,10 @@ export default function AdminKhata() {
 
   const submitSanction = async (e) => {
     e.preventDefault();
-    const { entry, entries: several, approve, note } = sanctionModal;
+    // One request at a time since 2026-09-29 (no Select all on "Waiting on the
+    // CEO/MD"), so there is no batch branch here any more.
+    const { entry, approve, note } = sanctionModal;
     if (!approve && !note.trim()) { toast.error('Give a reason — the employee sees it.'); return; }
-    if (several) {
-      const done = await runBulk('/khata/advance-approvals/decide', {
-        ids: several.map((x) => x._id), approve, note: note.trim() || undefined,
-      }, sanctionPick);
-      if (done) setSanctionModal(null);
-      return;
-    }
     setSaving(true);
     try {
       const res = await api.patch(`/khata/entries/${entry._id}/exec-decision`, {
@@ -1209,7 +1210,7 @@ export default function AdminKhata() {
           strip and Layout's top bar already carry. */}
       <div className="topbar-scroll flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
         {TABS
-          .filter(([k]) => (k !== 'accounts' || isSuperAdmin))
+          .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'approval' || !execView))
           .map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)}
               className={`inline-flex items-center px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
@@ -1712,18 +1713,9 @@ export default function AdminKhata() {
               </div>
             ) : (
               <>
-              <SelectionBar sel={sanctionPick} total={sanctions.length}>
-                <button type="button" disabled={saving}
-                  onClick={() => setSanctionModal({ entries: sanctionPick.selected, approve: true, note: '' })}
-                  className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                  Approve {sanctionPick.selected.length}
-                </button>
-                <button type="button" disabled={saving}
-                  onClick={() => setSanctionModal({ entries: sanctionPick.selected, approve: false, note: '' })}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
-                  Decline {sanctionPick.selected.length}
-                </button>
-              </SelectionBar>
+              {/* ONE DECISION EACH (2026-09-29, web and app): no Select all and
+                  no tick boxes here — every request keeps its own Approve and
+                  Decline. */}
               <ul className="divide-y divide-gray-100">
                 {sanctions.map((e) => (
                   <li key={e._id} className="px-4 py-3">
@@ -1731,7 +1723,6 @@ export default function AdminKhata() {
                         purpose used to push them onto a line of their own at the
                         left. Below 16rem of text they wrap, still to the right. */}
                     <div className="flex flex-wrap justify-between items-start gap-3">
-                      <PickBox sel={sanctionPick} entry={e} />
                       <div className="min-w-0 grow basis-64">
                         <p className="font-medium text-gray-900">
                           {e.employee?.name || 'Employee'} · {money(e.amount)}
@@ -1764,7 +1755,8 @@ export default function AdminKhata() {
           </div>
         </div>
       )}
-      {tab === 'advance' && (
+      {/* Not for the CEO/MD (2026-09-29): paying out is the accounts team's. */}
+      {tab === 'advance' && !execView && (
         <div>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
             Approved — to pay out
