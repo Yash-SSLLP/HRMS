@@ -15,7 +15,7 @@ const { jobLocations } = require('../models/Job');
 const Candidate = require('../models/Candidate');
 const JobRequest = require('../models/JobRequest');
 const {
-  CANDIDATE_STAGES, ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS,
+  CANDIDATE_STAGES, ROUND_STATUS, RESCHEDULABLE_ROUND_STATUS, defaultRounds, CANDIDATE_DOC_STATUS,
   ASSESSMENT_RATINGS, ROUND_RECOMMENDATIONS,
   REAPPLY_HOLD_MONTHS, reapplyOn, withinReapplyHold,
 } = require('../models/Candidate');
@@ -807,7 +807,7 @@ const deleteCandidate = asyncHandler(async (req, res) => {
 // decides Rounds 2-4 only. The agency may JOIN those later rounds — it is on
 // their invites, and it is told when one is booked — but never writes one up.
 
-const CONSULTANCY_BOARD_LINK = '/admin/consultancy?tab=cleared';
+const CONSULTANCY_BOARD_LINK = '/admin/consultancy?tab=ongoing';
 
 /**
  * Refuse a company-side write to Round 1 of a consultancy-sourced candidate.
@@ -948,6 +948,218 @@ function roundSummary(r, idx) {
   };
 }
 
+// The statuses that stamp `decidedAt` — the round's slot has been dealt with.
+// A No Show is stamped too (it is when the missed slot was recorded), but it is
+// NOT a pass: the all-cleared → document-link automation checks for Cleared on
+// every round, so a no-show round holds it back until it is re-held.
+const STAMPED_ROUND_STATUS = ['Cleared', 'Rejected', 'NoShow'];
+
+// ===== Rescheduling a round =====
+// "Reschedule" moves a round to a new date/time and puts it back to Scheduled —
+// the way a no-show is re-held, or a slot the panel cannot make is moved. The
+// date it is moved FROM and the reason go into the round's history as a
+// `Rescheduled` entry, so the trail shows it was re-held rather than the old
+// date silently disappearing (typing over the date box records nothing).
+
+/**
+ * The time a round is booked for, as people read it (IST, 12-hour).
+ * @param {Date|string} d
+ * @returns {string}
+ */
+const slotText = (d) => `${new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST)`;
+
+/**
+ * Move one round to a new slot: status back to Scheduled, the decision stamp
+ * cleared, and a `Rescheduled` history entry + AuditLog row recording the old
+ * slot and the reason. Shared by HR (rescheduleRound) and the assigned
+ * interviewer (rescheduleMyInterviewRound). Mutates the candidate; the caller
+ * saves.
+ * @param {Object} candidate - hydrated Candidate
+ * @param {number} idx - round index (already validated)
+ * @param {Object} body - { scheduledAt, reason? }
+ * @param {Object} user - req.user
+ * @param {import('express').Response} res
+ * @returns {{prevAt: Date|null, prevStatus: string, when: Date, reason: string}}
+ * @throws 409 when the round is already decided; 400 on a missing/invalid date
+ *   or the same slot it is already booked for
+ */
+function applyReschedule(candidate, idx, body, user, res) {
+  const round = candidate.rounds[idx];
+  const label = round.label || `Round ${idx + 1}`;
+  const prevStatus = round.status || 'Pending';
+  if (!RESCHEDULABLE_ROUND_STATUS.includes(prevStatus)) {
+    res.status(409);
+    throw new Error(`${label} is already ${prevStatus.toLowerCase()} — a decided round cannot be rescheduled.`);
+  }
+  const when = body.scheduledAt ? new Date(body.scheduledAt) : null;
+  if (!when || Number.isNaN(when.getTime())) {
+    res.status(400);
+    throw new Error('Pick the new date and time for the interview.');
+  }
+  const prevAt = round.scheduledAt ? new Date(round.scheduledAt) : null;
+  if (prevAt && prevAt.getTime() === when.getTime() && prevStatus === 'Scheduled') {
+    res.status(400);
+    throw new Error(`${label} is already booked for that time — pick a different date or time.`);
+  }
+  const reason = String(body.reason || '').trim().slice(0, 500);
+
+  round.scheduledAt = when;
+  round.status = 'Scheduled';
+  // It is an open round again: no decision stands on it.
+  round.decidedAt = undefined;
+  round.decidedBy = user._id;
+  round.decidedByName = user.fullName;
+  round.history.push({
+    status: 'Scheduled',
+    event: 'Rescheduled',
+    fromStatus: prevStatus,
+    fromScheduledAt: prevAt || undefined,
+    toScheduledAt: when,
+    reason: reason || undefined,
+    by: user._id,
+    byName: user.fullName,
+    at: new Date(),
+  });
+  AuditLog.create({
+    entity: 'Candidate.round',
+    entityId: candidate._id,
+    entityLabel: candidate.name,
+    field: `Round ${idx + 1}${round.label ? ` (${round.label})` : ''} rescheduled${prevAt ? ` from ${slotText(prevAt)}` : ''} to ${slotText(when)}`,
+    fromStatus: prevStatus,
+    toStatus: 'Scheduled',
+    by: user._id,
+    byName: user.fullName,
+    byRole: user.role,
+    at: new Date(),
+  }).catch(() => {});
+  return { prevAt, prevStatus, when, reason };
+}
+
+/**
+ * Move a round's Google Calendar event (the auto-created Meet) to its new slot.
+ * Google mails every attendee the updated time (sendUpdates=all) — the same
+ * channel that delivered the original invite — and the Meet link is unchanged.
+ * Best-effort: a failure is logged and reported, never fatal to the reschedule.
+ * @param {Object} round - the round, already moved
+ * @returns {Promise<boolean>} true when the calendar event was moved
+ */
+async function moveRoundMeet(round) {
+  if (!round.meetEventId || !googleCalendar.isConfigured() || !googleCalendar.moveEvent) return false;
+  const start = new Date(round.scheduledAt);
+  const end = new Date(start.getTime() + (round.meetDurationMinutes || 45) * 60 * 1000);
+  try {
+    await googleCalendar.moveEvent(round.meetEventId, start, end);
+    return true;
+  } catch (err) {
+    console.error('Moving the interview calendar event failed:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Tell the round's interviewer (unless they did it themselves) that it moved.
+ * @param {Object} candidate
+ * @param {Object} round - already moved
+ * @param {number} idx
+ * @param {{prevAt: Date|null, prevStatus: string, reason: string}} moved
+ * @param {Object} user - who rescheduled
+ */
+function tellInterviewerOfReschedule(candidate, round, idx, moved, user) {
+  if (!round.interviewer || String(round.interviewer) === String(user._id)) return;
+  const label = round.label || `Round ${idx + 1}`;
+  const from = moved.prevStatus === 'NoShow'
+    ? ' after a no-show'
+    : moved.prevAt ? ` from ${slotText(moved.prevAt)}` : '';
+  notify({
+    recipient: round.interviewer,
+    type: 'interview',
+    title: `Interview rescheduled: ${candidate.name} (${label})`,
+    body: `Moved${from} to ${slotText(round.scheduledAt)}.${moved.reason ? ` Reason: ${moved.reason}.` : ''} Open My Interviews for the details.`.slice(0, 300),
+    link: 'interviews',
+  }).catch(() => {});
+}
+
+/**
+ * HR reschedules an interview round — a no-show re-held, or a slot moved.
+ * @route POST /api/recruitment/candidates/:id/round/reschedule  (HR)
+ * @param {string} req.params.id - candidate id (must be past 'Applied')
+ * @param {number} req.body.index - round index
+ * @param {string} req.body.scheduledAt - the new date/time (ISO)
+ * @param {string} [req.body.reason] - why it moved (kept in the round history)
+ * @param {string} [req.body.interviewer] - a different interviewer (user id); omitted keeps the current one
+ * @param {string} [req.body.meetingLink] - a different meeting link; omitted keeps the current one
+ * @param {number} [req.body.meetDurationMinutes] - clamped 15-240
+ * @returns {{candidate: Object, calendarMoved: boolean}}
+ * @sideeffect history + AuditLog entry; moves the Google Calendar event when the
+ *   round has one (Google mails its attendees the new time); notifies the
+ *   interviewer (a newly assigned one gets the assignment notice) and, for an
+ *   agency candidate's later round, the agency
+ */
+const rescheduleRound = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id);
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  if (candidate.stage === 'Applied') {
+    res.status(400);
+    throw new Error('Shortlist this candidate before scheduling interview rounds.');
+  }
+  const idx = Number(req.body.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
+    res.status(400);
+    throw new Error('Invalid round index');
+  }
+  assertCompanyRound(candidate, idx, res);
+  const round = candidate.rounds[idx];
+
+  // A different interviewer for the re-held round, checked before anything moves.
+  let newInterviewer = null;
+  if (req.body.interviewer && String(req.body.interviewer) !== String(round.interviewer || '')) {
+    newInterviewer = await User.findById(req.body.interviewer).select('firstName lastName');
+    if (!newInterviewer) {
+      res.status(400);
+      throw new Error('Selected interviewer not found');
+    }
+  }
+
+  const moved = applyReschedule(candidate, idx, req.body, req.user, res);
+  if (req.body.meetingLink !== undefined) {
+    const link = String(req.body.meetingLink || '').trim();
+    // A new link typed in replaces the Meet the calendar event carried, so that
+    // event is no longer this round's and must not be moved below.
+    if (link !== (round.meetingLink || '')) round.meetEventId = undefined;
+    round.meetingLink = link || undefined;
+  }
+  if (req.body.meetDurationMinutes !== undefined) {
+    const d = Number(req.body.meetDurationMinutes);
+    round.meetDurationMinutes = Number.isFinite(d) ? Math.min(Math.max(d, 15), 240) : undefined;
+  }
+  if (newInterviewer) {
+    round.interviewer = newInterviewer._id;
+    round.interviewerName = newInterviewer.fullName;
+  }
+
+  await candidate.save();
+
+  const calendarMoved = await moveRoundMeet(round);
+  const label = round.label || `Round ${idx + 1}`;
+  if (newInterviewer) {
+    // Same notice a fresh assignment in setRound sends.
+    notify({
+      recipient: newInterviewer._id,
+      type: 'interview',
+      title: `Interview assigned: ${candidate.name} (${label})`,
+      body: `Scheduled ${slotText(round.scheduledAt)}. Open My Interviews to join, give feedback and set the result.`,
+      link: 'interviews',
+    }).catch(() => {});
+  } else {
+    tellInterviewerOfReschedule(candidate, round, idx, moved, req.user);
+  }
+  tellAgencyOfRound(candidate, round, idx);
+  res.json({ candidate, calendarMoved });
+});
+
 /**
  * HR edits an interview round: status, feedback, schedule, meeting link, interviewer.
  * @route PATCH /api/recruitment/candidates/:id/round  (HR)
@@ -997,7 +1209,7 @@ const setRound = asyncHandler(async (req, res) => {
     // "Decided <when>" to today every time somebody reopened a finished round
     // to expand on their remarks.
     if (statusChanged) {
-      round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+      round.decidedAt = STAMPED_ROUND_STATUS.includes(req.body.status) ? new Date() : undefined;
     }
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
@@ -1110,11 +1322,18 @@ function interviewItem(c, r, idx, priorRejection = null) {
     // once has to know which one this call is about.
     location: c.location || '',
     stage: c.stage,
+    // The background the panel interviews against (2026-09-30, the redesigned
+    // My Interviews shows it on the candidate card). No CTC — pay stays with HR.
+    currentCompany: c.currentCompany || '',
+    experienceYears: Number.isFinite(c.experienceYears) ? c.experienceYears : null,
+    noticePeriod: c.noticePeriod || '',
     // Rejected by us before, with the write-ups that say why. The interviewer is
     // the person who most needs it and the last to hear about it — they are
     // about to ask the same questions a panel already answered.
     priorRejection: priorRejection || undefined,
     hasResume: !!(c.resumeName || c.resumePath),
+    resumeName: c.resumeName || '',
+    resumeType: c.resumeContentType || '',
     index: idx,
     label: r.label || `Round ${idx + 1}`,
     status: r.status,
@@ -1125,6 +1344,20 @@ function interviewItem(c, r, idx, priorRejection = null) {
     meetingLink: r.meetingLink || '',
     decidedAt: r.decidedAt,
     decidedByName: r.decidedByName || '',
+    // Whether this round can still be moved to a new slot (not yet decided).
+    canReschedule: RESCHEDULABLE_ROUND_STATUS.includes(r.status || 'Pending'),
+    // Every time this round was moved, oldest first — so a re-held round says
+    // it was re-held, and from which date.
+    reschedules: (r.history || [])
+      .filter((h) => h.event === 'Rescheduled')
+      .map((h) => ({
+        fromStatus: h.fromStatus || '',
+        from: h.fromScheduledAt || null,
+        to: h.toScheduledAt || null,
+        reason: h.reason || '',
+        byName: h.byName || '',
+        at: h.at,
+      })),
     // Every round BEFORE this one, with its verdict and write-up.
     previousRounds: (c.rounds || []).slice(0, idx).map((prev, i) => roundSummary(prev, i)),
     // The length a write-up is nudged towards (never enforced) — one number,
@@ -1158,7 +1391,9 @@ const myInterviews = asyncHandler(async (req, res) => {
   // decided ones after — the order the clients' three sections read in.
   const openRank = (i) => {
     if (i.status === 'OnHold') return 1;
-    return ['Cleared', 'Rejected'].includes(i.status) ? 2 : 0;
+    // A no-show waits on a new date, after the paused ones.
+    if (i.status === 'NoShow') return 2;
+    return ['Cleared', 'Rejected'].includes(i.status) ? 3 : 0;
   };
   interviews.sort((a, b) =>
     openRank(a) - openRank(b) ||
@@ -1181,7 +1416,8 @@ const myInterviews = asyncHandler(async (req, res) => {
 // PATCH /api/recruitment/my-interviews/:id/round  { index, status?, feedback? }
 // The assigned interviewer records their decision/feedback for their round.
 const setMyInterviewRound = asyncHandler(async (req, res) => {
-  const candidate = await Candidate.findById(req.params.id).populate('job', 'title');
+  // `company` for recruitmentFlagRecipients when a no-show is reported to HR.
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title company');
   if (!candidate) {
     res.status(404);
     throw new Error('Candidate not found');
@@ -1210,7 +1446,7 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
     // "Decided <when>" to today every time somebody reopened a finished round
     // to expand on their remarks.
     if (statusChanged) {
-      round.decidedAt = ['Cleared', 'Rejected'].includes(req.body.status) ? new Date() : undefined;
+      round.decidedAt = STAMPED_ROUND_STATUS.includes(req.body.status) ? new Date() : undefined;
     }
   }
   if (req.body.feedback !== undefined) round.feedback = req.body.feedback;
@@ -1254,11 +1490,83 @@ const setMyInterviewRound = asyncHandler(async (req, res) => {
   }
 
   await candidate.save();
+  // A no-show leaves the round waiting on a new date — which HR books — so HR
+  // hears about it.
+  if (statusChanged && round.status === 'NoShow') {
+    tellRecruitersOfRound(candidate, {
+      title: `No show: ${candidate.name} (${round.label || `Round ${idx + 1}`})`,
+      body: `${req.user.fullName} recorded that the candidate did not turn up${round.scheduledAt ? ` for ${slotText(round.scheduledAt)}` : ''}. Reschedule the round in Recruitment.`,
+    });
+  }
   // The client swaps this row straight into its list, so the flag has to ride
   // along — returning it without would make a re-applicant's banner vanish the
   // moment their interviewer saved an assessment.
   const flag = (await priorRejectionMap([candidate])).get(String(candidate._id));
   res.json({ interview: interviewItem(candidate, round, idx, flag) });
+});
+
+/**
+ * Tell the people who run recruitment for a candidate's company about a round.
+ * Best-effort: a lost notification never fails the interviewer's save.
+ * @param {Object} candidate - with `job` populated (title, company)
+ * @param {{title: string, body: string}} msg
+ */
+function tellRecruitersOfRound(candidate, msg) {
+  recruitmentFlagRecipients(candidate.job)
+    .then((ids) => (ids.length ? notifyMany(ids, {
+      type: 'recruitment',
+      audience: 'admin',
+      title: msg.title,
+      body: msg.body.slice(0, 300),
+      link: '/admin/recruitment',
+    }) : null))
+    .catch((err) => console.error('recruitment round notify failed:', err.message));
+}
+
+/**
+ * The assigned interviewer moves their own round to a new slot — a no-show
+ * re-held, or a time they cannot make. Same rules and trail as HR's reschedule;
+ * the interviewer cannot hand the round to somebody else or change its link.
+ * @route POST /api/recruitment/my-interviews/:id/round/reschedule
+ * @param {string} req.params.id - candidate id
+ * @param {number} req.body.index - round index (caller must be its interviewer)
+ * @param {string} req.body.scheduledAt - the new date/time (ISO)
+ * @param {string} [req.body.reason]
+ * @returns {{interview: Object, calendarMoved: boolean}}
+ * @sideeffect history + AuditLog entry; moves the round's Google Calendar event
+ *   when it has one; tells HR (and an agency candidate's agency)
+ */
+const rescheduleMyInterviewRound = asyncHandler(async (req, res) => {
+  const candidate = await Candidate.findById(req.params.id).populate('job', 'title company');
+  if (!candidate) {
+    res.status(404);
+    throw new Error('Candidate not found');
+  }
+  const idx = Number(req.body.index);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= candidate.rounds.length) {
+    res.status(400);
+    throw new Error('Invalid round index');
+  }
+  const round = candidate.rounds[idx];
+  if (!round.interviewer || String(round.interviewer) !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('You are not the assigned interviewer for this round.');
+  }
+  const moved = applyReschedule(candidate, idx, req.body, req.user, res);
+  await candidate.save();
+
+  const calendarMoved = await moveRoundMeet(round);
+  const label = round.label || `Round ${idx + 1}`;
+  const from = moved.prevStatus === 'NoShow'
+    ? ' after a no-show'
+    : moved.prevAt ? ` from ${slotText(moved.prevAt)}` : '';
+  tellRecruitersOfRound(candidate, {
+    title: `Interview rescheduled: ${candidate.name} (${label})`,
+    body: `${req.user.fullName} moved it${from} to ${slotText(round.scheduledAt)}.${moved.reason ? ` Reason: ${moved.reason}.` : ''}${round.meetEventId && !calendarMoved ? ' The calendar invite still shows the old time — update it in Recruitment.' : ''}`,
+  });
+  tellAgencyOfRound(candidate, round, idx);
+  const flag = (await priorRejectionMap([candidate])).get(String(candidate._id));
+  res.json({ interview: interviewItem(candidate, round, idx, flag), calendarMoved });
 });
 
 /**
@@ -1585,7 +1893,10 @@ const downloadResume = asyncHandler(async (req, res) => {
     ext === '.pdf' ? 'application/pdf'
       : ext === '.doc' ? 'application/msword'
         : ext === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : 'application/octet-stream';
+          : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+            : ext === '.png' ? 'image/png'
+              : ext === '.webp' ? 'image/webp'
+                : 'application/octet-stream';
   const name = candidate.resumeName || 'resume';
 
   // Preferred path: bytes in the DB.
@@ -2879,8 +3190,8 @@ module.exports = {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate, listConsultancies,
-  setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
-  myInterviews, setMyInterviewRound, downloadMyInterviewResume,
+  setRound, rescheduleRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
+  myInterviews, setMyInterviewRound, rescheduleMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,

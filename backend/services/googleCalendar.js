@@ -124,4 +124,38 @@ async function createMeetEvent({ summary, description, start, end, attendees = [
   return { meetingLink, eventId: ev.id, htmlLink: ev.htmlLink };
 }
 
-module.exports = { isConfigured, createMeetEvent, getAccessToken };
+/**
+ * Move an existing event to a new start/end (a rescheduled interview). The Meet
+ * link and attendees are untouched; with sendUpdates=all Google emails every
+ * attendee the new time, exactly as it sent the original invite.
+ * @param {string} eventId - the id createMeetEvent returned
+ * @param {Date} start
+ * @param {Date} end
+ * @returns {Promise<void>}
+ * @throws {Error} when unconfigured or Google refuses the update
+ */
+async function moveEvent(eventId, start, end) {
+  if (!isConfigured()) throw new Error('Google Calendar is not configured on the server.');
+  if (!eventId) throw new Error('No calendar event to move.');
+
+  const token = await getAccessToken();
+  const calendarId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const url =
+    `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(eventId)}` +
+    `?sendUpdates=all`;
+
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      start: { dateTime: new Date(start).toISOString(), timeZone: 'Asia/Kolkata' },
+      end: { dateTime: new Date(end).toISOString(), timeZone: 'Asia/Kolkata' },
+    }),
+  });
+  if (!res.ok) {
+    const ev = await res.json().catch(() => ({}));
+    throw new Error(`Google Calendar event update failed: ${ev.error?.message || res.status}`);
+  }
+}
+
+module.exports = { isConfigured, createMeetEvent, moveEvent, getAccessToken };

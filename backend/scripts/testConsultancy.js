@@ -57,7 +57,7 @@ const { resolveLoginUser, consultancyLoginNameProblem } = require('../utils/logi
 const JobRequest = require('../models/JobRequest');
 const Company = require('../models/Company');
 
-const { sectionOf, lockReason, boardRow, isBoardViewer, readCandidateFields } = ctrl.__test;
+const { sectionOf, lockReason, editLock, boardRow, isBoardViewer, readCandidateFields } = ctrl.__test;
 
 let passed = 0;
 const failures = [];
@@ -153,11 +153,18 @@ async function run(handler, req) {
     { label: 'Round 4', status: 'Pending' },
   ];
   {
-    check('Round 1 open → pending', sectionOf({ stage: 'Screening', rounds: rounds() }), 'pending');
-    check('Round 1 cleared → cleared', sectionOf({ stage: 'Interview', rounds: rounds('Cleared') }), 'cleared');
-    check('Round 1 rejected → rejected', sectionOf({ stage: 'Rejected', rounds: rounds('Rejected') }), 'rejected');
-    check('company closed them before Round 1 → rejected', sectionOf({ stage: 'Rejected', rounds: rounds() }), 'rejected');
-    check('cleared Round 1, rejected later by the company → still cleared', sectionOf({ stage: 'Rejected', rounds: rounds('Cleared') }), 'cleared');
+    check('with the company, rounds still running → ongoing', sectionOf({ stage: 'Interview', rounds: rounds('Cleared') }), 'ongoing');
+    check('an older row whose Round 1 is still open → ongoing', sectionOf({ stage: 'Screening', rounds: rounds() }), 'ongoing');
+    check('rejected by the company after Round 1 → rejected', sectionOf({ stage: 'Rejected', rounds: rounds('Cleared') }), 'rejected');
+    check('an older Round 1 rejection → rejected', sectionOf({ stage: 'Rejected', rounds: rounds('Rejected') }), 'rejected');
+    const allCleared = rounds('Cleared'); allCleared.forEach((r) => { r.status = 'Cleared'; });
+    check('every round cleared → selected', sectionOf({ stage: 'Interview', rounds: allCleared }), 'selected');
+    check('an offer made → selected', sectionOf({ stage: 'Offer', rounds: rounds('Cleared') }), 'selected');
+    check('joined the company → selected', sectionOf({ stage: 'Hired', rounds: rounds('Cleared'), employee: { user: oid() } }), 'selected');
+
+    check('details editable while the company has not acted', editLock({ stage: 'Interview', rounds: rounds('Cleared') }), '');
+    check('…locked once Round 2 is booked', editLock({ stage: 'Interview', rounds: rounds('Cleared', { interviewer: oid() }) }), 'The company has taken this candidate forward.');
+    check('…locked once the company closes them', editLock({ stage: 'Rejected', rounds: rounds('Cleared') }), 'The company has closed this candidate.');
 
     check('open round → not locked', lockReason({ stage: 'Screening', rounds: rounds() }, agencyId), '');
     check('a shortlist is final', lockReason({ stage: 'Interview', rounds: rounds('Cleared') }, agencyId), 'Shortlisted — the company schedules the next rounds.');
@@ -239,13 +246,15 @@ async function run(handler, req) {
     const out = await run(ctrl.addConsultancyCandidate, { user: agency, body: { ...addBody }, file: resumeFile });
     const c = created[0];
     check('add → 201', out.status, 201);
-    check('stored at Screening, sourced by the consultancy', [c?.stage, c?.source], ['Screening', 'Consultancy']);
+    check('stored ready for Round 2 (stage Interview), sourced by the consultancy', [c?.stage, c?.source], ['Interview', 'Consultancy']);
+    check('Round 1 cleared on adding, stamped as the agency', [c?.rounds?.[0]?.status, !!c?.rounds?.[0]?.decidedAt, c?.rounds?.[0]?.decidedByName], ['Cleared', true, 'Bright Placements']);
     check('the agency owns it', String(c?.consultancy?.user), String(agencyId));
     check('the agency is booked on Round 1', [String(c?.rounds?.[0]?.interviewer), c?.rounds?.[0]?.interviewerName], [String(agencyId), 'Bright Placements']);
     check("location stored in the job's spelling", c?.location, 'Delhi');
-    check('returned row sits in "Awaiting Round 1" and can be decided', [out.res.body?.candidate?.section, out.res.body?.candidate?.canDecide], ['pending', true]);
+    check('returned row is Ongoing, editable, with no Round 1 left to decide', [out.res.body?.candidate?.section, out.res.body?.candidate?.canDecide, out.res.body?.candidate?.canEdit], ['ongoing', false, true]);
     await new Promise((r) => setImmediate(r));
-    check('nobody is notified when a candidate is added (Round 1 is the agency\u2019s)', sent.length, 0);
+    await new Promise((r) => setImmediate(r));
+    check('recruiters are told at once to schedule Round 2', sent.some((m) => /^New candidate from Bright Placements: Ravi Kumar \(Telecaller\)/.test(m.title) && /Schedule Round 2/.test(m.body)), true);
 
     priors = [{ stage: 'Screening' }];
     const dup = await run(ctrl.addConsultancyCandidate, { user: agency, body: { ...addBody }, file: resumeFile });
@@ -269,7 +278,11 @@ async function run(handler, req) {
   }
 
   {
+    // An OLDER row — added before auto-approval (2026-09-30), Round 1 still
+    // open — is the only kind the agency can still decide.
+    const legacy = (x) => { x.rounds[0].status = 'Pending'; x.rounds[0].decidedAt = undefined; x.stage = 'Screening'; };
     const c = created[0];
+    legacy(c);
     c.job = openJob; // as loadOwn's populate would leave it
     Candidate.findById = () => q(c);
     const decide = (body, user = agency) => run(ctrl.decideRound1, { user, params: { id: String(c._id) }, body });
@@ -283,7 +296,7 @@ async function run(handler, req) {
     check('shortlisted → stage Interview (ready for Round 2)', c.stage, 'Interview');
     check('Round 1 stamped with who and when', [c.rounds[0].status, !!c.rounds[0].decidedAt, c.rounds[0].decidedByName], ['Cleared', true, 'Bright Placements']);
     check('assessment stored', [c.rounds[0].assessment.recommendation, c.rounds[0].assessment.ratings.communication], ['Hire', 4]);
-    check('row now in the Shortlisted section', clear.res.body.candidate.section, 'cleared');
+    check('row now in the Ongoing section (with the company)', clear.res.body.candidate.section, 'ongoing');
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     check('recruiters are told to schedule Round 2', sent.some((m) => /^Shortlisted by Bright Placements: Ravi Kumar \(Telecaller\)/.test(m.title) && /Hire/.test(m.body) && /Schedule Round 2/.test(m.body)), true);
@@ -303,6 +316,7 @@ async function run(handler, req) {
     // A second candidate, rejected at Round 1: stamped, and nobody told.
     await run(ctrl.addConsultancyCandidate, { user: agency, body: { ...addBody, name: 'Sunil Rao', email: 'sunil@x.test', phone: '9000000077' }, file: resumeFile });
     const c2 = created[created.length - 1];
+    legacy(c2);
     c2.job = openJob;
     Candidate.findById = () => q(c2);
     const unknown = await run(ctrl.decideRound1, { user: agency, params: { id: String(c2._id) }, body: { status: 'Maybe' } });
@@ -320,11 +334,29 @@ async function run(handler, req) {
     // A third, still undecided, when HR books Round 2 anyway.
     await run(ctrl.addConsultancyCandidate, { user: agency, body: { ...addBody, name: 'Tara Das', email: 'tara@x.test', phone: '9000000088' }, file: resumeFile });
     const c3 = created[created.length - 1];
+    legacy(c3);
     c3.job = openJob;
     Candidate.findById = () => q(c3);
     c3.rounds[1].interviewer = oid();
     const taken = await run(ctrl.decideRound1, { user: agency, params: { id: String(c3._id) }, body: { status: 'Cleared' } });
     check('once HR books Round 2 the agency cannot record Round 1 → 409', [taken.status, c3.rounds[0].status], [409, 'Pending']);
+
+    // Delete (2026-09-30): once the company has acted, only off the agency's list…
+    const hide = await run(ctrl.deleteConsultancyCandidate, { user: agency, params: { id: String(c3._id) } });
+    check('company already booked Round 2 → hidden from the agency, record kept', [hide.status, hide.res.body?.hidden, hide.res.body?.deleted, !!c3.consultancy.hiddenAt], [200, true, false, true]);
+    // …and before that, deleted outright, with the recruiters told.
+    await run(ctrl.addConsultancyCandidate, { user: agency, body: { ...addBody, name: 'Wrong Entry', email: 'oops@x.test', phone: '9000000099' }, file: resumeFile });
+    const c4 = created[created.length - 1];
+    c4.job = openJob;
+    let gone = false;
+    c4.deleteOne = async () => { gone = true; };
+    Candidate.findById = () => q(c4);
+    sent.length = 0;
+    const del = await run(ctrl.deleteConsultancyCandidate, { user: agency, params: { id: String(c4._id) } });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    check('untouched by the company → deleted outright', [del.status, del.res.body?.deleted, gone], [200, true, true]);
+    check('…and the recruiters are told it was withdrawn', sent.some((m) => /^Withdrawn by Bright Placements: Wrong Entry/.test(m.title)), true);
   }
 
   console.log('\n--- the list each side is served ---');

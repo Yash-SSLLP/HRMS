@@ -16,10 +16,14 @@
  *     where each one has got to since (stage, later rounds), and can filter by
  *     consultancy and job.
  *
- * The three sections — Awaiting Round 1, Cleared, Rejected — are the ask:
- * rejected and cleared candidates are kept apart, and all of the people above
- * see both. The server decides the section (consultancyController sectionOf);
- * this page only counts and draws them.
+ * AUTO-APPROVED SINCE 2026-09-30 (user: "when they fill any candidate it is
+ * getting auto approved and sends to Company"): adding a candidate records
+ * Round 1 as cleared and hands them to the company at once. So the three
+ * sections follow what the COMPANY does — Ongoing Interview, Selected
+ * Candidate, Rejected Candidate ("2nd 3rd should be from company only"). The
+ * server decides the section (consultancyController sectionOf); this page only
+ * counts and draws them. An older row whose Round 1 is still open can still be
+ * decided here (Take Round 1 / Shortlist); new ones never need it.
  *
  * API: GET /recruitment/consultancy/candidates (both viewers),
  * GET /recruitment/consultancy/jobs, POST/PUT /recruitment/consultancy/candidates,
@@ -28,7 +32,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { FiPlus, FiFileText, FiEdit2, FiClock, FiCheckCircle, FiXCircle, FiSearch, FiArrowRight, FiVideo } from 'react-icons/fi';
+import { FiPlus, FiFileText, FiEdit2, FiClock, FiCheckCircle, FiXCircle, FiSearch, FiArrowRight, FiVideo, FiTrash2 } from 'react-icons/fi';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -47,9 +51,9 @@ import {
 // The ids are the server's (consultancyController sectionOf); the labels are
 // the words the agency uses — a Round 1 pass is a SHORTLIST.
 const SECTIONS = [
-  { id: 'pending', label: 'Awaiting Round 1', icon: FiClock },
-  { id: 'cleared', label: 'Shortlisted', icon: FiCheckCircle },
-  { id: 'rejected', label: 'Rejected', icon: FiXCircle },
+  { id: 'ongoing', label: 'Ongoing Interview', icon: FiClock },
+  { id: 'selected', label: 'Selected Candidate', icon: FiCheckCircle },
+  { id: 'rejected', label: 'Rejected Candidate', icon: FiXCircle },
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 
@@ -63,7 +67,7 @@ const VERDICTS = [
 ];
 const DECIDED = ['Cleared', 'Rejected'];
 // A round status in the agency's words.
-const ROUND_WORDS = { Cleared: 'Shortlisted' };
+const ROUND_WORDS = { Cleared: 'Shortlisted', OnHold: 'On Hold', NoShow: 'No Show' };
 const roundWord = (status) => ROUND_WORDS[status] || status || 'Pending';
 
 // The pipeline stage, as HR's Recruitment page paints it.
@@ -111,7 +115,7 @@ export default function ConsultancyCandidates() {
   const [loading, setLoading] = useState(true);       // first load only (skeleton)
   const [refreshing, setRefreshing] = useState(false); // later loads (no layout change)
   const [error, setError] = useState('');
-  const [section, setSection] = useTabParam('pending', SECTION_IDS);
+  const [section, setSection] = useTabParam('ongoing', SECTION_IDS);
   const [q, setQ] = useState('');
   const [agencyFilter, setAgencyFilter] = useState('');
   const [jobFilter, setJobFilter] = useState('');
@@ -198,11 +202,8 @@ export default function ConsultancyCandidates() {
 
   const shown = useMemo(() => {
     const list = filtered.filter((r) => r.section === section);
-    // The queue stays newest-added first (the server's order); the decided
-    // sections put the most recent verdict on top.
-    if (section === 'pending') return list;
-    return list.slice().sort((a, b) =>
-      new Date(b.round1?.decidedAt || b.createdAt) - new Date(a.round1?.decidedAt || a.createdAt));
+    // Newest-added first — the server's order — in every section.
+    return list;
   }, [filtered, section]);
 
   // ----- Add / edit (consultancy) -----
@@ -259,8 +260,8 @@ export default function ConsultancyCandidates() {
         : await api.post('/recruitment/consultancy/candidates', fd, multipart);
       upsertRow(data.candidate);
       setFormOpen(false);
-      if (!editing) setSection('pending');
-      toast.success(editing ? 'Details updated' : `${data.candidate.name} added — record Round 1 when you have interviewed them`);
+      if (!editing) setSection('ongoing');
+      toast.success(editing ? 'Details updated' : `${data.candidate.name} sent to the company — HR will schedule the next round`);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not save the candidate');
     } finally {
@@ -317,6 +318,58 @@ export default function ConsultancyCandidates() {
     }
   };
 
+  // SHORTLIST IN ONE TAP (2026-09-30, user: "give a button here directly to
+  // shortlist them") — the interview already happened, so the verdict needs no
+  // form. Same PATCH as the form's Shortlist, with the status alone: any
+  // write-up already saved stays as it is.
+  const quickShortlist = async (r) => {
+    const ok = await confirmDialog({
+      title: `Shortlist ${r.name}?`,
+      message: 'HR is told, and schedules the next rounds — you can join them from here. The Round 1 result cannot be changed afterwards.',
+      confirmText: 'Shortlist',
+    });
+    if (!ok) return;
+    setSavingId(r._id);
+    try {
+      const { data } = await api.patch(`/recruitment/consultancy/candidates/${r._id}/round1`, { status: 'Cleared' });
+      upsertRow(data.candidate);
+      setDrafts((p) => ({ ...p, [r._id]: draftOf(data.candidate) }));
+      if (openId === r._id) setOpenId('');
+      toast.success(`${r.name} shortlisted — HR will schedule the next round`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not shortlist');
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  // DELETE (2026-09-30, user: "give option to delete also in all three
+  // tabs"). The server decides what it means (row.deleteMode): gone for good
+  // while the company has not acted on the candidate; otherwise only off this
+  // list, with the company's record kept. The confirm says which.
+  const removeCandidate = async (r) => {
+    const hideOnly = r.deleteMode === 'hide';
+    const ok = await confirmDialog({
+      title: `Delete ${r.name}?`,
+      message: hideOnly
+        ? 'The company has already taken this candidate forward, so their interview record stays with the company. They are only removed from your list.'
+        : 'They are deleted for good and withdrawn from the company — no interview has been booked yet. This cannot be undone.',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setSavingId(r._id);
+    try {
+      const { data } = await api.delete(`/recruitment/consultancy/candidates/${r._id}`);
+      setRows((list) => (list || []).filter((x) => x._id !== r._id));
+      toast.success(data?.hidden ? `${r.name} removed from your list` : `${r.name} deleted`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not delete');
+    } finally {
+      setSavingId('');
+    }
+  };
+
   const viewResume = (r) =>
     downloadFile(`/recruitment/consultancy/candidates/${r._id}/resume`, `${r.name.replace(/\s+/g, '_')}_resume.pdf`)
       .catch((err) => toast.error(err.response?.data?.message || 'Could not open the résumé'));
@@ -342,7 +395,7 @@ export default function ConsultancyCandidates() {
         : 'Save write-up';
     // Rounds 2-4 once the candidate is shortlisted — for the agency to JOIN,
     // and for the company to follow. The server sends the agency only these.
-    const laterRounds = r.section === 'cleared'
+    const laterRounds = r.round1?.status === 'Cleared'
       ? (r.rounds || []).filter((x) => x.index >= 1)
       : [];
 
@@ -465,13 +518,26 @@ export default function ConsultancyCandidates() {
               {open ? 'Close Round 1' : hasAssessment(r1) ? 'Continue Round 1' : 'Take Round 1'}
             </button>
           )}
+          {external && r.canDecide && !open && (
+            <button type="button" onClick={() => quickShortlist(r)} disabled={savingId === r._id}
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-60">
+              <FiCheckCircle size={13} /> {savingId === r._id ? 'Shortlisting…' : 'Shortlist'}
+            </button>
+          )}
           {external && r.canEdit && !open && (
             <button type="button" onClick={() => openEdit(r)}
               className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
               <FiEdit2 size={13} /> Edit details
             </button>
           )}
-          {canContinue && r.section === 'cleared' && !['Rejected', 'Hired'].includes(r.stage) && !r.employeeCode && (
+          {external && !open && (
+            <button type="button" onClick={() => removeCandidate(r)} disabled={savingId === r._id}
+              title={r.deleteMode === 'hide' ? 'Remove from your list (the company keeps its record)' : 'Delete this candidate'}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-60">
+              <FiTrash2 size={13} /> Delete
+            </button>
+          )}
+          {canContinue && r.section === 'ongoing' && r.round1?.status === 'Cleared' && !['Rejected', 'Hired'].includes(r.stage) && !r.employeeCode && (
             <Link to="/admin/recruitment"
               className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
               Continue in Recruitment <FiArrowRight size={13} />
@@ -539,7 +605,7 @@ export default function ConsultancyCandidates() {
                     ? 'HR schedules the next rounds and you can join them from here. Your write-up travels with the candidate. This cannot be changed afterwards.'
                     : draft.status === 'Rejected'
                       ? 'They move to Rejected and cannot be put forward for this job again for 3 months. This cannot be changed afterwards.'
-                      : 'Saving without a result keeps the candidate under Awaiting Round 1 — you can come back to it.'}
+                      : 'Saving without a result keeps the candidate under Ongoing Interview — you can come back to it.'}
                 </p>
                 <button type="button" onClick={() => saveRound(r)} disabled={savingId === r._id}
                   className="text-sm font-medium px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
@@ -554,11 +620,11 @@ export default function ConsultancyCandidates() {
   };
 
   const emptyText = {
-    pending: external
-      ? 'No candidates waiting for Round 1. Add a candidate to one of the open jobs to get started.'
-      : 'No consultancy candidates are waiting for Round 1.',
-    cleared: 'No candidates have been shortlisted at Round 1 yet.',
-    rejected: 'No candidates have been rejected at Round 1.',
+    ongoing: external
+      ? 'No candidates in interviews right now. Add a candidate to one of the open jobs to get started.'
+      : 'No consultancy candidates are in interviews right now.',
+    selected: 'Nobody has been selected yet.',
+    rejected: 'Nobody has been rejected.',
   };
 
   return (
@@ -566,8 +632,8 @@ export default function ConsultancyCandidates() {
       <PageHeader
         title={external ? 'My Candidates' : 'Consultancy Candidates'}
         subtitle={external
-          ? 'Add candidates to our open jobs and take their Round 1 interview · shortlisted candidates go on to the company’s next rounds, which you can join'
-          : 'Candidates sent in by HR consultancies, split by the Round 1 result the consultancy recorded · shortlisted ones go on to the rounds you schedule'}
+          ? 'Add candidates to our open jobs — each one goes straight to the company, which schedules the next rounds (you can join them) and decides who is selected'
+          : 'Candidates sent in by HR consultancies · they arrive with Round 1 done, ready for the rounds you schedule'}
       >
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {external && (
@@ -581,7 +647,7 @@ export default function ConsultancyCandidates() {
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
       {/* Sections — rejected and cleared kept apart, with live counts. */}
-      <div className="seg-track mb-4" role="tablist" aria-label="Round 1 result">
+      <div className="seg-track mb-4" role="tablist" aria-label="Where the candidates stand">
         {SECTIONS.map((s) => (
           <button key={s.id} type="button" role="tab" aria-selected={section === s.id}
             onClick={() => setSection(s.id)}
@@ -734,9 +800,9 @@ export default function ConsultancyCandidates() {
                   className="block w-full border rounded-lg px-3 py-2" />
                 <label className="block">
                   <span className="block text-xs font-medium text-gray-600 mb-1">
-                    {editing ? 'Replace résumé (optional)' : 'Résumé * (PDF or Word, up to 5 MB)'}
+                    {editing ? 'Replace résumé (optional)' : 'Résumé * (PDF, Word or a photo — JPG, PNG — up to 10 MB)'}
                   </span>
-                  <input type="file" accept=".pdf,.doc,.docx" required={!editing}
+                  <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,image/jpeg,image/png,image/webp" required={!editing}
                     onChange={(e) => setResume(e.target.files?.[0] || null)}
                     className="block w-full text-sm" />
                 </label>

@@ -398,6 +398,8 @@ const publicKhata = (k, viewerId) => {
     // the company for a book its owner shut. Absent on an open book.
     closedAt: k.isActive ? null : (k.closedAt || null),
     closedByOwner: !k.isActive && k.closedByOwner === true,
+    // Deleted by its owner (2026-09-30) — only ever seen by the company.
+    deletedByOwnerAt: k.deletedByOwnerAt || null,
     note: k.note,
     // Whose book it is, but only when it is not the reader's own — a card
     // captioned "Rahul's book" on your own book would read as somebody else's.
@@ -485,6 +487,18 @@ const ADVANCE_SANCTIONERS = ['CEO', 'MD', 'SuperAdmin'];
  * be read: a missing setting must never quietly remove an approval gate.
  * @returns {Promise<boolean>}
  */
+/**
+ * Does a book's PDF button offer a CHOICE of report? A Super Admin switch
+ * (Setting.khataReportChoice, 2026-09-30), default OFF: the button builds the
+ * Day-wise with category summary in one tap. Off when the settings document
+ * cannot be read — the one-tap button is the safe, simple default.
+ * @returns {Promise<boolean>}
+ */
+async function reportChoiceOffered() {
+  const s = await Setting.getSettings().catch(() => null);
+  return !!(s && s.khataReportChoice);
+}
+
 async function advanceApprovalRequired() {
   const s = await Setting.getSettings().catch(() => null);
   return s ? s.khataAdvanceApprovalRequired !== false : true;
@@ -1031,7 +1045,7 @@ const getMyKhata = asyncHandler(async (req, res) => {
   // show. The two Setting reads — the category list and the advance switch —
   // stay separate calls so each keeps its own failure rule (the switch reads ON
   // when the doc cannot be read); running together they cost one wait.)
-  const [khatas, pending, entries, cashOut, recentCategories, approvalRequired] = await Promise.all([
+  const [khatas, pending, entries, cashOut, recentCategories, approvalRequired, reportChoice] = await Promise.all([
     // Their own books plus the ones colleagues have shared with them and they
     // accepted. `members.user` comes back populated from the ledger; the OWNER
     // has to be attached here, because a shared book's card is captioned
@@ -1067,6 +1081,7 @@ const getMyKhata = asyncHandler(async (req, res) => {
     // for a CEO/MD/Backend, who sanctions their own — theirs goes straight to
     // accounts. Not read at all for them, as before.
     ADVANCE_SANCTIONERS.includes(req.user.role) ? false : advanceApprovalRequired(),
+    reportChoiceOffered(),
   ]);
 
   const sums = summariseEntries(entries);
@@ -1117,6 +1132,8 @@ const getMyKhata = asyncHandler(async (req, res) => {
     // Whether a request of theirs will need an executive's sanction — read in
     // the Promise.all above.
     approvalRequired,
+    // Whether the PDF button offers a choice of report (Super Admin switch).
+    reportChoice,
     count: entries.length,
     // Passed explicitly rather than as `entries.map(publicEntry)`: Array.map
     // hands its callback the INDEX as a second argument, which would arrive as
@@ -1207,7 +1224,7 @@ const getMyBook = asyncHandler(async (req, res) => {
   // count now: it $matches the very same `filter` — the discriminator key
   // included, which Mongoose adds to both — so a separate countDocuments was
   // the same number asked for twice.)
-  const [rows, agg, cashOut, recentCategories, goneMembers] = await Promise.all([
+  const [rows, agg, cashOut, recentCategories, goneMembers, , reportChoice] = await Promise.all([
     KhataEntry.find(filter)
       .populate('employee', USER_FIELDS)
       .populate('expenseBook', 'name')
@@ -1296,6 +1313,7 @@ const getMyBook = asyncHandler(async (req, res) => {
     // The owner, for "Rahul's book" and for the head of the members list.
     // Populated in place on `book`, so its result is not kept.
     book ? book.populate('employee', USER_FIELDS) : null,
+    reportChoiceOffered(),
   ]);
 
   const sums = agg[0] || {};
@@ -1333,6 +1351,9 @@ const getMyBook = asyncHandler(async (req, res) => {
   res.json({
     book: book ? publicKhata(book, req.user._id) : null,
     members,
+    // Whether the header's PDF button offers a choice of report, or builds the
+    // Day-wise with category summary straight away (Super Admin switch).
+    reportChoice,
     totals,
     // Whether this reader may add to it. Answered by the server so the two
     // clients cannot each re-derive "owner or accepted operator, and the book is
@@ -2534,6 +2555,55 @@ const closeMyKhata = asyncHandler(async (req, res) => {
   res.json({
     khata: publicKhata(khata, req.user._id),
     message: `"${khata.name}" is closed. Only the CEO, MD, an Admin or a cashbook manager can re-open it.`,
+  });
+});
+
+/**
+ * Delete a book you opened (2026-09-30, user: "give option to delete any book").
+ *
+ * NO MONEY IS DELETED. The book is closed (frozen for its reports, as a close
+ * is) and stamped `deletedByOwnerAt`, which takes it off your cashbook and off
+ * the cashbook of anyone it was shared with. Every entry filed under it stays —
+ * in your wallet's totals, on the All-entries list and on the company's record;
+ * a company re-open brings the book back. The default book is refused: it is
+ * where an expense lands when no other book is chosen.
+ * @route DELETE /api/khata/me/khatas/:id
+ */
+const deleteMyKhata = asyncHandler(async (req, res) => {
+  if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
+  const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
+  if (khata.deletedByOwnerAt) bad(res, 'That book is already deleted.', 404);
+  if (khata.isDefault) {
+    bad(res, 'This is your default book, so it cannot be deleted — it is where an expense is filed when no other book is chosen.');
+  }
+  const wasOpen = khata.isActive;
+  if (wasOpen) {
+    khata.isActive = false;
+    khata.closedAt = new Date();
+    khata.closedBy = req.user._id;
+    khata.closedByOwner = true;
+    await takeClosing(khata);
+  }
+  khata.deletedByOwnerAt = new Date();
+  await khata.save();
+
+  const who = `${req.user.firstName} ${req.user.lastName || ''}`.trim();
+  const colleagues = khata.members
+    .filter((m) => m.status === 'accepted' && m.user)
+    .map((m) => m.user._id || m.user);
+  if (colleagues.length) {
+    await notifyMany(colleagues, {
+      type: 'general',
+      audience: 'employee',
+      title: 'A shared book was deleted',
+      body: `${who} deleted "${khata.name}". Anything you filed under it stays on your wallet and on the company's record.`,
+      link: '/employee/khata',
+    });
+  }
+
+  res.json({
+    ok: true,
+    message: `"${khata.name}" is deleted. Its entries stay on your wallet and on the company's record.`,
   });
 });
 
@@ -3805,6 +3875,7 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
       khata.closedAt = nextActive ? null : new Date();
       khata.closedBy = nextActive ? null : req.user._id;
       khata.closedByOwner = false;
+      if (nextActive) khata.deletedByOwnerAt = null;
       // Frozen on close, live again on re-open (2026-09-29).
       if (nextActive) clearClosing(khata); else await takeClosing(khata);
     }
@@ -3872,6 +3943,8 @@ const reopenKhata = asyncHandler(async (req, res) => {
   khata.closedAt = null;
   khata.closedBy = null;
   khata.closedByOwner = false;
+  // A book its owner deleted comes back with the re-open.
+  khata.deletedByOwnerAt = null;
   clearClosing(khata);
   await khata.save();
 
@@ -5239,6 +5312,7 @@ const publicReceipt = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  deleteMyKhata,
   // employee self-service
   getMyKhata, getMyBook, requestAdvance, recordMyExpense, recordMyRefund, updateMyExpense, deleteMyExpense,
   declareSettlement, requestReimbursement,

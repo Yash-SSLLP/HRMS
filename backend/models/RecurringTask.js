@@ -165,6 +165,14 @@ const recurringTaskSchema = new mongoose.Schema(
     createdByName: { type: String, trim: true },
 
     isActive: { type: Boolean, default: true, index: true },
+    // DELETED (2026-09-30, user: "in recurring task give an option to delete
+    // any task"). A stamp, not a removal: the tasks a schedule already raised
+    // point at it, and a dangling reference is how their rows lose the
+    // "Monthly" label. A deleted schedule is also switched off, so the worker
+    // never raises from it, and it is hidden from every list and form.
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    deletedByName: { type: String, trim: true },
     lastRunAt: Date,
     /** The last occurrence key minted, so a catch-up knows where it left off. */
     lastOccurrenceKey: { type: String, trim: true },

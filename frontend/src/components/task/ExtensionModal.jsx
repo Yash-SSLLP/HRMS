@@ -114,8 +114,9 @@ export default function ExtensionModal({
 
     setSaving(true);
     try {
-      await T.requestExtension(task._id, { toDate: when.toISOString(), reason: said });
-      toast.success('Asked. The work carries on while you wait for an answer.');
+      const res = await T.requestExtension(task._id, { toDate: when.toISOString(), reason: said });
+      // Your own task is granted on the spot (2026-09-30).
+      toast.success(res?.autoApproved ? 'Done — the deadline has moved.' : 'Asked. The work carries on while you wait for an answer.');
       onDone?.();
       onClose?.();
     } catch (err) {

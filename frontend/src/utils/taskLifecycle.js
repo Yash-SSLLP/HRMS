@@ -507,6 +507,22 @@ export function timeAgo(when) {
   return new Date(when).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/**
+ * The clock time something happened, beside a "5 hours ago" (user 2026-09-30).
+ * Today: "7:02 AM"; another day: "28 Sept, 7:02 AM"; another year adds it.
+ * The app's utils/taskStatus.stampOf.
+ */
+export function stampOf(d) {
+  if (!d) return '';
+  const when = new Date(d);
+  if (Number.isNaN(when.getTime())) return '';
+  const now = new Date();
+  const clock = timeOf(when).replace(/\b([ap])\.?\s?m\.?$/i, (_, p) => `${p.toUpperCase()}M`);
+  if (when.toDateString() === now.toDateString()) return clock;
+  const year = when.getFullYear() === now.getFullYear() ? '' : ` ${when.getFullYear()}`;
+  return `${dateOf(when)}${year}, ${clock}`;
+}
+
 /** mm:ss for a recording's length. A duration, so not 12-hour. */
 export function duration(ms) {
   const total = Math.max(0, Math.round((ms || 0) / 1000));

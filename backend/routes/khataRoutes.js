@@ -134,6 +134,8 @@ router.delete('/me/khatas/:id/members/:userId', ctrl.removeKhataMember);
 // POST /me/khatas/:id/close — close a book I opened (not my default one). Re-opening is NOT
 // self-service: only the Admin, CEO, MD or a cashbook manager (PATCH /khatas/:khataId/reopen); protected, owner only.
 router.post('/me/khatas/:id/close', ctrl.closeMyKhata);
+// DELETE /me/khatas/:id — the owner deletes a book (entries and money stay).
+router.delete('/me/khatas/:id', ctrl.deleteMyKhata);
 // PUT /me/khatas/:id — rename or re-note a book I opened (close it with the route above); protected, owner only.
 router.put('/me/khatas/:id', ctrl.updateMyKhata);
 // PATCH /me/book-invites/:khataId — accept or decline an invitation to somebody else's book; protected.

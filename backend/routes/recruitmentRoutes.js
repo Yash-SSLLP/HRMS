@@ -11,8 +11,8 @@ const {
   listJobs, createJob, updateJob, deleteJob,
   getPublicJob, submitApplication,
   listCandidates, createCandidate, updateCandidate, deleteCandidate, listConsultancies,
-  setRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
-  myInterviews, setMyInterviewRound, downloadMyInterviewResume,
+  setRound, rescheduleRound, createRoundMeet, sendRoundMeetEmail, downloadResume, uploadResume,
+  myInterviews, setMyInterviewRound, rescheduleMyInterviewRound, downloadMyInterviewResume,
   generateOffer, downloadOffer, onboardCandidate, updateOnboarding,
   generateAppointment, downloadAppointment, convertToEmployee,
   markOfferSent, markAppointmentSent, downloadLetterByToken, sendLetterEmail,
@@ -24,7 +24,7 @@ const {
 const {
   requireConsultancy, requireBoardAccess,
   listConsultancyJobs, listConsultancyCandidates, addConsultancyCandidate,
-  updateConsultancyCandidate, decideRound1, downloadConsultancyResume,
+  updateConsultancyCandidate, decideRound1, downloadConsultancyResume, deleteConsultancyCandidate,
 } = require('../controllers/consultancyController');
 const {
   requireJobRequestApprover, listJobRequests, createJobRequest,
@@ -34,17 +34,22 @@ const { protect, requirePermission, requireAnyPermission } = require('../middlew
 
 const router = express.Router();
 
-// Resume upload: 5 MB cap; accept PDF / DOC / DOCX only.
+// Resume upload: 10 MB cap; PDF / DOC / DOCX, or a PHOTO of the résumé
+// (JPG / PNG / WebP — user 2026-09-30: "give option to upload resume in photos
+// format too"; a phone photo is bigger than a PDF, hence 10 MB, not 5).
 const RESUME_TYPES = [
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
 ];
 const resumeUpload = createUpload({
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = RESUME_TYPES.includes(file.mimetype) || /\.(pdf|docx?|)$/i.test(file.originalname);
-    cb(ok ? null : new Error('Only PDF or Word documents are accepted'), ok);
+    const ok = RESUME_TYPES.includes(file.mimetype) || /\.(pdf|docx?|jpe?g|png|webp)$/i.test(file.originalname);
+    cb(ok ? null : new Error('Only PDF, Word or a photo (JPG, PNG, WebP) is accepted'), ok);
   },
 });
 
@@ -85,6 +90,8 @@ router.get('/letters/:token', downloadLetterByToken);
 router.get('/my-interviews', protect, myInterviews);
 // PATCH /my-interviews/:id/round — record interview round result; protected.
 router.patch('/my-interviews/:id/round', protect, setMyInterviewRound);
+// POST /my-interviews/:id/round/reschedule — move own round to a new slot; protected.
+router.post('/my-interviews/:id/round/reschedule', protect, rescheduleMyInterviewRound);
 // GET /my-interviews/:id/resume — download candidate resume for own interview; protected.
 router.get('/my-interviews/:id/resume', protect, downloadMyInterviewResume);
 
@@ -110,6 +117,9 @@ router.route('/consultancy/candidates')
   .post(requireConsultancy, resumeUpload.single('resume'), addConsultancyCandidate);
 // PUT /consultancy/candidates/:id — agency corrects details while Round 1 is open; optional 'resume'.
 router.put('/consultancy/candidates/:id', requireConsultancy, resumeUpload.single('resume'), updateConsultancyCandidate);
+// DELETE /consultancy/candidates/:id — agency deletes its candidate (or, once the company
+// has acted on them, takes them off its own list only).
+router.delete('/consultancy/candidates/:id', requireConsultancy, deleteConsultancyCandidate);
 // PATCH /consultancy/candidates/:id/round1 — agency records Round 1 (status + assessment).
 router.patch('/consultancy/candidates/:id/round1', requireConsultancy, decideRound1);
 // GET /consultancy/candidates/:id/resume — résumé, for the agency (own) or a board viewer.
@@ -157,6 +167,8 @@ router.get('/candidates/:id/resume', canView, downloadResume);
 router.post('/candidates/:id/resume', canCand, resumeUpload.single('resume'), uploadResume);
 // PATCH /candidates/:id/round — set interview round; protected, requires 'recruitment.interviews'.
 router.patch('/candidates/:id/round', canIntv, setRound);
+// POST /candidates/:id/round/reschedule — move a round (e.g. after a no-show) to a new slot; protected, requires 'recruitment.interviews'.
+router.post('/candidates/:id/round/reschedule', canIntv, rescheduleRound);
 // POST /candidates/:id/round/meet — create round meeting link; protected, requires 'recruitment.interviews'.
 router.post('/candidates/:id/round/meet', canIntv, createRoundMeet);
 // POST /candidates/:id/round/meet/email — email round meeting invite; protected, requires 'recruitment.interviews'.

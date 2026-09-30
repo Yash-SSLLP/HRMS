@@ -2189,7 +2189,7 @@ const setProgress = asyncHandler(async (req, res) => {
 const askExtension = asyncHandler(async (req, res) => {
   if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
   const body = parseBody(req);
-  const { task, extension } = await engine.requestExtension({
+  const { task, extension, autoApproved } = await engine.requestExtension({
     taskId: req.params.id,
     user: req.user,
     toDate: body.toDate || body.dueDate,
@@ -2199,6 +2199,8 @@ const askExtension = asyncHandler(async (req, res) => {
     task: decorate(task.toObject()),
     can: access.capabilitiesFor(req.user, task),
     extension,
+    // Your own task: granted on the spot (2026-09-30).
+    autoApproved: Boolean(autoApproved),
   });
 });
 

@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
-  FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiStopCircle, FiCheckCircle,
+  FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiStopCircle, FiCheckCircle, FiTrash2,
 } from 'react-icons/fi';
 import ToggleSwitch from '../ToggleSwitch';
 import { confirmDialog } from '../dialogs';
@@ -88,6 +88,30 @@ export default function TaskRecurring({
       toast.success('Stopped.');
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Could not stop it.');
+    }
+  };
+
+  // DELETE (2026-09-30, user: "in recurring task give an option to delete any
+  // task"): stopped AND gone from this list for good. Unlike Stop, it cannot be
+  // switched back on — hence the stronger confirm.
+  const remove = async (row) => {
+    const ok = await confirmDialog({
+      title: 'Delete this recurring task?',
+      message: `"${row.title}" will be deleted and never raised again.`,
+      details: [
+        'It disappears from this list for good — it cannot be switched back on.',
+        'Tasks it already put in people’s lists stay, with their history.',
+      ],
+      confirmText: 'Delete it',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await T.removeRecurring(row._id);
+      setRows((list) => (list || []).filter((r) => r._id !== row._id));
+      toast.success('Deleted.');
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Could not delete it.');
     }
   };
 
@@ -241,6 +265,14 @@ export default function TaskRecurring({
                           <FiStopCircle size={13} /> Stop
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => remove(r)}
+                        title="Delete this recurring task"
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 min-h-[36px]"
+                      >
+                        <FiTrash2 size={13} /> Delete
+                      </button>
                     </div>
                   )}
                 </div>

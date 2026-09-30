@@ -102,21 +102,45 @@ const requireBoardAccess = (req, res, next) => {
 const ownedBy = (candidate, user) =>
   !!candidate?.consultancy?.user && String(candidate.consultancy.user) === String(user?._id);
 
+// Stages at which the company has SELECTED the candidate.
+const SELECTED_STAGES = ['Offer', 'Onboarding', 'NewJoinee', 'Hired'];
+
 /**
- * Which section of the board a candidate belongs in.
- *   cleared  — the agency cleared Round 1 (whatever happened after: the company
- *              board shows that separately, as the current stage);
- *   rejected — Round 1 was rejected, or the company closed the candidate before
- *              Round 1 was decided;
- *   pending  — Round 1 is still open.
+ * Which section of the board a candidate belongs in (REWORKED 2026-09-30, user:
+ * a candidate the agency adds "is getting auto approved and sends to Company",
+ * so the tabs are "Ongoing Interview, Selected Candidate, Rejected Candidate …
+ * 2nd 3rd should be from company only"):
+ *   ongoing  — with the company, interviews still running (and any older row
+ *              whose Round 1 the agency never decided);
+ *   selected — the company selected them: every round cleared, an offer or
+ *              beyond, or they have joined;
+ *   rejected — turned down (by the company; or at Round 1 on an older row).
  * @param {object} c - a candidate
- * @returns {'pending'|'cleared'|'rejected'}
+ * @returns {'ongoing'|'selected'|'rejected'}
  */
 function sectionOf(c) {
-  const status = c.rounds?.[0]?.status;
-  if (status === 'Cleared') return 'cleared';
-  if (status === 'Rejected' || c.stage === 'Rejected') return 'rejected';
-  return 'pending';
+  if (c.stage === 'Rejected') return 'rejected';
+  if (c.employee?.user || SELECTED_STAGES.includes(c.stage)) return 'selected';
+  const rounds = c.rounds || [];
+  if (rounds.length && rounds.every((r) => r.status === 'Cleared')) return 'selected';
+  return 'ongoing';
+}
+
+/**
+ * Why the agency may NOT correct a candidate's details, or '' when it still
+ * may: until the company takes the candidate forward (books or decides a later
+ * round, moves the stage on) or closes them. Round 1 being cleared — which it
+ * is from the moment of adding since 2026-09-30 — does not lock the details.
+ * @param {object} c - the candidate
+ * @returns {string}
+ */
+function editLock(c) {
+  if (c.employee?.user) return 'This candidate has joined the company.';
+  if (c.stage === 'Rejected') return 'The company has closed this candidate.';
+  const laterTouched = (c.rounds || []).slice(1)
+    .some((r) => (r.status && r.status !== 'Pending') || r.interviewer || r.scheduledAt);
+  if (laterTouched || !AGENCY_STAGES.includes(c.stage)) return 'The company has taken this candidate forward.';
+  return '';
 }
 
 /**
@@ -219,14 +243,17 @@ function boardRow(c, { external, meId, flag }) {
     const lock = lockReason(c, meId);
     return {
       ...base,
-      rounds: base.section === 'cleared'
+      rounds: r0?.status === 'Cleared'
         ? (c.rounds || []).slice(1).map((r, i) => joinableRound(r, i + 1))
         : [],
       canDecide: !lock,
       lockedReason: lock,
       // Contact details are the agency's own typing, so it may correct them
       // while nothing has been decided on the strength of them.
-      canEdit: !lock && base.section === 'pending',
+      canEdit: !editLock(c),
+      // What Delete does (2026-09-30): 'delete' while the company has not
+      // acted on them; afterwards 'hide' — off this list, the record stays.
+      deleteMode: editLock(c) ? 'hide' : 'delete',
       // The company closed them before Round 1 — say so, without saying why.
       closedByCompany: c.stage === 'Rejected' && r0?.status !== 'Rejected'
         && String(c.rejection?.by || '') !== String(meId),
@@ -420,6 +447,7 @@ const listConsultancyCandidates = asyncHandler(async (req, res) => {
   const filter = { 'consultancy.user': { $ne: null } };
   if (external) {
     filter['consultancy.user'] = req.user._id;
+    filter['consultancy.hiddenAt'] = null;
   } else if (req.query.consultancy) {
     filter['consultancy.user'] = req.query.consultancy;
   }
@@ -443,7 +471,7 @@ const listConsultancyCandidates = asyncHandler(async (req, res) => {
   const flags = external ? new Map() : await priorRejectionMap(candidates);
   const rows = candidates.map((c) => boardRow(c, { external, meId: req.user._id, flag: flags.get(String(c._id)) }));
 
-  const counts = { pending: 0, cleared: 0, rejected: 0 };
+  const counts = { ongoing: 0, selected: 0, rejected: 0 };
   rows.forEach((r) => { counts[r.section] += 1; });
 
   // The agencies present on this board, for the company's filter. Taken from
@@ -509,12 +537,23 @@ const addConsultancyCandidate = asyncHandler(async (req, res) => {
   // which is also what makes HR's pipeline name who is taking it.
   rounds[0].interviewer = req.user._id;
   rounds[0].interviewerName = req.user.fullName;
+  // AUTO-APPROVED (2026-09-30, user: "when they fill any candidate it is
+  // getting auto approved and sends to Company"). The agency has already
+  // interviewed the person it sends, so Round 1 is recorded as cleared the
+  // moment the candidate is added, and the company takes it from Round 2.
+  const now = new Date();
+  rounds[0].status = 'Cleared';
+  rounds[0].decidedAt = now;
+  rounds[0].decidedBy = req.user._id;
+  rounds[0].decidedByName = req.user.fullName;
+  rounds[0].history = [{ status: 'Cleared', by: req.user._id, byName: req.user.fullName, at: now }];
 
   const candidate = await Candidate.create({
     ...fields,
     job: job._id,
     location: location || undefined,
-    stage: 'Screening',
+    // Round 1 is already cleared (above), so they are ready for Round 2.
+    stage: 'Interview',
     source: 'Consultancy',
     consultancy: { user: req.user._id, name: req.user.fullName, addedAt: new Date() },
     resumeData: req.file.buffer,
@@ -526,9 +565,31 @@ const addConsultancyCandidate = asyncHandler(async (req, res) => {
   });
   await candidate.populate('job', 'title department');
 
-  // Nobody is notified yet. Round 1 is the agency's, and HR's part starts when
-  // the agency SHORTLISTS — that notification (decideRound1) is the one that
-  // carries any earlier-rejection history, too.
+  AuditLog.create({
+    entity: 'Candidate.round',
+    entityId: candidate._id,
+    entityLabel: candidate.name,
+    field: 'Round 1',
+    fromStatus: 'Pending',
+    toStatus: 'Cleared',
+    by: req.user._id,
+    byName: req.user.fullName,
+    byRole: req.user.role,
+    at: now,
+  }).catch(() => {});
+
+  // HR's part starts now: tell the recruiters to schedule Round 2 — with any
+  // earlier-rejection history, since this is the first time HR has any reason
+  // to look at this person.
+  const flag = (await priorRejectionMap([candidate])).get(String(candidate._id));
+  const last = flag?.prior?.[0];
+  const history = flag
+    ? ` Note: we turned them down before${last?.rejectedAt ? ` (${longDate(last.rejectedAt)})` : ''}${last?.sameJob ? ' for this same opening' : ''}.`
+    : '';
+  tellRecruiters(job, {
+    title: `New candidate from ${req.user.fullName}: ${candidate.name} (${job.title})`,
+    body: `Round 1 was taken by the consultancy. Schedule Round 2 in Recruitment.${history}`,
+  });
 
   res.status(201).json({ candidate: boardRow(candidate, { external: true, meId: req.user._id }) });
 });
@@ -541,10 +602,10 @@ const addConsultancyCandidate = asyncHandler(async (req, res) => {
  */
 const updateConsultancyCandidate = asyncHandler(async (req, res) => {
   const candidate = await loadOwn(req, res);
-  const lock = lockReason(candidate, req.user._id);
-  if (lock || sectionOf(candidate) !== 'pending') {
+  const lock = editLock(candidate);
+  if (lock) {
     res.status(409);
-    throw new Error(lock || 'Round 1 has been decided, so these details are part of the record now.');
+    throw new Error(lock);
   }
   const fields = readCandidateFields(req.body, res, { partial: true });
   if (req.body.location !== undefined) {
@@ -698,6 +759,52 @@ const decideRound1 = asyncHandler(async (req, res) => {
 });
 
 /**
+ * The agency deletes one of its candidates (2026-09-30, user: "give option to
+ * delete also in all three tabs").
+ *
+ *   • The company has not acted on them yet (editLock is empty — no later round
+ *     booked or decided, not moved on, not closed): the candidate is DELETED —
+ *     most often a wrong or duplicate entry — and the recruiters are told it
+ *     was withdrawn.
+ *   • Otherwise the company's record must stay whole (its interviews, a
+ *     rejection, an offer, a hire), so the candidate only leaves the AGENCY'S
+ *     list: `consultancy.hiddenAt`.
+ * @route DELETE /api/recruitment/consultancy/candidates/:id  (HR Consultancy)
+ * @returns {{ok: true, deleted: boolean, hidden: boolean}}
+ */
+const deleteConsultancyCandidate = asyncHandler(async (req, res) => {
+  const candidate = await loadOwn(req, res);
+  const who = req.user.fullName;
+  if (!editLock(candidate)) {
+    const job = candidate.job;
+    if (candidate.resumePath) await storage.remove(candidate.resumePath).catch(() => {});
+    await candidate.deleteOne();
+    AuditLog.create({
+      entity: 'Candidate',
+      entityId: candidate._id,
+      entityLabel: candidate.name,
+      field: 'Deleted by the consultancy',
+      fromStatus: candidate.stage,
+      toStatus: 'Deleted',
+      by: req.user._id,
+      byName: who,
+      byRole: req.user.role,
+      at: new Date(),
+    }).catch(() => {});
+    if (job) {
+      tellRecruiters(job, {
+        title: `Withdrawn by ${who}: ${candidate.name} (${job.title || 'job'})`,
+        body: 'The consultancy deleted this candidate before any interview was booked, so they are gone from Recruitment.',
+      });
+    }
+    return res.json({ ok: true, deleted: true, hidden: false });
+  }
+  candidate.consultancy.hiddenAt = new Date();
+  await candidate.save();
+  return res.json({ ok: true, deleted: false, hidden: true });
+});
+
+/**
  * Stream a candidate's résumé: the agency for its own candidates, a company
  * board viewer for any candidate inside their company wall.
  * @route GET /api/recruitment/consultancy/candidates/:id/resume
@@ -738,5 +845,6 @@ module.exports = {
   decideRound1,
   downloadConsultancyResume,
   // Pure rules, exercised by scripts/testConsultancy.js; not routed.
-  __test: { sectionOf, lockReason, boardRow, isBoardViewer, readCandidateFields },
+  deleteConsultancyCandidate,
+  __test: { sectionOf, lockReason, editLock, boardRow, isBoardViewer, readCandidateFields },
 };

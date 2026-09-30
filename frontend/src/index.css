@@ -248,21 +248,33 @@ a, button, input, select, textarea,
   box-shadow: 0 1px 8px color-mix(in srgb, var(--gold-700) 42%, transparent);
 }
 
-/* Sidebar brand header — a whisper of gold behind the lockup plus a gradient
-   hairline that fades out to the right (crisper than a flat grey border). */
+/* Sidebar brand header (REDONE 2026-09-30, user: the logo "make it bigger …
+   make it premium"). 6rem tall, so the company logo can be shown large; a
+   clean surface with only a faint gold sheen at the top (a gold wash behind the
+   black logo read muddy); and, underneath, a CENTRED tapered gold rule — an
+   ornament under the logo rather than a border continuing the top bar's. */
 .brand-bar {
   position: relative;
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--gold-500) 10%, transparent), transparent 85%);
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--gold-300) 14%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--gold-100) 18%, var(--surface)) 0%, var(--surface) 100%);
+}
+html.dark .brand-bar {
+  background-image:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--gold-500) 12%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--gold-900) 14%, var(--surface)) 0%, var(--surface) 100%);
 }
 .brand-bar::after {
   content: '';
   position: absolute;
-  left: 0; right: 0; bottom: -1px;
+  left: 1.25rem; right: 1.25rem; bottom: -1px;
   height: 1px;
   background-image: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--gold-700) 70%, transparent),
-    color-mix(in srgb, var(--gold-500) 34%, transparent) 55%,
+    transparent,
+    color-mix(in srgb, var(--gold-500) 60%, transparent) 22%,
+    var(--gold-300) 50%,
+    color-mix(in srgb, var(--gold-500) 60%, transparent) 78%,
     transparent
   );
 }
@@ -366,6 +378,23 @@ html.dark .brand-tag { color: color-mix(in srgb, var(--gold-300) 66%, #94a3b8); 
   background-image: linear-gradient(90deg, transparent, var(--gold-500) 22%, var(--gold-100) 50%, var(--gold-500) 78%, transparent);
 }
 .brand-stack .brand-tag { margin-top: 0; }
+
+/* The company's logo image, as supplied (2026-09-30) — BrandLockup. Sized by
+   height only so it keeps its own proportions; never tinted or filtered. */
+.brand-full {
+  display: block; height: 4.75rem; width: auto; max-width: 100%;
+  transition: transform .25s ease, opacity .25s ease;
+}
+.brand-lock:hover .brand-full { transform: translateY(-1px) scale(1.015); }
+@media (min-width: 1536px) { .brand-full { height: 5.25rem; } }
+.brand-stack-full { display: block; height: 5.5rem; width: auto; max-width: 100%; }
+/* The logo is black lettering on a transparent ground (the one supplied
+   2026-09-30), so on the dark theme it is shown white — same file, inverted. */
+html.dark .brand-full, html.dark .brand-stack-full { filter: invert(1); }
+/* The mark tile is only the collapsed rail's stand-in for the logo. */
+.brand-lock .brand-mark { display: none; }
+.sidebar-shell.is-rail .brand-lock .brand-full { display: none; }
+.sidebar-shell.is-rail .brand-lock .brand-mark { display: inline-flex; }
 @media (max-width: 380px) {
   /* Very narrow phones: keep the tagline inside the drawer instead of clipping. */
   .brand-lock .brand-tag { font-size: 0.5rem; letter-spacing: .06em; }
@@ -576,6 +605,10 @@ a.plain-link:hover { text-decoration: underline; }
   border-color: color-mix(in srgb, #d97706 40%, var(--border));
   border-left-color: #f59e0b;
 }
+.round-box.is-noshow {
+  border-color: color-mix(in srgb, #ea580c 40%, var(--border));
+  border-left-color: #f97316;
+}
 .round-box.is-pending {
   border-left-color: #9ca3af;
 }
@@ -586,6 +619,229 @@ a.plain-link:hover { text-decoration: underline; }
 }
 .my-round-panel-head {
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+/* ---------------------------------------------------------------------------
+   My Interviews desk (pages/EmployeeInterviews.jsx, redesigned 2026-09-30 from
+   the user's sketch): Candidate | Current round | Previous rounds. Everything
+   is mixed from --surface / --border / --accent, so one set of rules holds in
+   light and dark; text colours stay on the remapped gray utilities.
+     ≥1280px  three columns            cand | cur | prev
+     ≥1024px  two: the reading column  cand + prev | cur
+     below    one, in reading order    cand, prev, cur
+--------------------------------------------------------------------------- */
+.ivd-card {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px -12px rgba(16, 24, 40, 0.12);
+}
+.ivd-desk {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "cand" "prev" "cur";
+  align-items: start;
+}
+.ivd-area-cand { grid-area: cand; min-width: 0; }
+.ivd-area-cur { grid-area: cur; min-width: 0; }
+.ivd-area-prev { grid-area: prev; min-width: 0; }
+@media (min-width: 1024px) {
+  .ivd-desk {
+    grid-template-columns: 300px minmax(0, 1fr);
+    grid-template-areas: "cand cur" "prev cur";
+  }
+}
+@media (min-width: 1280px) {
+  .ivd-desk {
+    grid-template-columns: 290px minmax(0, 1fr) 340px;
+    grid-template-areas: "cand cur prev";
+  }
+  /* The side columns stay in view while the form scrolls. */
+  .ivd-sticky { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+}
+
+/* The picker */
+.ivd-seg {
+  display: inline-flex; flex-wrap: wrap; gap: 0.25rem; padding: 0.25rem;
+  border-radius: 0.8rem; background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.ivd-seg-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.75rem; border-radius: 0.6rem; border: 1px solid transparent;
+  font-size: 0.78rem; font-weight: 600; color: inherit; opacity: 0.75;
+}
+.ivd-seg-btn:hover:not(:disabled) { opacity: 1; }
+.ivd-seg-btn:disabled { opacity: 0.35; cursor: default; }
+.ivd-seg-btn.is-on {
+  opacity: 1; background-color: var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.1);
+}
+.ivd-seg-count {
+  min-width: 1.25rem; padding: 0 0.3rem; border-radius: 999px; text-align: center;
+  font-size: 0.68rem; background-color: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.ivd-queue {
+  display: flex; align-items: center; gap: 0.7rem; width: 100%; min-width: 0;
+  padding: 0.65rem 0.75rem; border-radius: 0.85rem;
+  border: 1px solid var(--border); background-color: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.ivd-queue:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.ivd-queue.is-active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.ivd-next-tag {
+  flex-shrink: 0; padding: 0 0.4rem; border-radius: 999px;
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #fff; background-color: #16a34a;
+}
+
+/* My Profile — fill what is missing (pages/EmployeeProfile.jsx, 2026-09-30). */
+.profile-add-btn {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  padding: 0.1rem 0.55rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.profile-add-btn:hover { background-color: color-mix(in srgb, var(--accent) 18%, var(--surface)); }
+.profile-missing-banner {
+  display: flex; gap: 0.75rem; padding: 0.8rem 1rem; border-radius: 0.8rem;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+
+/* Candidate card */
+.ivd-cand-hero {
+  padding: 1rem 1rem 0.9rem;
+  border-radius: 1rem 1rem 0 0;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 12%, var(--surface)) 0%, var(--surface) 75%);
+  border-bottom: 1px solid var(--border);
+}
+.ivd-cand-hero.is-next {
+  background: linear-gradient(160deg, color-mix(in srgb, #16a34a 14%, var(--surface)) 0%, var(--surface) 75%);
+}
+.ivd-eyebrow {
+  font-size: 0.65rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 80%, currentColor);
+}
+.ivd-cand-hero.is-next .ivd-eyebrow { color: #16a34a; }
+.ivd-avatar {
+  flex-shrink: 0; width: 3rem; height: 3rem; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 1rem; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  border: 2px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.ivd-avatar-sm { width: 2.25rem; height: 2.25rem; font-size: 0.75rem; border-width: 1px; }
+.ivd-facts { padding: 0.5rem 1rem 0.75rem; }
+.ivd-facts > div { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.5rem 0; }
+.ivd-facts > div + div { border-top: 1px dashed var(--border); }
+.ivd-facts dt {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55;
+}
+.ivd-facts dd { font-size: 0.85rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.ivd-rel {
+  font-size: 0.68rem; font-weight: 600; padding: 0.05rem 0.45rem; border-radius: 999px;
+  background-color: var(--surface-3);
+}
+.ivd-rel.is-live { color: #fff; background-color: #dc2626; }
+.ivd-btn {
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%;
+  min-height: 2.6rem; padding: 0.5rem 0.9rem; border-radius: 0.75rem;
+  font-size: 0.85rem; font-weight: 600; transition: filter 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.ivd-btn-primary { box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--accent) 80%, transparent); }
+.ivd-btn-primary:hover { filter: brightness(1.07); }
+.ivd-btn-ghost { border: 1px solid var(--border); background-color: var(--surface); }
+.ivd-btn-ghost:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.ivd-btn-ghost.is-disabled { opacity: 0.5; cursor: default; border-style: dashed; }
+.ivd-btn-ghost.is-warn {
+  border-color: color-mix(in srgb, #ea580c 50%, var(--border));
+  background-color: color-mix(in srgb, #ea580c 8%, var(--surface));
+  color: #c2410c;
+}
+html.dark .ivd-btn-ghost.is-warn { color: #fdba74; }
+.ivd-note {
+  display: flex; gap: 0.5rem; font-size: 0.75rem; line-height: 1.1rem;
+  padding: 0.55rem 0.7rem; border-radius: 0.7rem; border: 1px solid var(--border);
+}
+.ivd-note.is-warn {
+  border-color: color-mix(in srgb, #ea580c 40%, var(--border));
+  background-color: color-mix(in srgb, #ea580c 7%, var(--surface));
+}
+
+/* Current round */
+.ivd-current { overflow: hidden; }
+.ivd-progress {
+  display: inline-flex; align-items: baseline; padding: 0.35rem 0.75rem; border-radius: 0.75rem;
+  background-color: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+}
+.ivd-checklist { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ivd-checklist li {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.2rem 0.6rem 0.2rem 0.25rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 600; opacity: 0.7;
+  border: 1px solid var(--border); background-color: var(--surface);
+}
+.ivd-checklist li.is-done {
+  opacity: 1;
+  border-color: color-mix(in srgb, #16a34a 45%, var(--border));
+  background-color: color-mix(in srgb, #16a34a 9%, var(--surface));
+}
+.ivd-check {
+  width: 1.15rem; height: 1.15rem; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: 800; background-color: var(--surface-3);
+}
+.ivd-checklist li.is-done .ivd-check { color: #fff; background-color: #16a34a; }
+.ivd-step-n {
+  width: 1.5rem; height: 1.5rem; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.72rem; font-weight: 800;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.ivd-ratings { border: 1px solid var(--border); border-radius: 0.85rem; overflow: hidden; }
+.ivd-rating-row {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.25rem 0.75rem;
+  padding: 0.55rem 0.85rem; background-color: var(--surface);
+}
+.ivd-rating-row + .ivd-rating-row { border-top: 1px solid var(--border); }
+.ivd-choice {
+  min-height: 2.5rem; padding: 0.4rem 0.6rem; border-radius: 0.7rem;
+  font-size: 0.8rem; font-weight: 600; text-align: center;
+  border: 1px solid var(--border); background-color: var(--surface);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ivd-choice:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+/* Selected: the tint comes from the status/recommendation utility; the ring,
+   not a border change, marks it — so the choice never resizes. */
+.ivd-choice.is-on {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ivd-savebar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  backdrop-filter: blur(6px);
+}
+.ivd-empty-icon {
+  width: 2.75rem; height: 2.75rem; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background-color: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
 }
 
 /* ---------------------------------------------------------------------------
@@ -3884,7 +4140,7 @@ html.dark .Toastify__toast-container--bottom-center .Toastify__toast {
    the hairline under the brand bar (4px strip + 64px bar - half its 28px). */
 .sidebar-toggle {
   position: fixed;
-  top: calc(0.25rem + 4rem - 0.875rem);
+  top: calc(0.25rem + 6rem - 0.875rem); /* on the brand header's lower edge (6rem since 2026-09-30) */
   left: calc(16rem - 0.875rem);
   z-index: 45;
   align-items: center;

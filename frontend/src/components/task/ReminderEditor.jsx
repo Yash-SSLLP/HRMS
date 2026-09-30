@@ -1,29 +1,53 @@
 /**
  * Schedule Task Reminders.
  *
- * NEW 2026-09-21 as one row per rule (Where: App / Email; When: before / after
- * the deadline, or repeat until done).
+ * NEW 2026-09-21. One row per rule, each saying WHERE and WHEN:
  *
- * ONE SHAPE ONLY SINCE 2026-09-29 (user, web and app alike: remove Email;
- * remove Before and After — "it should be by default Repeat Until Done,
- * without showing that"; "except Hourly remove other options"; from and until
- * 9 AM to 9 PM by default). A reminder is now: in the app, every N hours on the
- * clock inside a window, until the work is done. One such rule per task (the
- * server keeps the first), so "Add a reminder" goes once it is there.
+ *   [App & portal] [Email]        1  [days ▾]  (•) Before  ( ) After
  *
- * A rule from before the change (an email one, "1 day before") is kept as it
- * is and listed as a chip to be taken off — never dropped by a save.
+ * The brief's version offers WhatsApp as a third channel. This portal has no
+ * WhatsApp Business sender, and offering a channel that silently drops every
+ * message is worse than not offering it — so the two that exist are the two
+ * shown, and config/tasks.REMINDER_CHANNELS is where a third would be added.
+ *
+ * AFTER-THE-DEADLINE REMINDERS ARE THE POINT of having a direction at all. "The
+ * reminder will not stop — it will go automatically": a rule set to fire after
+ * the due date also reaches whoever SET the task and whoever is in the loop,
+ * because by then it is news the assigner needs rather than a nudge the doer
+ * has already ignored (see services/taskReminderWorker).
  */
 import { FiPlus, FiTrash2, FiX, FiBell } from 'react-icons/fi';
-import { reminderLabel } from '../../utils/taskLifecycle';
+import { REMINDER_CHANNELS, REMINDER_UNITS, UNIT_LABELS, reminderLabel } from '../../utils/taskLifecycle';
 import ReminderPattern, { repeatingRule } from './ReminderPattern';
 
+const BLANK = { channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' };
+
+/** Is this rule already in the list? Two identical rules fire once. */
+const same = (a, b) => a.channel === b.channel && Number(a.amount) === Number(b.amount)
+  && a.unit === b.unit && a.when === b.when;
+
 export default function ReminderEditor({ value = [], onChange, onClose }) {
-  const list = Array.isArray(value) ? value : [];
-  const everyAt = list.findIndex((r) => r.when === 'EVERY');
-  const replace = (i, rule) => onChange?.(list.map((r, j) => (j === i ? rule : r)));
-  const remove = (i) => onChange?.(list.filter((_, j) => j !== i));
-  const others = list.map((r, i) => [r, i]).filter(([r]) => r.when !== 'EVERY');
+  const set = (i, patch) => {
+    const next = value.map((r, j) => (j === i ? { ...r, ...patch } : r));
+    onChange?.(next);
+  };
+  // A whole rule, when its SHAPE changes — merging would leave the old
+  // shape's fields (weekdays on an hourly rule) behind.
+  const replace = (i, rule) => onChange?.(value.map((r, j) => (j === i ? rule : r)));
+
+  const add = () => {
+    // Offer something DIFFERENT from what is already there, or the + button
+    // appears to do nothing (the duplicate is dropped on save anyway).
+    const candidates = [
+      BLANK,
+      { ...BLANK, amount: 4, unit: 'HOURS' },
+      { ...BLANK, amount: 30, unit: 'MINUTES' },
+      { ...BLANK, when: 'AFTER' },
+      { ...BLANK, channel: 'EMAIL' },
+    ];
+    const fresh = candidates.find((c) => !value.some((r) => same(r, c))) || BLANK;
+    onChange?.([...value, fresh]);
+  };
 
   return (
     <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
@@ -38,60 +62,117 @@ export default function ReminderEditor({ value = [], onChange, onClose }) {
         )}
       </div>
 
-      {list.length === 0 && (
+      {value.length === 0 && (
         <p className="text-xs text-gray-500">
-          No reminders of your own — the company&apos;s usual one goes.
+          No reminders. Nobody will be chased about this one.
         </p>
       )}
 
-      {everyAt >= 0 && (
-        <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium text-gray-500">Every few hours until it is done</span>
+      {value.map((rule, i) => (
+        <div key={i} className="space-y-2 rounded-lg border border-gray-200 bg-white p-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-gray-500">Where</span>
+            {REMINDER_CHANNELS.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => set(i, { channel: c.key })}
+                className={`min-h-[30px] rounded-lg border px-2 text-xs font-medium transition ${
+                  rule.channel === c.key
+                    ? 'border-green-600 bg-green-600 text-white'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-gray-500">When</span>
+            {/* A repeating rule is shaped below instead (ReminderPattern). */}
+            {rule.when !== 'EVERY' && (
+              <>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={rule.amount}
+                  onChange={(e) => set(i, { amount: Number(e.target.value) })}
+                  className="w-16 rounded-lg border border-gray-200 px-2 text-xs min-h-[30px]"
+                  aria-label="How many"
+                />
+                <select
+                  value={rule.unit}
+                  onChange={(e) => set(i, { unit: e.target.value })}
+                  className="rounded-lg border border-gray-200 px-1 text-xs min-h-[30px]"
+                  aria-label="Units"
+                >
+                  {REMINDER_UNITS.map((u) => (
+                    <option key={u} value={u}>{UNIT_LABELS[u]}</option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            {/* EVERY (2026-09-27): "every 2 hours until done" — a beat, not an
+                offset. Only one such rule per task (the server keeps the first). */}
+            {['BEFORE', 'AFTER', 'EVERY'].map((w) => {
+              const taken = w === 'EVERY' && rule.when !== 'EVERY' && value.some((r) => r.when === 'EVERY');
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  disabled={taken}
+                  title={taken ? 'There is already a repeating reminder on this task' : undefined}
+                  onClick={() => {
+                    if (rule.when === w) return;
+                    // Into a repeating rule: its own shape (ReminderPattern, 2026-09-27).
+                    // Out of one: back to a plain offset.
+                    if (w === 'EVERY') replace(i, repeatingRule('HOURLY', rule));
+                    else if (rule.when === 'EVERY') replace(i, { channel: rule.channel, when: w, amount: 1, unit: 'DAYS' });
+                    else set(i, { when: w });
+                  }}
+                  className={`min-h-[30px] rounded-lg border px-2 text-xs font-medium transition disabled:opacity-40 ${
+                    rule.when === w
+                      ? 'border-green-600 bg-green-600 text-white'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  {w === 'BEFORE' ? 'Before' : w === 'AFTER' ? 'After' : 'Repeat until done'}
+                </button>
+              );
+            })}
+
             <button
               type="button"
-              onClick={() => remove(everyAt)}
-              className="rounded-lg border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 min-h-[30px]"
-              aria-label="Remove this reminder"
+              onClick={() => onChange?.(value.filter((_, j) => j !== i))}
+              className="ml-auto rounded-lg border border-red-200 px-2 text-xs text-red-600 hover:bg-red-50 min-h-[30px]"
             >
               <FiTrash2 size={12} />
             </button>
           </div>
-          <ReminderPattern value={list[everyAt]} allowOff={false} hourlyOnly onChange={(r) => r && replace(everyAt, r)} />
-        </div>
-      )}
 
-      {/* Rules from before 2026-09-29 — kept, shown, removable. */}
-      {others.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {others.map(([r, i]) => (
-            <span
-              key={`${r.when}-${r.amount}-${r.unit}-${r.channel}-${i}`}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white py-1 pl-2.5 pr-1 text-xs text-gray-600"
-            >
-              {reminderLabel(r)} the deadline{r.channel === 'EMAIL' ? ' · email' : ''}
-              <button
-                type="button"
-                onClick={() => remove(i)}
-                className="grid place-items-center rounded-md p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
-                aria-label={`Remove the reminder ${reminderLabel(r)}`}
-              >
-                <FiX size={12} />
-              </button>
-            </span>
-          ))}
+          {rule.when === 'EVERY' ? (
+            // The same shapes as the recurring form: hourly on the clock inside a
+            // window, daily / alternate days, chosen weekdays, monthly.
+            <ReminderPattern value={rule} allowOff={false} onChange={(r) => r && replace(i, r)} />
+          ) : (
+            <p className="text-[11px] text-gray-400">
+              {`${reminderLabel(rule)} the deadline`}
+              {rule.when === 'AFTER' && ' — also goes to whoever set the task'}
+            </p>
+          )}
         </div>
-      )}
+      ))}
 
-      {everyAt < 0 && (
-        <button
-          type="button"
-          onClick={() => onChange?.([...list, repeatingRule('HOURLY')])}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-600 hover:border-gray-400 hover:text-blue-600 min-h-[32px]"
-        >
-          <FiPlus size={12} /> Add a reminder
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={add}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-600 hover:border-gray-400 hover:text-blue-600 min-h-[32px]"
+      >
+        <FiPlus size={12} /> Add a reminder
+      </button>
     </div>
   );
 }

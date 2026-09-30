@@ -182,8 +182,8 @@ const ROLE_PILLS = {
 // REPORT_KINDS. Every one of them ends with the full list of entries
 // (2026-09-26), so a summary can be checked against the rows behind it.
 const REPORT_KINDS = [
-  { value: 'entries', label: 'All entries', hint: 'Every row, oldest first — a book\'s spending with its total, or all your books with a running balance. The one to send when somebody asks what the advance went on.' },
   { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.' },
+  { value: 'entries', label: 'All entries', hint: 'Every row, oldest first — a book\'s spending with its total, or all your books with a running balance. The one to send when somebody asks what the advance went on.' },
 ];
 
 // The Category dropdown's "Other" — the words typed under it are the category.
@@ -355,6 +355,10 @@ export default function EmployeeKhata() {
 
   const khatas = data?.khatas || [];
   const invites = data?.invites || [];
+  // May the reader choose the report type? A Super Admin switch
+  // (Setting.khataReportChoice, 2026-09-30), off by default: the report is the
+  // Day-wise with category summary, as the app's one-tap PDF button builds.
+  const reportChoice = !!data?.reportChoice;
   // Books still open. A closed one stays on the page — its record is the point —
   // but nothing new goes into it.
   const openKhatas = khatas.filter((k) => k.isActive);
@@ -864,7 +868,9 @@ export default function EmployeeKhata() {
     setMenuFor('');
     // Bills ON by default, like the app (2026-09-29: "pdf from web and mobile
     // should be same") — each attached in full at the end of the report.
-    setReport({ khata: khata || '', kind: 'entries', bills: true });
+    // Day-wise with category summary preselected (2026-09-30) — the only one
+    // offered unless a Super Admin has switched the choice on.
+    setReport({ khata: khata || '', kind: 'daywise_category', bills: true });
   };
 
   /**
@@ -1671,6 +1677,7 @@ export default function EmployeeKhata() {
               </div>
             </dl>
 
+            {reportChoice ? (
             <fieldset className="mb-4">
               <legend className="block text-sm text-gray-700 mb-1">Which report?</legend>
               <div className="space-y-2">
@@ -1688,6 +1695,12 @@ export default function EmployeeKhata() {
                 ))}
               </div>
             </fieldset>
+            ) : (
+              <p className="mb-4 text-sm text-gray-700">
+                <span className="font-medium">Day-wise with category summary</span>
+                <span className="block text-xs text-gray-500">{REPORT_KINDS.find((r) => r.value === 'daywise_category').hint}</span>
+              </p>
+            )}
 
             <label className="flex items-start gap-2 text-sm text-gray-700 mb-4">
               <input type="checkbox" className="mt-1" checked={report.bills}

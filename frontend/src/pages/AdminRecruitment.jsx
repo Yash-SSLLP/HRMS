@@ -28,6 +28,7 @@ import {
   PriorRejectionChip, PriorRejections, RoundBadge,
   assessmentOf, hasAssessment, averageRating,
   ROUND_STATUS, ROUND_STATUS_STYLES as ROUND_STYLES, roundStatusLabel,
+  RescheduleDialog, canRescheduleRound, historyText,
 } from '../components/InterviewAssessment';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
@@ -244,6 +245,10 @@ export default function AdminRecruitment() {
   const [meetTimes, setMeetTimes] = useState({}); // per-round chosen datetime (keyed `${candId}:${idx}`)
   const [meetDurations, setMeetDurations] = useState({}); // per-round chosen duration in minutes
   const [meetBusy, setMeetBusy] = useState(''); // key of the round whose Meet link is being created
+  // The round being rescheduled ({candidateId, index}) and the optional changes
+  // that go with it (a different interviewer / duration / link).
+  const [movingRound, setMovingRound] = useState(null);
+  const [moveExtras, setMoveExtras] = useState({});
   const [mail, setMail] = useState(null); // editable compose modal payload
   // Which round's write-up is open ({candidateId, index}) and the draft in it.
   // The round itself is looked up from `candidates` on every render rather than
@@ -494,6 +499,48 @@ export default function AdminRecruitment() {
       return true;
     } catch (err) {
       toast.error(err.response?.data?.message || 'Round update failed');
+      return false;
+    }
+  };
+
+  // ----- Reschedule -----
+  // Moves a round (a no-show re-held, or a slot moved) to a new date: the server
+  // puts it back to Scheduled, keeps the old date + reason in its history, moves
+  // the Google Calendar event if the round has one and tells the interviewer.
+  const openReschedule = (c, index) => {
+    const r = c.rounds?.[index] || {};
+    setMovingRound({ candidateId: c._id, index });
+    setMoveExtras({
+      interviewer: r.interviewer || '',
+      interviewerName: r.interviewerName || '',
+      meetDurationMinutes: r.meetDurationMinutes || 45,
+      meetingLink: r.meetingLink || '',
+    });
+  };
+  const rescheduleRound = async ({ scheduledAt, reason }) => {
+    const c = candidates.find((x) => x._id === movingRound?.candidateId);
+    if (!c) return true;
+    const r = c.rounds?.[movingRound.index] || {};
+    const body = { index: movingRound.index, scheduledAt, reason, meetDurationMinutes: moveExtras.meetDurationMinutes };
+    // Only what actually changed — an untouched link must not detach the
+    // round from its calendar event on the server.
+    if (moveExtras.interviewer && moveExtras.interviewer !== (r.interviewer || '')) body.interviewer = moveExtras.interviewer;
+    if ((moveExtras.meetingLink || '') !== (r.meetingLink || '')) body.meetingLink = moveExtras.meetingLink;
+    try {
+      const { data } = await api.post(`/recruitment/candidates/${c._id}/round/reschedule`, body);
+      if (data.candidate) {
+        const merge = (list) => list.map((x) => (x._id === c._id ? { ...x, ...data.candidate, job: x.job } : x));
+        setCandidates(merge);
+        setJobCands((prev) => (prev.length ? merge(prev) : prev));
+      }
+      const moved = data.candidate?.rounds?.[movingRound.index] || {};
+      toast.success(
+        `${moved.label || `Round ${movingRound.index + 1}`} rescheduled to ${fmtDateTime(scheduledAt)}`
+        + (data.calendarMoved ? ' · calendar invite updated' : moved.meetingLink ? ' · resend the invite email if needed' : '')
+      );
+      return true;
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not reschedule');
       return false;
     }
   };
@@ -801,6 +848,19 @@ export default function AdminRecruitment() {
   // server refuses the company's writes to it (recruitmentController
   // assertCompanyRound). So that one card is drawn read-only.
   const isAgencyRound = (c, idx) => idx === 0 && !!c?.consultancy?.user;
+  /**
+   * Where an agency candidate stands at the agency's Round 1 — null for anyone
+   * else, and null once shortlisted (from then on the ordinary stage says it).
+   */
+  const agencyRound1 = (c) => {
+    if (!c?.consultancy?.user) return null;
+    const st = c.rounds?.[0]?.status || 'Pending';
+    if (st === 'Cleared') return null;
+    const who = c.consultancy?.name || 'the consultancy';
+    if (st === 'Rejected') return { label: `Rejected at Round 1 by ${who}`, tone: 'bg-red-100 text-red-700', open: false };
+    const word = st === 'Scheduled' ? 'scheduled' : st === 'OnHold' ? 'on hold' : st === 'NoShow' ? 'no show' : 'pending';
+    return { label: `Round 1 ${word} · with ${who}`, tone: 'bg-amber-100 text-amber-800', open: true };
+  };
 
   // The Candidates table shows only candidates who have been shortlisted (and
   // are therefore in the interview process). Applicants awaiting a decision
@@ -815,8 +875,15 @@ export default function AdminRecruitment() {
   const newApplicants = jobCands.filter((c) => c.stage === 'Applied');
   const rejectedApplicants = jobCands.filter((c) => c.stage === 'Rejected');
 
-  const shortlistedCandidates = candidates.filter((c) => c.stage !== 'Applied' && c.stage !== 'Rejected'
-    && !(c.consultancy?.user && c.rounds?.[0]?.status !== 'Cleared'));
+  // (2026-09-30, user: "if consultancy have entered any candidate also it
+  // should show in the Company page in any status for that Round 1 status")
+  // A consultancy's candidate is listed from the moment the agency adds them —
+  // waiting on its Round 1, shortlisted, or turned down there — with that
+  // Round 1 status on the row (agencyRound1). Rounds 2-4 stay closed until the
+  // agency shortlists them.
+  const shortlistedCandidates = candidates.filter((c) => (c.consultancy?.user
+    ? true
+    : c.stage !== 'Applied' && c.stage !== 'Rejected'));
 
   return (
     <div>
@@ -897,7 +964,7 @@ export default function AdminRecruitment() {
         )}
       </div>
       {/* Shared hidden input for resume upload/replace from any candidate row. */}
-      <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={onResumePicked} />
+      <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,image/jpeg,image/png,image/webp" className="hidden" onChange={onResumePicked} />
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50"><tr>
@@ -911,7 +978,7 @@ export default function AdminRecruitment() {
           </tr></thead>
           <tbody className="divide-y divide-gray-100">
             {shortlistedCandidates.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No shortlisted candidates yet. Open a job's candidate list and shortlist applicants to start the interview process.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No candidates yet. Open a job's candidate list and shortlist applicants to start the interview process — candidates a consultancy adds appear here straight away.</td></tr>
             ) : shortlistedCandidates.map((c) => (
               <Fragment key={c._id}>
                 <tr>
@@ -948,7 +1015,13 @@ export default function AdminRecruitment() {
                       <button onClick={() => pickResume(c)} className="text-blue-600 hover:underline">Upload</button>
                     )}
                   </td>
-                  <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span></td>
+                  <td className="px-4 py-3">
+                    {agencyRound1(c) ? (
+                      <span className={`text-xs px-2 py-0.5 rounded-lg ${agencyRound1(c).tone}`}>{agencyRound1(c).label}</span>
+                    ) : (
+                      <span className={`text-xs px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {/* Opening the rounds is what needs the interviewer pool, so
                         this is where it is fetched (once, see loadInterviewers). */}
@@ -975,7 +1048,7 @@ export default function AdminRecruitment() {
                     {c.offer?.hasLetter && (
                       <button onClick={() => downloadOffer(c)} className="text-gray-600 hover:underline">Offer PDF</button>
                     )}
-                    {!viewOnly && c.stage === 'Applied' && (
+                    {!viewOnly && c.stage === 'Applied' && !c.consultancy?.user && (
                       <button onClick={() => setStage(c, 'Shortlisted')} className="text-white bg-green-600 hover:bg-green-700 px-2.5 py-1 rounded-lg">Shortlist</button>
                     )}
                     {!viewOnly && c.stage !== 'Rejected' && c.stage !== 'Hired' && (
@@ -1028,7 +1101,14 @@ export default function AdminRecruitment() {
                       )}
                       {/* Interview rounds */}
                       <div className="text-xs font-semibold text-gray-600 mb-2">Interview Rounds</div>
-                      {c.stage === 'Applied' ? (
+                      {agencyRound1(c) && (
+                        <div className="mb-2 text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                          {agencyRound1(c).open
+                            ? `Round 1 is ${c.consultancy?.name || 'the consultancy'}'s to take. Rounds 2–4 open here once they shortlist ${c.name}.`
+                            : `${c.consultancy?.name || 'The consultancy'} turned ${c.name} down at Round 1, so there are no further rounds.`}
+                        </div>
+                      )}
+                      {c.stage === 'Applied' && !c.consultancy?.user ? (
                         <div className="flex items-center gap-3 bg-white border border-dashed border-gray-300 rounded-lg px-4 py-4 text-sm text-gray-600">
                           <span>Shortlist this candidate to begin interview rounds.</span>
                           {!viewOnly && (
@@ -1037,7 +1117,7 @@ export default function AdminRecruitment() {
                         </div>
                       ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                        {(c.rounds || []).map((r, idx) => (isAgencyRound(c, idx) ? (
+                        {(c.rounds || []).filter((_, idx) => !agencyRound1(c) || idx === 0).map((r, idx) => (isAgencyRound(c, idx) ? (
                           // The consultancy's own round: who took it and what
                           // they wrote, nothing to schedule or change. Their
                           // account is not in the interviewer picker (outside
@@ -1097,6 +1177,18 @@ export default function AdminRecruitment() {
                             >
                               {ROUND_STATUS.map((s) => <option key={s} value={s}>{roundStatusLabel(s)}</option>)}
                             </select>
+                            {/* Re-hold a no-show, or move a booked slot, with
+                                the old date + reason kept in the history. */}
+                            {!viewOnly && canRescheduleRound(r) && (r.scheduledAt || r.status === 'NoShow') && (
+                              <button
+                                type="button"
+                                onClick={() => openReschedule(c, idx)}
+                                title="Move this round to a new date — the old date and the reason stay in its history"
+                                className={`block w-full text-xs font-medium rounded-lg px-2 py-1.5 mb-2 border ${r.status === 'NoShow'
+                                  ? 'border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100'
+                                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                              >↻ Reschedule{r.status === 'NoShow' ? ' (no-show)' : ''}</button>
+                            )}
                             {/* Scoped to the job's department by default, with
                                 search and a one-click widen to everyone. */}
                             {viewOnly ? (
@@ -1142,6 +1234,9 @@ export default function AdminRecruitment() {
                             <div className="mt-2 space-y-1">
                               <input
                                 type="datetime-local"
+                                // Keyed on the saved time so a reschedule (which
+                                // changes it from outside) refreshes the box.
+                                key={`at-${r.scheduledAt || ''}`}
                                 defaultValue={toLocalInput(r.scheduledAt)}
                                 onChange={(e) => setMeetTimes((m) => ({ ...m, [`${c._id}:${idx}`]: e.target.value }))}
                                 onBlur={(e) => {
@@ -1172,6 +1267,7 @@ export default function AdminRecruitment() {
                               </select>
                               <div className="flex gap-1">
                                 <input
+                                  key={`link-${r.meetingLink || ''}`}
                                   defaultValue={r.meetingLink || ''}
                                   onBlur={(e) => { if (e.target.value !== (r.meetingLink || '')) setRound(c, idx, { meetingLink: e.target.value }); }}
                                   placeholder={viewOnly ? 'No meeting link' : 'Meeting link…'}
@@ -1204,10 +1300,16 @@ export default function AdminRecruitment() {
                             </div>
                             {/* Audit trail: who last changed the status */}
                             {r.decidedByName && (
-                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${roundStatusLabel(h.status)} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
+                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${historyText(h)} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
                                 Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
                                 {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
                                 {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
+                              </div>
+                            )}
+                            {/* A re-held round says so on its face, and from which date. */}
+                            {r.history?.length > 0 && r.history[r.history.length - 1].event === 'Rescheduled' && (
+                              <div className="mt-1 text-[10px] text-orange-700 leading-tight">
+                                ↻ {historyText(r.history[r.history.length - 1])}
                               </div>
                             )}
                           </div>
@@ -1222,6 +1324,62 @@ export default function AdminRecruitment() {
           </tbody>
         </table>
       </div>
+
+      {/* Reschedule a round: new date + reason, and optionally a different
+          interviewer / duration / meeting link for the re-held slot. */}
+      {movingRound && (() => {
+        const c = candidates.find((x) => x._id === movingRound.candidateId);
+        const r = c?.rounds?.[movingRound.index];
+        if (!c || !r) return null;
+        const label = r.label || `Round ${movingRound.index + 1}`;
+        return (
+          <RescheduleDialog
+            round={r}
+            title={`Reschedule ${label}`}
+            subtitle={`${c.name}${c.job?.title ? ` · ${c.job.title}` : ''}`}
+            note={r.meetEventId
+              ? 'The round goes back to Scheduled at the new time. Its Google Calendar invite moves too (Google emails the attendees the new time). The old date and the reason stay in its history.'
+              : 'The round goes back to Scheduled at the new time and the interviewer is told. The old date and the reason stay in its history.'}
+            onClose={() => setMovingRound(null)}
+            onSubmit={rescheduleRound}
+          >
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1">Interviewer</label>
+              <EmployeePicker
+                value={moveExtras.interviewer || ''}
+                onChange={(id) => setMoveExtras((m) => ({ ...m, interviewer: id }))}
+                people={users}
+                department={c.job?.department || ''}
+                valueLabel={moveExtras.interviewer === (r.interviewer || '') ? (r.interviewerName || '') : ''}
+                placeholder="Keep / assign interviewer"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Duration</label>
+                <select
+                  value={moveExtras.meetDurationMinutes}
+                  onChange={(e) => setMoveExtras((m) => ({ ...m, meetDurationMinutes: Number(e.target.value) }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  {[15, 30, 45, 60, 90, 120].map((min) => (
+                    <option key={min} value={min}>{min < 60 ? `${min} min` : min === 60 ? '1 hour' : `${min / 60} hours`}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Meeting link</label>
+                <input
+                  value={moveExtras.meetingLink}
+                  onChange={(e) => setMoveExtras((m) => ({ ...m, meetingLink: e.target.value }))}
+                  placeholder="Keep, paste or clear"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+          </RescheduleDialog>
+        );
+      })()}
 
       {/* One round's full write-up, with every earlier round as context. */}
       {fbRound && (() => {
@@ -1289,7 +1447,7 @@ export default function AdminRecruitment() {
                   <ul className="space-y-0.5">
                     {r.history.map((h, i) => (
                       <li key={i} className="text-[11px] text-gray-500">
-                        <span className="font-medium text-gray-700">{roundStatusLabel(h.status)}</span>
+                        <span className="font-medium text-gray-700">{historyText(h)}</span>
                         {h.recommendation ? ` · ${h.recommendation}` : ''}
                         {' · '}{h.byName || 'Unknown'}{h.at ? ` · ${fmtDateTime(h.at)}` : ''}
                       </li>

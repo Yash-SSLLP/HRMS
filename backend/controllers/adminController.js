@@ -968,6 +968,9 @@ const orgSettingsPayload = (s) => {
     // Does an employee's cash advance need a CEO/MD sanction first? A setting
     // again since 2026-09-28 (always-on 2026-09-26 → 28). Default ON.
     khataAdvanceApprovalRequired: s.khataAdvanceApprovalRequired !== false,
+    // Whether a book's PDF button offers a choice of report (2026-09-30).
+    // Default OFF: it builds the Day-wise with category summary at once.
+    khataReportChoice: !!s.khataReportChoice,
     // The contact strip on the khata statement PDF. Always sent as a pair so the
     // form can render two empty inputs rather than guess at a missing shape.
     documentFooter: {
@@ -1263,6 +1266,10 @@ const updateOrgSettings = asyncHandler(async (req, res) => {
     const on = !!req.body.khataAdvanceApprovalRequired;
     if (on !== (s.khataAdvanceApprovalRequired !== false)) advanceFlip = on ? 'on' : 'off';
     s.khataAdvanceApprovalRequired = on;
+  }
+  // Whether a book's PDF button offers a choice of report (2026-09-30).
+  if (req.body.khataReportChoice !== undefined) {
+    s.khataReportChoice = !!req.body.khataReportChoice;
   }
   // Each half is settable on its own, and an empty string is a real value —
   // clearing the helpline is how you take the number off the document.

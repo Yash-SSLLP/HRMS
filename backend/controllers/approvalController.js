@@ -671,9 +671,10 @@ const countMyApprovals = asyncHandler(async (req, res) => {
     // — Cleared|Rejected — nor On Hold). A round whose status was never set is
     // shown there as Pending, so it has to be counted here too — `$in` would
     // silently miss it. An On Hold round is paused: nobody is asked to act on
-    // it, so it is not a number on anybody's badge.
+    // it, so it is not a number on anybody's badge. Nor is a No Show: the slot
+    // was missed and the round waits on a new date, not on the interviewer.
     Candidate.countDocuments({
-      rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected', 'OnHold'] } } },
+      rounds: { $elemMatch: { interviewer: me, status: { $nin: ['Cleared', 'Rejected', 'OnHold', 'NoShow'] } } },
     }),
     // Tasks on this person right now, plus submissions waiting on their word.
     //

@@ -16,6 +16,8 @@ import { ROUND_STATUS_STYLES, roundStatusLabel } from './InterviewAssessment';
 //                         stays, marked, until somebody records it.
 //   On Hold             — kept, but below the rest: paused, not done.
 //   Cleared / Rejected  — done; gone from here (My Interviews keeps them).
+//   No Show             — the slot was missed; gone from here until it is
+//                         rescheduled (then it is Scheduled at the new date).
 // A round with no time booked is not an interview yet, and a candidate who has
 // left the running — rejected, or already at offer or beyond — takes their
 // rounds with them, so an unrecorded round can never haunt the dashboard.

@@ -35,6 +35,12 @@ const settingSchema = new mongoose.Schema(
     // user's request — see khataController.advanceApprovalRequired, and the
     // org-settings route for what flipping it does to requests in flight.
     khataAdvanceApprovalRequired: { type: Boolean, default: true },
+    // May people CHOOSE the type of a book's PDF? (2026-09-30, user: the PDF
+    // button should open the Day-wise with category summary straight away,
+    // and a Super Admin can "add other option or remove other".) Off (the
+    // default): one tap builds that report. On: the chooser comes back, with
+    // "All entries" beside it and Day-wise preselected.
+    khataReportChoice: { type: Boolean, default: false },
 
     // Org-wide switch for the chat module. Off by default: the launcher, dock
     // and mobile Chat tab are hidden and the chat endpoints refuse writes.

@@ -77,7 +77,7 @@ import { accentFor, accentStyle, priorityColor, tintStyle, useIsDark } from './t
 import * as T from '../../api/tasks';
 import {
   STATUS, TASK_PRIORITY, PROGRESS_STEPS, clampProgress, statusLabel, statusStyle, isOverdue,
-  repeatLabel, reminderLabel, timeAgo, dayLabel, personName, isTerminal,
+  repeatLabel, reminderLabel, timeAgo, stampOf, dayLabel, personName, isTerminal,
 } from '../../utils/taskLifecycle';
 
 /* ===========================================================================
@@ -1252,6 +1252,7 @@ export default function TaskDetailBody({
 
             <Fact icon={FiClock} label="Set">
               {timeAgo(task.createdAt)}
+              {task.createdAt ? ` · ${stampOf(task.createdAt)}` : ''}
             </Fact>
 
             {task.reminders?.length > 0 && (
@@ -1967,7 +1968,9 @@ function FeedRow({ update, task, me, onOpenFile }) {
           {words.says && <span className="text-xs text-gray-500">{words.says}</span>}
           {moved && <StatusChip status={update.to} kind={task.kind} />}
           <Icon size={11} className={`shrink-0 ${words.tone}`} />
-          <span className="text-[11px] text-gray-400">{timeAgo(update.createdAt)}</span>
+          <span className="text-[11px] text-gray-400">
+            {timeAgo(update.createdAt)}{update.createdAt ? ` · ${stampOf(update.createdAt)}` : ''}
+          </span>
         </div>
 
         {update.note && (

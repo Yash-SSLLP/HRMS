@@ -1382,7 +1382,7 @@ export default function Layout({ navItems = [], sectionTitle }) {
     // rows came out ~240px in a 320px sidebar, leaving a 67px dead strip on the
     // right. (The mobile drawer's <aside> is a block, so it was unaffected.)
     <div className="flex flex-col h-full w-full min-w-0">
-      <div className={`brand-bar h-16 flex items-center gap-2 shrink-0 ${rail ? 'justify-center px-0' : 'px-5'}`}>
+      <div className={`brand-bar h-24 flex items-center justify-center gap-2 shrink-0 ${rail ? 'px-0' : 'px-4'}`}>
         <Link to={isAdmin || external ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
           <BrandLockup />
         </Link>

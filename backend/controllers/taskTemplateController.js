@@ -429,7 +429,7 @@ const listRecurring = asyncHandler(async (req, res) => {
     ? (req.user.company ? { $or: [{ company: req.user.company }, { company: null }] } : {})
     : { createdBy: req.user._id };
 
-  const schedules = await RecurringTask.find(filter)
+  const schedules = await RecurringTask.find({ ...filter, deletedAt: null })
     .populate('assignees', 'firstName lastName photo')
     .populate('loopUsers', 'firstName lastName')
     .sort({ isActive: -1, createdAt: -1 })
@@ -454,7 +454,7 @@ const getRecurring = asyncHandler(async (req, res) => {
     .populate('assignees', 'firstName lastName photo')
     .populate('loopUsers', 'firstName lastName')
     .lean();
-  if (!schedule) bad(res, 'That schedule is gone.', 404);
+  if (!schedule || schedule.deletedAt) bad(res, 'That schedule is gone.', 404);
   if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to open.', 403);
   const stats = await statsFor([schedule._id]);
   res.json({ schedule: present(schedule, stats.get(String(schedule._id))) });
@@ -587,7 +587,7 @@ const createRecurring = asyncHandler(async (req, res) => {
 const updateRecurring = asyncHandler(async (req, res) => {
   if (!access.isValidId(req.params.id)) bad(res, 'That schedule is gone.', 404);
   const schedule = await RecurringTask.findById(req.params.id);
-  if (!schedule) bad(res, 'That schedule is gone.', 404);
+  if (!schedule || schedule.deletedAt) bad(res, 'That schedule is gone.', 404);
   if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to change.', 403);
 
   const b = parseBody(req);
@@ -669,22 +669,34 @@ const updateRecurring = asyncHandler(async (req, res) => {
   res.json({ schedule: present(fresh, stats.get(String(schedule._id))) });
 });
 
-/** DELETE /api/tasks/recurring/:id — stop it. Past occurrences stay. */
+/**
+ * DELETE /api/tasks/recurring/:id — stop it. Past occurrences stay.
+ * DELETE /api/tasks/recurring/:id?remove=1 — DELETE it (2026-09-30): stopped
+ * AND taken off every list for good. Tasks it already raised stay as they are.
+ * Plain DELETE keeps meaning "stop", because an older app sends it for Stop.
+ */
 const deleteRecurring = asyncHandler(async (req, res) => {
+  if (!access.isValidId(req.params.id)) bad(res, 'That schedule is already gone.', 404);
   const schedule = await RecurringTask.findById(req.params.id);
-  if (!schedule) bad(res, 'That schedule is already gone.', 404);
+  if (!schedule || schedule.deletedAt) bad(res, 'That schedule is already gone.', 404);
   if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to remove.', 403);
   // Switched off rather than deleted: the tasks it already raised point at it,
   // and a dangling reference is how a list row loses its "Weekly" label.
   schedule.isActive = false;
+  const remove = ['1', 'true'].includes(String(req.query.remove || ''));
+  if (remove) {
+    schedule.deletedAt = new Date();
+    schedule.deletedBy = req.user._id;
+    schedule.deletedByName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim();
+  }
   await schedule.save();
-  res.json({ ok: true });
+  res.json({ ok: true, deleted: remove });
 });
 
 /** POST /api/tasks/recurring/:id/run — raise whatever is due to appear now. */
 const runRecurringNow = asyncHandler(async (req, res) => {
   const schedule = await RecurringTask.findById(req.params.id).lean();
-  if (!schedule) bad(res, 'That schedule is gone.', 404);
+  if (!schedule || schedule.deletedAt) bad(res, 'That schedule is gone.', 404);
   if (!mayManage(req.user, schedule)) bad(res, 'That schedule is not yours to run.', 403);
   const made = await recurrence.runSchedule(schedule);
   res.json({ raised: made.length, tasks: made.map((t) => ({ _id: t._id, code: t.code, dueDate: t.dueDate })) });

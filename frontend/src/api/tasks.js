@@ -334,6 +334,8 @@ export const updateRecurring = (id, body, upload) => {
   return api.patch(`/tasks/recurring/${id}`, data).then((r) => r.data);
 };
 export const deleteRecurring = (id) => api.delete(`/tasks/recurring/${id}`).then((r) => r.data);
+/** DELETE it for good (2026-09-30) — off every list; tasks it already raised stay. */
+export const removeRecurring = (id) => api.delete(`/tasks/recurring/${id}`, { params: { remove: 1 } }).then((r) => r.data);
 
 /* PATCH /tasks/templates/:id and POST /tasks/recurring/:id/run answer on the
  * server but have no button in this portal — a template is copied and edited as

@@ -375,6 +375,9 @@ async function listKhatasOf(employeeId, includeClosed = false) {
     ],
   };
   if (!includeClosed) filter.isActive = true;
+  // A book its owner deleted is gone from their cashbook and their colleagues'
+  // (2026-09-30); the company still sees it through its own lists.
+  filter.deletedByOwnerAt = null;
 
   const khatas = await EmployeeKhata.find(filter)
     .populate('members.user', 'firstName lastName email photo')
@@ -423,6 +426,11 @@ async function loadKhataForViewer(khataId, userId) {
   if (!khata.canView(userId)) {
     const err = new Error('You do not have access to that book.');
     err.statusCode = 403;
+    throw err;
+  }
+  if (khata.deletedByOwnerAt) {
+    const err = new Error('That book has been deleted.');
+    err.statusCode = 404;
     throw err;
   }
   return khata;

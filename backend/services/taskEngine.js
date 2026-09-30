@@ -1073,6 +1073,12 @@ async function requestExtension({ taskId, user, toDate, reason = '' }) {
   const mine = task.assigneeFor(user._id);
   if (!mine) throw fail('Only the person doing this can ask for more time.', 403);
   if (isTerminal(task.status)) throw fail('That task is closed.');
+  // Only once it is taken on (user 2026-09-30: "anyone can ask multiple times
+  // of overtime but only after acceptance") — before that the answer to a
+  // deadline you cannot meet is to decline it, or to have it edited.
+  if (mine.acceptance !== ACCEPTANCE.ACCEPTED) {
+    throw fail('Accept the task first — more time can be asked for once you have taken it on.');
+  }
 
   const said = String(reason || '').trim();
   if (!said) throw fail('Say why you need longer — the person deciding has nothing else to go on.');
@@ -1087,15 +1093,37 @@ async function requestExtension({ taskId, user, toDate, reason = '' }) {
     throw fail('You have already asked for more time on this. Wait for an answer first.');
   }
 
+  // YOUR OWN TASK (user 2026-09-30: "task which is assigned to myself for that
+  // if overtime is asked then it should get auto approved"): you set it and
+  // nobody else signs it off, so the only person who could answer is you — it
+  // is granted there and then, with the same trail as a real decision.
+  const approver = task.approver?._id || task.approver;
+  const selfSet = String(task.createdBy?._id || task.createdBy || '') === String(user._id)
+    && (!approver || String(approver) === String(user._id));
+
+  const now = new Date();
   task.extensions.push({
     requestedBy: user._id,
     requestedByName: personName(user),
-    requestedAt: new Date(),
+    requestedAt: now,
     fromDate: task.dueDate,
     toDate: when,
     reason: said.slice(0, 1000),
-    status: EXTENSION_STATUS.PENDING,
+    status: selfSet ? EXTENSION_STATUS.APPROVED : EXTENSION_STATUS.PENDING,
+    ...(selfSet ? {
+      decidedBy: user._id,
+      decidedByName: personName(user),
+      decidedAt: now,
+      decisionNote: 'Approved automatically — your own task.',
+    } : {}),
   });
+  if (selfSet) {
+    // What decideExtension does on a yes.
+    task.dueDate = when;
+    task.extensionCount = (task.extensionCount || 0) + 1;
+    task.firedReminders = [];
+    task.overdueNotifiedAt = undefined;
+  }
   task.updateCount = (task.updateCount || 0) + 1;
   await task.save();
 
@@ -1107,6 +1135,17 @@ async function requestExtension({ taskId, user, toDate, reason = '' }) {
     byName: personName(user),
     note: said,
   });
+
+  if (selfSet) {
+    await TaskUpdate.create({
+      task: task._id,
+      kind: 'EXTENSION_DECIDED',
+      by: user._id,
+      byName: personName(user),
+      note: 'More time granted automatically — your own task.',
+    });
+    return { task, update, extension: asked, autoApproved: true };
+  }
 
   notify.extensionAsked(task, update, user, asked)
     .catch((e) => console.error('task notify failed:', e.message));

@@ -419,8 +419,9 @@ async function runInterviews(dateStr, activeIds) {
     for (const r of c.rounds || []) {
       if (!r.scheduledAt || !r.interviewer) continue;
       // Already-decided rounds don't need a nudge, and neither does one On Hold
-      // — it is paused, so the slot on it is not happening.
-      if (r.status === 'Cleared' || r.status === 'Rejected' || r.status === 'OnHold') continue;
+      // — it is paused, so the slot on it is not happening — nor a No Show,
+      // whose slot has already been missed (a rescheduled one is Scheduled again).
+      if (['Cleared', 'Rejected', 'OnHold', 'NoShow'].includes(r.status)) continue;
       const at = new Date(r.scheduledAt);
       if (at < start || at > end) continue;
       if (!active.has(String(r.interviewer))) continue;

@@ -23,6 +23,7 @@ import { COMPANY_NAME } from '../config/company';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog } from '../components/dialogs';
 import { hasLeft } from '../utils/peopleOptions';
+import { roundStatusLabel } from '../components/InterviewAssessment';
 import { toast } from 'react-toastify';
 
 const MONTH_NAMES = [
@@ -229,7 +230,7 @@ export default function Calendar() {
       // SuperAdmin and HR see every round booked, not just their own, so the
       // panel says whose it is ('You' on the viewer's own).
       if (m.interviewer !== undefined) rows.push(['Interviewer', m.interviewer || 'Not assigned yet']);
-      if (m.status) rows.push(['Status', m.status]);
+      if (m.status) rows.push(['Status', roundStatusLabel(m.status)]);
     } else if (e.type === 'reminder' || e.type === 'hrReminder') {
       if (m.time) rows.push(['Time', m.time]);
       rows.push(['Set by', m.setByRole ? `${m.setBy} (${m.setByRole})` : m.setBy]);

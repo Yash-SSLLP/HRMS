@@ -364,6 +364,11 @@ async function run() {
     dueDate: day(2),
     firedReminders: ['APP:BEFORE:1:DAYS'],
   });
+  check('not before it is accepted (2026-09-30)',
+    Boolean(await refused(() => engine.requestExtension({
+      taskId: chased._id, user: dev, toDate: day(5), reason: 'Too soon to ask.',
+    }))), true);
+  await Task.updateOne({ _id: chased._id }, { $set: { 'assignees.0.acceptance': ACCEPTANCE.ACCEPTED } });
   check('a reason is required',
     Boolean(await refused(() => engine.requestExtension({
       taskId: chased._id, user: dev, toDate: day(5), reason: '',

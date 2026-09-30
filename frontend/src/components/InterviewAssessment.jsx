@@ -34,7 +34,7 @@ export const RATING_FIELDS = [
 export const SCALE = ['Not rated', 'Well below bar', 'Below bar', 'Meets the bar', 'Above the bar', 'Outstanding'];
 
 export const RECOMMENDATIONS = ['Strong Hire', 'Hire', 'Borderline', 'No Hire'];
-const REC_STYLES = {
+export const REC_STYLES = {
   'Strong Hire': 'bg-green-100 text-green-800',
   Hire: 'bg-emerald-50 text-emerald-700',
   Borderline: 'bg-amber-100 text-amber-800',
@@ -42,18 +42,143 @@ const REC_STYLES = {
 };
 
 // Mirrors ROUND_STATUS in models/Candidate.js, in the order the pickers offer it.
-export const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'Cleared', 'Rejected'];
+export const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'NoShow', 'Cleared', 'Rejected'];
+
+// Mirrors RESCHEDULABLE_ROUND_STATUS: a round not yet decided can be moved to a
+// new slot (a no-show re-held, a time the panel cannot make). A decided one cannot.
+export const RESCHEDULABLE_STATUS = ['Pending', 'Scheduled', 'OnHold', 'NoShow'];
+export const canRescheduleRound = (r) => RESCHEDULABLE_STATUS.includes(r?.status || 'Pending');
 
 export const ROUND_STATUS_STYLES = {
   Pending: 'bg-gray-100 text-gray-600',
   Scheduled: 'bg-blue-100 text-blue-700',
   OnHold: 'bg-amber-100 text-amber-800',
+  // Orange, not On Hold's amber: a missed slot is its own fact, and it is the
+  // one status that asks HR to book a new date.
+  NoShow: 'bg-orange-100 text-orange-800',
   Cleared: 'bg-green-100 text-green-700',
   Rejected: 'bg-red-100 text-red-700',
 };
 
-/** A round status as people say it — the stored "OnHold" reads "On Hold". */
-export const roundStatusLabel = (s) => (s === 'OnHold' ? 'On Hold' : s || 'Pending');
+const ROUND_STATUS_LABELS = { OnHold: 'On Hold', NoShow: 'No Show' };
+/** A round status as people say it — the stored "OnHold" reads "On Hold", "NoShow" "No Show". */
+export const roundStatusLabel = (s) => ROUND_STATUS_LABELS[s] || s || 'Pending';
+
+/**
+ * One line of a round's change history. A `Rescheduled` entry says where the
+ * round moved from and to (and why) instead of just "Scheduled".
+ * @param {Object} h - a roundHistory entry
+ * @returns {string}
+ */
+export function historyText(h) {
+  if (h?.event === 'Rescheduled') {
+    const from = h.fromScheduledAt ? ` from ${formatDateTime12(h.fromScheduledAt)}` : '';
+    const after = h.fromStatus === 'NoShow' ? ' after a no-show' : '';
+    return `Rescheduled${after}${from} to ${formatDateTime12(h.toScheduledAt)}${h.reason ? ` — ${h.reason}` : ''}`;
+  }
+  return roundStatusLabel(h?.status);
+}
+
+/**
+ * The trail of a round's moves ("Rescheduled from … to …"), oldest first.
+ * @param {{items: Array<{fromStatus, from, to, reason, byName, at}>, className?: string}} props
+ */
+export function RescheduleTrail({ items = [], className = '' }) {
+  if (!items.length) return null;
+  return (
+    <ul className={`space-y-0.5 ${className}`}>
+      {items.map((m, i) => (
+        <li key={i} className="text-[11px] text-gray-500">
+          <span className="font-medium text-gray-700">↻ Rescheduled</span>
+          {m.fromStatus === 'NoShow' ? ' after a no-show' : ''}
+          {m.from ? ` from ${formatDateTime12(m.from)}` : ''}
+          {m.to ? ` to ${formatDateTime12(m.to)}` : ''}
+          {m.reason ? ` — ${m.reason}` : ''}
+          {m.byName ? ` · by ${m.byName}` : ''}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** An ISO/Date → value for an <input type="datetime-local"> (in local time). */
+const toLocalInput = (d) => {
+  if (!d) return '';
+  const dt = new Date(d);
+  return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+/**
+ * The Reschedule dialog: a new date/time and a reason, plus whatever extra
+ * fields the caller adds (HR's interviewer / duration / link). The parent does
+ * the saving; `onSubmit({scheduledAt, reason})` resolves true to close.
+ * @param {{round: Object, title: string, subtitle?: string, onClose: Function,
+ *   onSubmit: Function, children?: React.ReactNode, note?: string}} props
+ */
+export function RescheduleDialog({ round, title, subtitle, onClose, onSubmit, children, note }) {
+  // A no-show starts empty (the old slot is the one that was missed); a moved
+  // slot starts from the time it had, to be nudged.
+  const [when, setWhen] = useState(round?.status === 'NoShow' ? '' : toLocalInput(round?.scheduledAt));
+  const [reason, setReason] = useState(round?.status === 'NoShow' ? 'Candidate did not show up' : '');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!when) return;
+    setSaving(true);
+    const ok = await onSubmit({ scheduledAt: new Date(when).toISOString(), reason: reason.trim() });
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8 space-y-3">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          {subtitle && <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>}
+        </div>
+        {round?.scheduledAt && (
+          <p className="text-xs text-gray-600">
+            {round.status === 'NoShow' ? 'Missed slot' : 'Currently booked for'}:{' '}
+            <span className="font-medium">{formatDateTime12(round.scheduledAt)}</span>
+          </p>
+        )}
+        <div>
+          <label className="block text-xs font-semibold text-gray-700 mb-1">New date &amp; time</label>
+          <input
+            type="datetime-local"
+            required
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-700 mb-1">Reason</label>
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            maxLength={500}
+            placeholder="e.g. Candidate did not show up / interviewer unavailable"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          />
+        </div>
+        {children}
+        <p className="text-[11px] text-gray-500">
+          {note || 'The round goes back to Scheduled at the new time. The old date and the reason stay in its history.'}
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
+          <button type="submit" disabled={saving || !when}
+            className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
+            {saving ? 'Rescheduling…' : 'Reschedule'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
 
 // The length a write-up is nudged towards. ADVICE, never a gate — nothing here
 // or on the server refuses a shorter one. Mirrors SUGGESTED_REMARK_CHARS in
@@ -116,7 +241,7 @@ export function RoundBadge({ children, className = '' }) {
  */
 export function roundBoxClass(status) {
   const tone = {
-    Cleared: 'is-cleared', Rejected: 'is-rejected', Scheduled: 'is-scheduled', OnHold: 'is-onhold',
+    Cleared: 'is-cleared', Rejected: 'is-rejected', Scheduled: 'is-scheduled', OnHold: 'is-onhold', NoShow: 'is-noshow',
   }[status] || 'is-pending';
   return `round-box ${tone}`;
 }
@@ -166,7 +291,7 @@ export function StarRow({ value = 0, onChange, disabled = false, size = 'text-xl
 
 // Spelled out rather than left as "Feedback…": the example is what makes the
 // difference between a professional write-up and "tty".
-const REMARK_PLACEHOLDER = [
+export const REMARK_PLACEHOLDER = [
   'Summarise the interview in a few professional sentences: what you assessed, how the candidate performed against it, and what you recommend.',
   '',
   'e.g. "Took the candidate through their last two projects and a scenario on handling a client escalation. Explained their approach clearly and owned the outcome. Commercial exposure is lighter than the role needs, so pricing conversations are worth testing in the next round. Recommend proceeding."',

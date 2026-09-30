@@ -794,7 +794,9 @@ function capabilitiesFor(user, task) {
     // One un-answered request per person: a doer who could stack three would be
     // asking the same question three times, and the assigner would have to say
     // no to all of them.
+    // As many times as needed, but only once it is taken on (2026-09-30).
     canRequestExtension: !routine && Boolean(mine) && open && Boolean(task.dueDate)
+      && mine.acceptance === ACCEPTANCE.ACCEPTED
       && !(task.extensions || []).some(
         (e) => e.status === EXTENSION_STATUS.PENDING
           && String(e.requestedBy?._id || e.requestedBy) === id

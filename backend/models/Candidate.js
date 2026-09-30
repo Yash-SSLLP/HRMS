@@ -8,8 +8,16 @@ const CANDIDATE_STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'O
 // Per interview-round outcome: Pending -> not yet set; Scheduled -> slot booked;
 // OnHold -> paused, neither passed nor failed (shown as "On Hold": the round
 // waits on something — the candidate, the panel, the opening — and nobody is
-// asked to act on it meanwhile); Cleared -> passed; Rejected -> failed.
-const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'Cleared', 'Rejected'];
+// asked to act on it meanwhile); Cleared -> passed; Rejected -> failed;
+// NoShow -> the candidate did not turn up for the slot (shown as "No Show").
+// A no-show is an outcome of the SLOT, not a verdict on the candidate: it never
+// counts as passed, and the round can be rescheduled back to Scheduled
+// (recruitmentController rescheduleRound), which keeps the missed date in the
+// round's history.
+const ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'NoShow', 'Cleared', 'Rejected'];
+// The statuses a round may be rescheduled from. A decided round (Cleared /
+// Rejected) is finished — moving its date would rewrite when it happened.
+const RESCHEDULABLE_ROUND_STATUS = ['Pending', 'Scheduled', 'OnHold', 'NoShow'];
 const NUM_ROUNDS = 4;
 
 // ===== The written assessment behind a round's verdict =====
@@ -54,6 +62,15 @@ const roundHistorySchema = new mongoose.Schema(
     // The recommendation as it stood at this change, so a verdict that softened
     // between two sittings is visible in the trail rather than overwritten.
     recommendation: { type: String, trim: true },
+    // Set on an entry that MOVED the round rather than decided it: the round
+    // went back to Scheduled at a new time. `fromStatus` is what it was before
+    // (a No Show, usually), `fromScheduledAt` the slot that was given up
+    // (absent when the round had no time booked) and `reason` why.
+    event: { type: String, enum: ['Rescheduled'] },
+    fromStatus: { type: String, trim: true },
+    fromScheduledAt: { type: Date },
+    toScheduledAt: { type: Date },
+    reason: { type: String, trim: true },
   },
   { _id: false }
 );
@@ -190,6 +207,9 @@ const candidateSchema = new mongoose.Schema(
       user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       name: { type: String, trim: true },
       addedAt: { type: Date },
+      // The agency took this candidate off ITS list (2026-09-30) after the
+      // company had already acted on them — the company's record stays whole.
+      hiddenAt: { type: Date },
     },
 
     // Extra details collected by the public application form.
@@ -426,6 +446,7 @@ module.exports.reapplyOn = reapplyOn;
 module.exports.withinReapplyHold = withinReapplyHold;
 module.exports.CANDIDATE_DOC_STATUS = CANDIDATE_DOC_STATUS;
 module.exports.ROUND_STATUS = ROUND_STATUS;
+module.exports.RESCHEDULABLE_ROUND_STATUS = RESCHEDULABLE_ROUND_STATUS;
 module.exports.ASSESSMENT_RATINGS = ASSESSMENT_RATINGS;
 module.exports.ROUND_RECOMMENDATIONS = ROUND_RECOMMENDATIONS;
 module.exports.defaultRounds = defaultRounds;

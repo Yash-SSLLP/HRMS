@@ -11,6 +11,10 @@ export const COMPANY_LOGO = '/logo.svg';
 // the sidebar, paired with the COMPANY_NAME text so nothing is squeezed.
 export const COMPANY_LOGO_MARK = '/logo-mark.svg';
 export const COMPANY_LOGO_PNG = '/logo.png';
+// THE logo as the company supplied it (2026-09-30, user: "use this logo as it
+// in website") — wordmark, arrow and tagline in one image, shown untouched in
+// the sidebar header and on the login / public pages.
+export const COMPANY_LOGO_FULL = '/logo-full.png';
 export const COMPANY_LOGO_URL = 'https://sequencesurface.com/images/logo.png';
 // Brand gold, mirrored from the --gold-* tokens in index.css. For the rare spot
 // that needs the value in JS (inline styles, canvas/chart fills).

@@ -202,6 +202,8 @@ function AccessTab({ showGuide, setShowGuide }) {
     // A switch again since 2026-09-28 (the user's "toggle in permission …
     // CEO/MD approval mandatory for any advance or not"). Default ON.
     khataAdvanceApprovalRequired: true,
+    // Whether a book's PDF button offers a choice of report (2026-09-30). Off.
+    khataReportChoice: false,
     documentFooter: { helpline: '', note: '' },
   });
   // What flipping the advance switch did to requests in flight, said once.
@@ -220,6 +222,7 @@ function AccessTab({ showGuide, setShowGuide }) {
     typedTextTranslation: d.typedTextTranslation !== false,
     translation: d.translation || null,
     khataAdvanceApprovalRequired: d.khataAdvanceApprovalRequired !== false,
+    khataReportChoice: !!d.khataReportChoice,
     documentFooter: {
       helpline: d.documentFooter?.helpline || '',
       note: d.documentFooter?.note || '',
@@ -633,6 +636,19 @@ function AccessTab({ showGuide, setShowGuide }) {
             busy={orgBusy}
             onLabel="Required" offLabel="Not required"
             onChange={() => toggleOrg('khataAdvanceApprovalRequired', 'Could not update the advance approval setting')} />
+
+          {/* THE ONE-TAP BOOK PDF (2026-09-30, user: the PDF should open with
+              Day-wise with category summary picked, and a Super Admin can "add
+              other option or remove other"). */}
+          <SettingRow
+            title="Cashbook PDF — choice of report"
+            description={org.khataReportChoice
+              ? 'On. A book’s PDF button opens a short choice — Day-wise with category summary (already picked) or All entries — with the option to attach the bills, then builds it. Switch it off and the button builds the Day-wise with category summary in one tap.'
+              : 'Off. A book’s PDF button builds the Day-wise with category summary in one tap, bills attached — no choice to make. Switch it on to offer All entries beside it as well.'}
+            checked={org.khataReportChoice}
+            busy={orgBusy}
+            onLabel="Choice offered" offLabel="Day-wise only"
+            onChange={() => toggleOrg('khataReportChoice', 'Could not update the cashbook PDF setting')} />
           {orgNotice && (
             <p className="py-2 text-xs font-medium text-green-700" role="status">{orgNotice}</p>
           )}

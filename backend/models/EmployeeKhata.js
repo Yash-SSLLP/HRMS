@@ -122,6 +122,12 @@ const employeeKhataSchema = new mongoose.Schema(
     closedAt: { type: Date, default: null },
     closedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     closedByOwner: { type: Boolean, default: false },
+    // DELETED BY ITS OWNER (2026-09-30, user: "give option to delete any
+    // book"). Money is never deleted here, so this is a stamp, not a removal:
+    // the book is closed and taken off the owner's and its members' cashbook,
+    // while every entry in it stays on the company's record and in the wallet.
+    // A company re-open clears it and the book comes back.
+    deletedByOwnerAt: { type: Date, default: null },
     // WHAT IT STOOD AT WHEN IT WAS CLOSED (2026-09-29, user: "when a cashbook
     // got closed, this amount at that time only should be mentioned at the top
     // — so on closing any book, its PDF comes out the same every time"). The

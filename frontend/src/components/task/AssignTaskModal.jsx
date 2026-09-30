@@ -65,7 +65,7 @@ import Stepper from './Stepper';
 import ReminderPattern, { repeatingRule } from './ReminderPattern';
 import {
   TASK_PRIORITY, FREQUENCY_LABELS, WEEKDAYS, WEEKDAY_NAMES,
-  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel,
+  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel, time12,
   reminderLabel, reminderPattern,
 } from '../../utils/taskLifecycle';
 
@@ -113,11 +113,14 @@ function splitReminders(list = []) {
 }
 
 /**
- * What a schedule is chased with until somebody chooses: every two hours, 9 AM
- * to 9 PM, until done — whatever the frequency since 2026-09-29 (the user:
- * reminders are "by default Repeat Until Done"; the "before" offsets went).
+ * What a schedule is chased with until somebody chooses: a daily routine every
+ * two hours until done (the user's own example); anything else once, an hour
+ * before it is due. (Hourly-only 2026-09-29; back to this 2026-09-30, user:
+ * "these all reminder option should be back".)
  */
-const remindersFor = () => ({ every: repeatingRule('HOURLY'), before: [] });
+const remindersFor = (frequency) => (frequency === 'DAILY'
+  ? { every: repeatingRule('HOURLY'), before: [] }
+  : { every: null, before: [60] });
 
 /** A fresh recurring pattern — daily at 6 pm from today, chased every 2 hours. */
 function emptyRecur() {
@@ -307,10 +310,6 @@ export default function AssignTaskModal({
           startDate: istYmd(sc.startDate) || todayYmd(),
           until: istYmd(sc.until),
           ...splitReminders(sc.reminders || []),
-          // The "before" chips are gone (2026-09-29): its offsets join the
-          // other kept rules, shown to be taken off.
-          before: [],
-          otherReminders: (sc.reminders || []).filter((r) => r.when !== 'EVERY'),
           remindersTouched: true,
         });
       })
@@ -367,6 +366,18 @@ export default function AssignTaskModal({
     time: recur.time || '18:00',
   };
   const leadDays = DEFAULT_LEAD_DAYS[recur.frequency] ?? 0;
+
+  /**
+   * How long each occurrence is on their list before it is due. A "before"
+   * reminder earlier than that could never go — it would fall before the task
+   * exists (a daily 6 PM task appears at 9 AM: "1 day before" is never sent).
+   */
+  const lifetimeMin = (() => {
+    const [h, m] = String(recur.time || '18:00').split(':').map((n) => parseInt(n, 10) || 0);
+    const due = h * 60 + m;
+    if (leadDays) return leadDays * 1440 + due - 9 * 60;
+    return due < 10 * 60 ? 60 : due - 9 * 60;
+  })();
 
   /** A new weekly or monthly reminder starts on the task's own days. */
   const reminderHints = {
@@ -1033,14 +1044,49 @@ export default function AssignTaskModal({
                   value={recur.every}
                   onChange={(every) => setRecur({ every, remindersTouched: true })}
                   hints={reminderHints}
-                  hourlyOnly
                 />
               </div>
 
-              {/* "ALSO REMIND BEFORE IT IS DUE" IS GONE (2026-09-29, user: remove
-                  Before and After — a reminder repeats until done, hourly). A
-                  saved schedule's offsets are among the kept rules below. */}
-              <div className="space-y-2">
+              <div className="space-y-2 border-t border-gray-100 pt-3">
+                <p className="text-sm font-medium text-gray-700">Also remind before it is due</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {BEFORE_CHOICES.map(({ mins, label }) => {
+                    const on = recur.before.includes(mins);
+                    const tooEarly = mins > lifetimeMin;
+                    return (
+                      <button
+                        key={mins}
+                        type="button"
+                        aria-pressed={on}
+                        // Picking one that could never go is refused; one an older
+                        // schedule already has can still be taken off.
+                        disabled={tooEarly && !on}
+                        title={tooEarly ? 'Earlier than it appears in their Tasks — it would never be sent.' : undefined}
+                        onClick={() => setRecur({
+                          remindersTouched: true,
+                          before: on ? recur.before.filter((m) => m !== mins) : [...recur.before, mins].sort((a, b) => a - b),
+                        })}
+                        className={`rounded-lg border px-3 text-xs font-medium transition min-h-[32px] disabled:cursor-not-allowed disabled:opacity-40 ${
+                          on && tooEarly ? 'border-red-300 bg-red-50 text-red-700'
+                            : on ? 'accent-border accent-bg on-accent'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        }`}
+                      >
+                        {label} before
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-gray-400">
+                  {recur.before.length
+                    ? `Once each, counted back from ${time12(recur.time || '18:00')}.`
+                    : 'None — only the reminder above, if it is on.'}
+                  {recur.before.some((m) => m > lifetimeMin) && (
+                    <span className="font-medium text-red-600">
+                      {' '}The one in red falls before it appears in their Tasks, so it would never be sent — take it off.
+                    </span>
+                  )}
+                </p>
                 {recur.otherReminders.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {recur.otherReminders.map((r, i) => (
@@ -1105,7 +1151,11 @@ export default function AssignTaskModal({
                 {/* The reminder grant's alone (2026-09-28). */}
                 {canRemind && (
                   <button type="button" onClick={() => {
-                    if (!showReminders && !form.reminders.length) set({ reminders: [repeatingRule('HOURLY')] });
+                    if (!showReminders && !form.reminders.length) {
+                      set({ reminders: meta?.defaultReminders?.length
+                        ? meta.defaultReminders.map((r) => ({ ...r }))
+                        : [{ channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' }] });
+                    }
                     setShowReminders((v) => !v);
                   }} title="Set reminders"
                     className={`min-h-[40px] min-w-[40px] ${iconBtn} ${form.reminders.length ? 'accent-border accent-text' : ''}`}>
