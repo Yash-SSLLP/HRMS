@@ -180,16 +180,9 @@ export default function ReminderPattern({
 
       {pattern === 'HOURLY' && (
         <>
+          {/* No "Every hour / 2 / 3 hours" chips (2026-09-30, user: "remove
+              this" — task and recurring); the stepper alone sets the gap. */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-gray-500">How often</span>
-            {[[1, 'Every hour'], [2, 'Every 2 hours'], [3, 'Every 3 hours']].map(([n, label]) => {
-              const on = value.unit !== 'MINUTES' && Number(value.amount) === n;
-              return (
-                <button key={n} type="button" aria-pressed={on} onClick={() => set({ unit: 'HOURS', amount: n })} className={chip(on)}>
-                  {label}
-                </button>
-              );
-            })}
             <Stepper
               label="Every how many hours"
               value={hours}

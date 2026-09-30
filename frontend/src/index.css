@@ -249,34 +249,29 @@ a, button, input, select, textarea,
 }
 
 /* Sidebar brand header (REDONE 2026-09-30, user: the logo "make it bigger …
-   make it premium"). 6rem tall, so the company logo can be shown large; a
+   make it premium"). 5rem tall (6rem until the logo was made smaller the same day); a
    clean surface with only a faint gold sheen at the top (a gold wash behind the
    black logo read muddy); and, underneath, a CENTRED tapered gold rule — an
    ornament under the logo rather than a border continuing the top bar's. */
 .brand-bar {
   position: relative;
   background-image:
-    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--gold-300) 14%, transparent) 0%, transparent 70%),
+    radial-gradient(120% 90% at 20% 0%, color-mix(in srgb, var(--gold-300) 14%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, color-mix(in srgb, var(--gold-100) 18%, var(--surface)) 0%, var(--surface) 100%);
 }
 html.dark .brand-bar {
   background-image:
-    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--gold-500) 12%, transparent) 0%, transparent 70%),
+    radial-gradient(120% 90% at 20% 0%, color-mix(in srgb, var(--gold-500) 12%, transparent) 0%, transparent 70%),
     linear-gradient(180deg, color-mix(in srgb, var(--gold-900) 14%, var(--surface)) 0%, var(--surface) 100%);
 }
+/* Option E (2026-09-30): a plain full-width hairline under the header (the
+   centred gold ornament suited the old centred logo, not a left-aligned one). */
 .brand-bar::after {
   content: '';
   position: absolute;
-  left: 1.25rem; right: 1.25rem; bottom: -1px;
+  left: 0; right: 0; bottom: -1px;
   height: 1px;
-  background-image: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--gold-500) 60%, transparent) 22%,
-    var(--gold-300) 50%,
-    color-mix(in srgb, var(--gold-500) 60%, transparent) 78%,
-    transparent
-  );
+  background: var(--border);
 }
 
 .brand-lock {
@@ -382,17 +377,25 @@ html.dark .brand-tag { color: color-mix(in srgb, var(--gold-300) 66%, #94a3b8); 
 /* The company's logo image, as supplied (2026-09-30) — BrandLockup. Sized by
    height only so it keeps its own proportions; never tinted or filtered. */
 .brand-full {
-  display: block; height: 4.75rem; width: auto; max-width: 100%;
+  /* Option E (2026-09-30): the logo sits left, beside the portal label. */
+  display: block; height: 2.15rem; width: auto; max-width: 100%; flex: none;
   transition: transform .25s ease, opacity .25s ease;
 }
 .brand-lock:hover .brand-full { transform: translateY(-1px) scale(1.015); }
-@media (min-width: 1536px) { .brand-full { height: 5.25rem; } }
-.brand-stack-full { display: block; height: 5.5rem; width: auto; max-width: 100%; }
-/* The logo is black lettering on a transparent ground (the one supplied
-   2026-09-30), so on the dark theme it is shown white — same file, inverted. */
-html.dark .brand-full, html.dark .brand-stack-full { filter: invert(1); }
+@media (min-width: 1536px) { .brand-full { height: 2.35rem; } }
+.brand-stack-full { display: block; height: 4.25rem; width: auto; max-width: 100%; }
+/* Gold lettering on a transparent ground (the logo since 2026-09-30) reads on
+   both themes as it is — no dark-mode invert (that would turn the gold blue). */
 /* The mark tile is only the collapsed rail's stand-in for the logo. */
 .brand-lock .brand-mark { display: none; }
+/* Option E: hairline divider, then "HRMS" in gold over the portal name. */
+.brand-divider { flex: none; width: 1px; height: 1.65rem; background: var(--border); }
+.brand-portal { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; text-align: left; }
+.brand-portal-name { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; color: #8a6a2a; }
+.brand-portal-sub { font-size: 0.72rem; font-weight: 500; color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+html.dark .brand-portal-name { color: #d6b25a; }
+html.dark .brand-portal-sub { color: #8b8f98; }
+.sidebar-shell.is-rail .brand-lock :is(.brand-divider, .brand-portal) { display: none; }
 .sidebar-shell.is-rail .brand-lock .brand-full { display: none; }
 .sidebar-shell.is-rail .brand-lock .brand-mark { display: inline-flex; }
 @media (max-width: 380px) {
@@ -3582,6 +3585,29 @@ html.dark .skeleton::after { background: linear-gradient(90deg, transparent, rgb
   color: color-mix(in srgb, var(--chart-7) 75%, var(--cal-ink));
 }
 
+/* The days to fix, spelled out under the legend (2026-09-30): date, punches,
+   and what is wrong as small tinted chips. Scrolls inside the popover. */
+.adp-fixlist {
+  max-height: 11.5rem; overflow-y: auto;
+  padding: 0 .6rem .5rem; display: flex; flex-direction: column; gap: .3rem;
+}
+.adp-fixrow {
+  display: grid; grid-template-columns: auto 1fr; gap: .15rem .6rem; align-items: center;
+  width: 100%; text-align: left; padding: .45rem .6rem; border-radius: .6rem;
+  border: 1px solid color-mix(in srgb, var(--chart-critical) 28%, var(--border));
+  background-color: color-mix(in srgb, var(--chart-critical) 6%, var(--surface));
+  font-size: .72rem; color: var(--cal-ink);
+}
+.adp-fixrow:hover { background-color: color-mix(in srgb, var(--chart-critical) 12%, var(--surface)); }
+.adp-fixrow.is-sel { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+.adp-fixdate { font-weight: 700; white-space: nowrap; }
+.adp-fixtimes { color: var(--cal-ink-dim); text-align: right; white-space: nowrap; }
+.adp-fixchips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .25rem; }
+.adp-chip { font-size: .64rem; font-weight: 700; padding: .05rem .4rem; border-radius: 999px; }
+.adp-chip.is-bad { color: color-mix(in srgb, var(--chart-critical) 85%, var(--cal-ink)); background-color: color-mix(in srgb, var(--chart-critical) 15%, transparent); }
+.adp-chip.is-warn { color: color-mix(in srgb, #d97706 85%, var(--cal-ink)); background-color: color-mix(in srgb, #f59e0b 16%, transparent); }
+.adp-chip.is-info { color: color-mix(in srgb, var(--chart-7) 85%, var(--cal-ink)); background-color: color-mix(in srgb, var(--chart-7) 15%, transparent); }
+
 /* "3 to fix" — how much of this month is worth a regularization. */
 .adp-flag {
   margin-left: auto; font-weight: 700;
@@ -4140,7 +4166,7 @@ html.dark .Toastify__toast-container--bottom-center .Toastify__toast {
    the hairline under the brand bar (4px strip + 64px bar - half its 28px). */
 .sidebar-toggle {
   position: fixed;
-  top: calc(0.25rem + 6rem - 0.875rem); /* on the brand header's lower edge (6rem since 2026-09-30) */
+  top: calc(0.25rem + 4rem - 0.875rem); /* on the brand header's lower edge (4rem — h-16 — option E header) */
   left: calc(16rem - 0.875rem);
   z-index: 45;
   align-items: center;
@@ -4440,4 +4466,66 @@ a.bg-gray-900:not(#_):focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .sidebar-shell, .app-content, .sidebar-toggle { transition: none; }
   .rail-flyout { animation: none; }
+}
+
+/* ===== Approval chain (2026-09-30, the user's sketch) =====================
+   ONE LINE of boxes — name, then a status square at the right edge:
+   ● pending · ✓ approved · ✕ rejected (○ waiting, – skipped). Never wraps:
+   the boxes share the width and a long name ends in an ellipsis.
+   Component: ChainProgress in components/LeaveApprovalsInbox.jsx. */
+.chain-wrap { min-width: 0; }
+.chain-line { display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; }
+.chain-first { display: none; }
+.chain-arrow { flex: none; color: #9ca3af; }
+.chain-box {
+  --chain-ink: #9ca3af; --chain-wash: transparent;
+  /* Natural width (so a table cell sizes to it), capped, and never below a
+     readable minimum; phones switch to equal shares below. */
+  display: inline-flex; align-items: stretch; min-width: 4.25rem; max-width: 11rem; flex: 0 1 auto;
+  height: 30px; border: 1.5px solid var(--chain-ink); border-radius: 8px;
+  background: var(--chain-wash, var(--surface, #fff)); overflow: hidden;
+}
+.chain-name {
+  flex: 1 1 auto; min-width: 0; padding: 0 8px 0 9px; align-self: center;
+  font-size: 12.5px; font-weight: 700; color: #1f2937;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chain-override { font-weight: 600; color: #b45309; }
+.chain-mark {
+  flex: none; width: 27px; display: flex; align-items: center; justify-content: center;
+  border-left: 1.5px solid var(--chain-ink); background: var(--chain-fill, transparent); color: var(--chain-mark-ink, var(--chain-ink));
+}
+.chain-dot { width: 9px; height: 9px; border-radius: 999px; background: currentColor; }
+.chain-ring { width: 10px; height: 10px; border-radius: 999px; border: 1.5px solid currentColor; }
+/* The WHOLE box is washed in its colour (2026-09-30, user: "whole name box should be
+   color marked"), and the square is filled solid with a white mark. */
+.chain-pending  { --chain-ink: #d97706; --chain-wash: #fef3c7; --chain-fill: #f59e0b; --chain-mark-ink: #fff; }
+.chain-approved { --chain-ink: #16a34a; --chain-wash: #dcfce7; --chain-fill: #16a34a; --chain-mark-ink: #fff; }
+.chain-rejected { --chain-ink: #dc2626; --chain-wash: #fee2e2; --chain-fill: #dc2626; --chain-mark-ink: #fff; }
+.chain-skipped .chain-name { color: #9ca3af; text-decoration: line-through; }
+html.dark .chain-name { color: #ededed; }
+html.dark .chain-arrow { color: #6b7280; }
+html.dark .chain-override { color: #fbbf24; }
+html.dark .chain-box { --chain-ink: #6b7280; }
+html.dark .chain-pending  { --chain-ink: #fbbf24; --chain-wash: color-mix(in srgb, #f59e0b 22%, var(--surface)); --chain-fill: #fbbf24; --chain-mark-ink: #1a1a1a; }
+html.dark .chain-approved { --chain-ink: #4ade80; --chain-wash: color-mix(in srgb, #22c55e 22%, var(--surface)); --chain-fill: #4ade80; --chain-mark-ink: #1a1a1a; }
+html.dark .chain-rejected { --chain-ink: #f87171; --chain-wash: color-mix(in srgb, #ef4444 22%, var(--surface)); --chain-fill: #f87171; --chain-mark-ink: #1a1a1a; }
+/* A phone: tighter spacing, and a crowded line (3+ rungs) shows first names.
+   A media query, not a container query: inline-size containment would zero the
+   chain inside the auto-width table cells some pages put it in. */
+@media (max-width: 480px) {
+  .chain-line { gap: 2px; }
+  .chain-box { flex: 1 1 0; min-width: 3.5rem; }
+  .chain-arrow { width: 11px; }
+  .chain-full { display: none; }
+  .chain-first { display: inline; }
+  .chain-name { padding: 0 5px 0 7px; font-size: 12px; }
+  .chain-mark { width: 22px; }
+}
+/* A table cell holding a chain is not capped at 11rem on a phone (the rule above
+   the frozen-column block): the chain is one line by design, and the table
+   already swipes sideways there. */
+@media (max-width: 640px) {
+  :has(> table) > table td:has(.chain-wrap),
+  table.min-w-full td:has(.chain-wrap) { max-width: none; }
 }

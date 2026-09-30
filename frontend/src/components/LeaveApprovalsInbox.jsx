@@ -3,7 +3,9 @@
 // approver in the reporting-hierarchy chain ("To approve") plus a history tab,
 // and lets them approve/reject their rung. Exports ChainProgress for reuse by
 // ExitApprovalsInbox.
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import { FiArrowRight, FiCheck, FiMinus, FiX } from 'react-icons/fi';
+import RequestedAt from './RequestedAt';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import ApprovalsTabs, { useShowMore } from './ApprovalsTabs';
@@ -14,12 +16,13 @@ import { promptDialog, confirmDialog } from './dialogs';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '-');
 
-const STEP_COLORS = {
-  Waiting: 'bg-gray-100 text-gray-500',
-  Pending: 'bg-amber-100 text-amber-800',
-  Approved: 'bg-green-100 text-green-800',
-  Rejected: 'bg-red-100 text-red-800',
-  Skipped: 'bg-gray-100 text-gray-400 line-through',
+// The mark in each rung's status square (see ChainProgress).
+const STEP_MARK = {
+  Waiting: <span className="chain-ring" />,
+  Pending: <span className="chain-dot" />,
+  Approved: <FiCheck size={15} strokeWidth={3} />,
+  Rejected: <FiX size={15} strokeWidth={3} />,
+  Skipped: <FiMinus size={14} strokeWidth={3} />,
 };
 const REQ_COLORS = {
   Pending: 'bg-amber-100 text-amber-800',
@@ -28,8 +31,13 @@ const REQ_COLORS = {
   Cancelled: 'bg-gray-100 text-gray-700',
 };
 
-// Renders the reporting-hierarchy approval ladder as a row of chips so you can
-// see who has approved, whose turn it is, and where a rejection happened.
+// Renders the reporting-hierarchy approval ladder as ONE LINE of boxes — the
+// approver's name, and at the box's right edge a square saying where their rung
+// stands: ● pending, ✓ approved, ✕ rejected (plus ○ waiting and – skipped).
+// REDESIGNED 2026-09-30 to the user's sketch, the same as the app's
+// ChainProgress (mobile/src/components/ChainProgress.js). The line never wraps:
+// the boxes share the width and a long name ends in an ellipsis; the full rung
+// (role, status, when, note) is in the hover title. CSS: .chain-* in index.css.
 //
 // An OVERRIDE rung (somebody senior deciding over the approvers' heads) shows
 // the person's name like any other rung, followed by a small "override" tag —
@@ -39,19 +47,22 @@ const REQ_COLORS = {
 // as "HR override · override"; nothing is lost, and new ones name the person.
 function ChainProgress({ chain = [] }) {
   if (!chain.length) return <span className="text-xs text-gray-400 italic">No hierarchy - HR decides</span>;
+  const crowded = chain.length >= 3;
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="chain-wrap">
+    <div className="chain-line">
       {chain.map((s, i) => {
         const name = s.approverName || 'Approver';
         const isOverride = s.role === 'Override';
+        const state = STEP_MARK[s.status] ? s.status : 'Waiting';
         const when = s.decidedAt ? new Date(s.decidedAt).toLocaleString('en-IN', {
           day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
         }) : '';
         return (
-          <span key={s._id || i} className="inline-flex items-center gap-1">
-            {i > 0 && <span className="text-gray-300 text-xs">→</span>}
+          <Fragment key={s._id || i}>
+            {i > 0 && <FiArrowRight className="chain-arrow" size={13} aria-hidden="true" />}
             <span
-              className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg ${STEP_COLORS[s.status] || 'bg-gray-100 text-gray-600'}`}
+              className={`chain-box chain-${state.toLowerCase()}`}
               title={[
                 `${name}${s.role && !isOverride ? ` (${s.role})` : ''}`,
                 s.status,
@@ -59,17 +70,22 @@ function ChainProgress({ chain = [] }) {
                 when,
                 s.note ? `Note: ${s.note}` : '',
               ].filter(Boolean).join(' · ')}
+              aria-label={`${name}: ${s.status || 'Waiting'}`}
             >
-              {name}
-              {isOverride && (
-                <span className="px-1 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold uppercase tracking-wide">
-                  override
-                </span>
-              )}
+              <span className="chain-name">
+                {/* A crowded line (3+ rungs in a narrow card) shows first names —
+                    .chain-first, switched on by a phone-width media query in index.css. */}
+                <span className={crowded ? 'chain-full' : undefined}>{name}</span>
+                {crowded && <span className="chain-first">{name.split(/\s+/)[0]}</span>}
+                {/* Older rows carry the literal "HR override" as the name. */}
+                {isOverride && !/override/i.test(name) && <span className="chain-override"> · override</span>}
+              </span>
+              <span className="chain-mark">{STEP_MARK[state]}</span>
             </span>
-          </span>
+          </Fragment>
         );
       })}
+    </div>
     </div>
   );
 }
@@ -328,6 +344,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     <div className="text-xs text-gray-500">
                       {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d
                       {r.lopDays > 0 && <span className="text-red-600 font-medium"> · {r.lopDays} LOP</span>}
@@ -390,6 +407,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     <div className="text-xs text-gray-500">
                       {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d
                       {r.lopDays > 0 && <span className="text-red-600 font-medium"> · {r.lopDays} LOP</span>}
@@ -452,6 +470,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {r.leaveType} · {fmtDate(r.startDate)}–{fmtDate(r.endDate)} · {r.totalDays}d</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     {r.emergencyFlagged && (
                       <div className="text-[11px] text-red-700 mt-0.5">
                         ⚑ {r.emergencyIndexInMonth} emergency leaves this month — no approval was required

@@ -5,9 +5,12 @@
  * selfie (camera) plus an accurate GPS fix, posted to POST /attendance/me/checkin|checkout.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FiEdit3 } from 'react-icons/fi';
+import { dayTone } from '../components/AttendanceDatePicker';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
-import { formatDuration, formatHours, formatTime12 } from '../utils/time';
+import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import { useDateSort, DateSortButton } from '../components/DateSort';
 
 const MONTHS = [
@@ -97,6 +100,8 @@ const employeeRemarks = (remarks) =>
   (remarks || '').replace(GEOFENCE_REMARK, '').replace(/\s{2,}/g, ' ').trim();
 
 export default function EmployeeAttendance() {
+  const navigate = useNavigate();
+  const regularizePath = '/employee/regularizations';
   const now = new Date();
   const [filter, setFilter] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [records, setRecords] = useState([]);
@@ -715,13 +720,14 @@ export default function EmployeeAttendance() {
               <th className="px-4 py-3 text-right font-medium text-gray-700">Hours</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Late by</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Remarks</th>
+              <th className="px-4 py-3 text-right font-medium text-gray-700"><span className="sr-only">Regularize</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={8} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : sortedRecords.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-500">No records</td></tr>
             ) : sortedRecords.map((r) => (
               <tr key={r._id}>
                 <td className="px-4 py-3">{fmtDate(r.date)}</td>
@@ -753,6 +759,22 @@ export default function EmployeeAttendance() {
                   {r.lateMinutes > 0 ? formatDuration(r.lateMinutes) : '-'}
                 </td>
                 <td className="px-4 py-3 text-gray-500">{employeeRemarks(r.remarks) || '-'}</td>
+                {/* REGULARIZE THIS DAY (2026-09-30, user: "add a button for
+                    regularization here also"): opens the request form on the
+                    Regularizations page with this date and its punches already
+                    in. Red on a day that needs fixing, quiet on the rest. */}
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`${regularizePath}?date=${toYMD(r.date)}`, { state: { record: r } })}
+                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border ${
+                      dayTone(r) === 'bad'
+                        ? 'border-red-300 text-red-700 hover:bg-red-50'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <FiEdit3 size={12} /> Regularize
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

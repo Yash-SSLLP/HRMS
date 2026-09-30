@@ -541,6 +541,7 @@ async function notifyApprovers(request, actor) {
     await notifyMany(recipients, {
       type: 'payroll',
       audience: 'admin',
+      action: true,
       title: 'Salary change needs your approval',
       body: `${actorName(actor) || 'HR'} asked for ${request.kind === 'structure' ? '' : `a change to ${subjectName(full)}'s salary: `}`
         + `${describeRequest(full)}. Nothing reaches payroll until it is approved.`,

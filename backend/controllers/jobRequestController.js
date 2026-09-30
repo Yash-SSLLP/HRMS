@@ -231,6 +231,7 @@ async function tellApprovers(request, companyName) {
       type: 'recruitment',
       // Admin portal only — a dual-role HR must not meet it in My Portal.
       audience: 'admin',
+      action: true,
       title: `Job opening requested: ${request.title}`,
       body: `${request.requestedByName || 'An HR consultancy'} asked for ${n} opening${n === 1 ? '' : 's'}`
         + `${companyName ? ` at ${companyName}` : ''}. Approve or reject it on Consultancy Job Requests.`,

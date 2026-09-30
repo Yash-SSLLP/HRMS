@@ -19,12 +19,48 @@ const Notification = require('../models/Notification');
 const { pushToUsers } = require('./push');
 
 /**
- * Notify a single recipient.
- * @param {{recipient:string, sender?:string, type?:string, title:string, body?:string, link?:string, data?:object, awaitPush?:boolean}} input
- * @returns {Promise<Notification>}
+ * CEO / MD HEAR ONLY WHAT THEY MUST ACT ON (2026-09-30, user: "CEO / MD
+ * notification should receive only those in which they need to do action").
+ *
+ * Every notify()/notifyMany() call may pass `action: true` — "the recipient has
+ * something to DO about this": approve or decline, review a hand-in, take on a
+ * task given to them, sit an interview, answer a chase. For a CEO or MD
+ * recipient a call WITHOUT it is dropped here, the bell row and the push both;
+ * everybody else is untouched by the flag. So FYI news (someone's leave was
+ * approved, a task moved to 60%, a holiday, a colleague's birthday) no longer
+ * reaches the two of them, and a new notify call is quiet for them until
+ * somebody decides it is theirs to act on.
+ *
+ * Not covered, deliberately: a celebration WISH sent to them is written
+ * straight to the collection (celebrationsController.sendWish) — it is a person
+ * writing to them, and the row is also the record the "Say thanks" reply and the
+ * wish-once rule hang off.
  */
-async function notify({ recipient, sender, type = 'general', audience = 'all', title, body, link, data, awaitPush = false }) {
+const EXEC_ROLES = ['CEO', 'MD'];
+
+/** The subset of `ids` who are a CEO or MD. One indexed read; never throws. */
+async function execIdsAmong(ids) {
+  if (!ids.length) return new Set();
+  try {
+    // Lazy: models/User pulls in bcrypt and this module is loaded everywhere.
+    const User = require('../models/User');
+    const rows = await User.find({ _id: { $in: ids }, role: { $in: EXEC_ROLES } }).select('_id').lean();
+    return new Set(rows.map((u) => String(u._id)));
+  } catch (err) {
+    console.error('notify exec filter failed:', err.message);
+    return new Set();
+  }
+}
+
+/**
+ * Notify a single recipient.
+ * @param {{recipient:string, sender?:string, type?:string, title:string, body?:string, link?:string, data?:object, action?:boolean, awaitPush?:boolean}} input
+ *   `action` — the recipient must act on it; without it a CEO/MD is skipped (see above).
+ * @returns {Promise<Notification|null>} null when the recipient was a CEO/MD and this was not for action
+ */
+async function notify({ recipient, sender, type = 'general', audience = 'all', title, body, link, data, action = false, awaitPush = false }) {
   if (!recipient || !title) throw new Error('notify requires recipient and title');
+  if (!action && (await execIdsAmong([String(recipient)])).size) return null;
 
   // `sender` is optional and only set for person-to-person notifications, so a
   // reply can be addressed. Omitted, the field is simply absent, as it is on
@@ -46,11 +82,17 @@ async function notify({ recipient, sender, type = 'general', audience = 'all', t
  * Notify many recipients of the SAME message (e.g. a new event/holiday).
  * Writes all Notification docs in one bulk insert, then pushes to all devices.
  * @param {string[]} recipients
- * @param {{type?:string, title:string, body?:string, link?:string, data?:object}} input
+ * @param {{type?:string, title:string, body?:string, link?:string, data?:object, action?:boolean}} input
+ *   `action` — see notify(); without it any CEO/MD among `recipients` is left out.
  */
-async function notifyMany(recipients, { type = 'general', audience = 'all', title, body, link, data, awaitPush = false } = {}) {
-  const ids = [...new Set((recipients || []).map(String))].filter(Boolean);
+async function notifyMany(recipients, { type = 'general', audience = 'all', title, body, link, data, action = false, awaitPush = false } = {}) {
+  let ids = [...new Set((recipients || []).map(String))].filter(Boolean);
   if (!ids.length || !title) return { created: 0 };
+  if (!action) {
+    const execs = await execIdsAmong(ids);
+    if (execs.size) ids = ids.filter((id) => !execs.has(id));
+    if (!ids.length) return { created: 0 };
+  }
 
   await Notification.insertMany(
     ids.map((recipient) => ({ recipient, type, audience, title, body, link }))

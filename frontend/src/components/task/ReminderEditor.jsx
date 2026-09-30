@@ -10,6 +10,11 @@
  * message is worse than not offering it — so the two that exist are the two
  * shown, and config/tasks.REMINDER_CHANNELS is where a third would be added.
  *
+ * NO EMAIL (2026-09-30, user: "remove Email option from every reminder
+ * setting in task option"): the Where row is gone and every rule the editor
+ * makes is an in-app one. A rule an older task already carries by email is
+ * left as it is.
+ *
  * AFTER-THE-DEADLINE REMINDERS ARE THE POINT of having a direction at all. "The
  * reminder will not stop — it will go automatically": a rule set to fire after
  * the due date also reaches whoever SET the task and whoever is in the loop,
@@ -17,7 +22,7 @@
  * has already ignored (see services/taskReminderWorker).
  */
 import { FiPlus, FiTrash2, FiX, FiBell } from 'react-icons/fi';
-import { REMINDER_CHANNELS, REMINDER_UNITS, UNIT_LABELS, reminderLabel } from '../../utils/taskLifecycle';
+import { REMINDER_UNITS, UNIT_LABELS, reminderLabel } from '../../utils/taskLifecycle';
 import ReminderPattern, { repeatingRule } from './ReminderPattern';
 
 const BLANK = { channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' };
@@ -43,7 +48,6 @@ export default function ReminderEditor({ value = [], onChange, onClose }) {
       { ...BLANK, amount: 4, unit: 'HOURS' },
       { ...BLANK, amount: 30, unit: 'MINUTES' },
       { ...BLANK, when: 'AFTER' },
-      { ...BLANK, channel: 'EMAIL' },
     ];
     const fresh = candidates.find((c) => !value.some((r) => same(r, c))) || BLANK;
     onChange?.([...value, fresh]);
@@ -70,24 +74,6 @@ export default function ReminderEditor({ value = [], onChange, onClose }) {
 
       {value.map((rule, i) => (
         <div key={i} className="space-y-2 rounded-lg border border-gray-200 bg-white p-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] text-gray-500">Where</span>
-            {REMINDER_CHANNELS.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => set(i, { channel: c.key })}
-                className={`min-h-[30px] rounded-lg border px-2 text-xs font-medium transition ${
-                  rule.channel === c.key
-                    ? 'border-green-600 bg-green-600 text-white'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                }`}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[11px] text-gray-500">When</span>
             {/* A repeating rule is shaped below instead (ReminderPattern). */}

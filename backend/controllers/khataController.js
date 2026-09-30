@@ -549,6 +549,7 @@ async function sendUnsanctionedAdvancesToExecs() {
         await notifyMany(await execApproverIds(), {
           type: 'general',
           audience: 'all',
+          action: true,
           title: modifiedCount === 1 ? 'Advance request needs your approval' : 'Advance requests need your approval',
           body: `${modifiedCount === 1 ? 'An advance request' : `${modifiedCount} advance requests`} (₹${total.toLocaleString('en-IN')}`
             + `${names ? `, from ${names}` : ''}) reached the accounts team without a CEO/MD approval. Every advance`
@@ -601,6 +602,7 @@ async function releaseAdvancesFromExecs() {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
       audience: 'all',
+      action: true,
       title: modifiedCount === 1 ? 'Advance request is yours to decide' : 'Advance requests are yours to decide',
       body: `CEO/MD approval for advances was switched off, so ${modifiedCount === 1 ? 'a request' : `${modifiedCount} requests`}`
         + ` (₹${total.toLocaleString('en-IN')}${names ? `, from ${names}` : ''}) that was waiting on them is with you now.`,
@@ -1454,6 +1456,7 @@ const requestAdvance = asyncHandler(async (req, res) => {
     await notifyMany(toAct, {
       type: 'general',
       audience: 'all',
+      action: true,
       title: 'Advance request needs your approval',
       body: `${who} requested ${money} — ${purpose}`,
       link: '/admin/khata',
@@ -1473,6 +1476,7 @@ const requestAdvance = asyncHandler(async (req, res) => {
     const toAct = drop(cashIds, new Set());
     await notifyMany(toAct, {
       type: 'general',
+      action: true,
       audience: 'all',
       title: 'Cash advance requested',
       body: `${who} requested ${money} — ${purpose}`,
@@ -1970,6 +1974,7 @@ const requestReimbursement = asyncHandler(async (req, res) => {
   await notifyMany(await khataApproverIds(), {
     type: 'general',
     audience: 'all',
+    action: true,
     title: 'Settlement claimed',
     body: `${req.user.firstName} ${req.user.lastName || ''}`.trim()
       + ` is owed ₹${asked.toLocaleString('en-IN')} for spending past their advance, and has asked to be paid it back.`,
@@ -3065,6 +3070,7 @@ const createEntry = asyncHandler(async (req, res) => {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
       audience: 'all',
+      action: true,
       title: 'Cashbook entry needs approval',
       body: `₹${amount.toLocaleString('en-IN')} for ${target.firstName} is above the operator's limit and is awaiting approval`,
       link: '/admin/khata',
@@ -3254,6 +3260,7 @@ const decideAdvanceApproval = asyncHandler(async (req, res) => {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
       audience: 'all',
+      action: true,
       title: 'Approved advance ready to pay',
       body: `₹${amount} for ${saved.employee?.firstName || 'an employee'} was approved by ${req.user.role}. Choose an account and pay it out.`,
       link: '/admin/khata',
@@ -3762,6 +3769,7 @@ const bulkDecideAdvances = asyncHandler(async (req, res) => {
     await notifyMany(await khataApproverIds(), {
       type: 'general',
       audience: 'all',
+      action: true,
       title: done.length === 1 ? 'Approved advance ready to pay' : 'Approved advances ready to pay',
       body: `${done.length === 1 ? '₹' : `${done.length} advances, ₹`}${total}${names ? ` for ${names}` : ''}`
         + ` — approved by ${req.user.role}. Choose an account and pay ${done.length === 1 ? 'it' : 'them'} out.`,
@@ -4183,6 +4191,7 @@ const sendSettleReminders = asyncHandler(async (req, res) => {
     recipient: w.employee,
     type: 'general',
     audience: 'employee',
+    action: true,
     title: 'Please account for your advance',
     body: `You are holding ₹${w.balance.toLocaleString('en-IN')} of company cash. `
       + 'Record what you have spent it on, or return what is left.',

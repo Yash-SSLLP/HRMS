@@ -1072,6 +1072,7 @@ function tellInterviewerOfReschedule(candidate, round, idx, moved, user) {
     : moved.prevAt ? ` from ${slotText(moved.prevAt)}` : '';
   notify({
     recipient: round.interviewer,
+    action: true,
     type: 'interview',
     title: `Interview rescheduled: ${candidate.name} (${label})`,
     body: `Moved${from} to ${slotText(round.scheduledAt)}.${moved.reason ? ` Reason: ${moved.reason}.` : ''} Open My Interviews for the details.`.slice(0, 300),
@@ -1149,6 +1150,7 @@ const rescheduleRound = asyncHandler(async (req, res) => {
     notify({
       recipient: newInterviewer._id,
       type: 'interview',
+      action: true,
       title: `Interview assigned: ${candidate.name} (${label})`,
       body: `Scheduled ${slotText(round.scheduledAt)}. Open My Interviews to join, give feedback and set the result.`,
       link: 'interviews',
@@ -1243,6 +1245,7 @@ const setRound = asyncHandler(async (req, res) => {
         notify({
           recipient: interviewer._id,
           type: 'interview',
+          action: true,
           title: `Interview assigned: ${candidate.name} (${round.label || `Round ${idx + 1}`})`,
           body: round.scheduledAt
             ? `Scheduled ${new Date(round.scheduledAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST). Open My Interviews to join, give feedback and set the result.`
@@ -1766,6 +1769,7 @@ const createRoundMeet = asyncHandler(async (req, res) => {
     notify({
       recipient: round.interviewer,
       type: 'interview',
+      action: true,
       title: `Interview scheduled: ${candidate.name} (${roundLabel})`,
       body: `${start.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short', hour12: true })} (IST) · Join from My Interviews.`,
       link: 'interviews',

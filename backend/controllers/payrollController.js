@@ -303,6 +303,7 @@ async function notifySelfPayslipApprovers(payslip, actor, companyId) {
       {
         type: 'payroll',
         audience: 'admin',
+        action: true,
         title: 'Self-prepared payslip needs sanction',
         body: `${who} prepared their own ${periodLabel(payslip)} payslip (net ${inrOrDash(payslip.netPay)}). It is frozen until you sanction it.`,
         link: '/admin/payslip-requests?tab=self',

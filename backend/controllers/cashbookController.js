@@ -233,6 +233,7 @@ const submitVoucher = asyncHandler(async (req, res) => {
   notifyMany(await financeManagerIds(), {
     type: 'cashbook',
     audience: 'all',
+    action: true,
     title: 'New cash voucher to review',
     body: `${who} submitted a ₹${amount} petty-cash voucher.`,
     link: '/admin/cashbook',

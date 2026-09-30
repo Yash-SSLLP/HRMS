@@ -181,6 +181,7 @@ const createReminder = asyncHandler(async (req, res) => {
       type: 'reminder',
       // Personal item — show it in both portals for dual-role users.
       audience: 'all',
+      action: scope === 'users',
       title: `Reminder: ${reminder.title}`,
       body: `${fmtDate(reminder.date)}${reminder.time ? ` at ${reminder.time}` : ''} · set by ${who}`,
       link: 'calendar',

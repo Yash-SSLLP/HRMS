@@ -14,7 +14,9 @@ export const COMPANY_LOGO_PNG = '/logo.png';
 // THE logo as the company supplied it (2026-09-30, user: "use this logo as it
 // in website") — wordmark, arrow and tagline in one image, shown untouched in
 // the sidebar header and on the login / public pages.
-export const COMPANY_LOGO_FULL = '/logo-full.png';
+// The GOLD version since 2026-09-30 (user: "use this logo"); a new file name so
+// no browser keeps showing the cached black one (/logo-full.png, kept unused).
+export const COMPANY_LOGO_FULL = '/logo-full-gold.png';
 export const COMPANY_LOGO_URL = 'https://sequencesurface.com/images/logo.png';
 // Brand gold, mirrored from the --gold-* tokens in index.css. For the rare spot
 // that needs the value in JS (inline styles, canvas/chart fills).

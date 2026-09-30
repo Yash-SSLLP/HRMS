@@ -1153,7 +1153,8 @@ export default function AssignTaskModal({
                   <button type="button" onClick={() => {
                     if (!showReminders && !form.reminders.length) {
                       set({ reminders: meta?.defaultReminders?.length
-                        ? meta.defaultReminders.map((r) => ({ ...r }))
+                        // In-app only since 2026-09-30 — an email default comes in as an app one.
+                        ? meta.defaultReminders.map((r) => ({ ...r, channel: 'APP' }))
                         : [{ channel: 'APP', amount: 1, unit: 'DAYS', when: 'BEFORE' }] });
                     }
                     setShowReminders((v) => !v);

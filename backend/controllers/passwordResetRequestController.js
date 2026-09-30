@@ -181,6 +181,7 @@ const createPasswordResetRequest = asyncHandler(async (req, res) => {
     await notifyMany(admins.map((a) => a._id), {
       type: 'password_reset_request',
       audience: 'admin',
+      action: true,
       title: 'Password reset request',
       body: `${doc.name} (${doc.employeeCode}) requested a password reset.`,
       link: '/admin/password-resets',

@@ -111,7 +111,11 @@ const createAnnouncement = asyncHandler(async (req, res) => {
 
   // Notify all active users except the creator. Only the title goes in the
   // notification — the full body is read on the Announcements page.
-  const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
+  // Not the CEO/MD: they are told only what they must act on (services/notify.js),
+  // and an announcement is news — they still read it on the Announcements page.
+  const recipients = await User.find({
+    isActive: true, _id: { $ne: req.user._id }, role: { $nin: ['CEO', 'MD'] },
+  }).select('_id');
   if (recipients.length) {
     const notifications = recipients.map((u) => ({
       recipient: u._id,

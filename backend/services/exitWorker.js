@@ -78,6 +78,7 @@ async function tick() {
             recipient: hrId,
             type: 'exit',
             audience: 'admin',
+            action: true,
             title: 'Clearance pending — account not yet released',
             body: `${name}'s notice period ended on ${fmtD(exit.lastWorkingDay)} but clearance is incomplete. Finish the checklist to release the account.`,
             link: '/admin/exits',

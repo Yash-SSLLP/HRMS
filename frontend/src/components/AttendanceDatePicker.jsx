@@ -74,6 +74,28 @@ export function dayNote(record, offReason = '') {
   return `${formatTime12(record.checkIn)} – ${formatTime12(record.checkOut)}`;
 }
 
+/**
+ * What went wrong on a day, as short labelled chips (2026-09-30, user: "for
+ * need fixing show the status of that also, like check in and out time,
+ * leaves, absent, late"). The app's copy of this is in its own picker.
+ * @returns {{label: string, tone: 'bad'|'warn'|'info'}[]}
+ */
+export function dayChips(record) {
+  if (!record) return [{ label: 'No punches', tone: 'bad' }];
+  const out = [];
+  if (record.status === 'Absent') out.push({ label: 'Absent', tone: 'bad' });
+  if (record.status === 'OnLeave') out.push({ label: 'On leave', tone: 'info' });
+  if (record.status === 'HalfDay') out.push({ label: 'Half day', tone: 'warn' });
+  if (Number(record.lateMinutes) > 0) out.push({ label: `Late ${formatDuration(record.lateMinutes)}`, tone: 'warn' });
+  // An absent day has no punches by definition — saying so twice is noise.
+  if (record.status !== 'Absent') {
+    if (!record.checkIn) out.push({ label: 'No check-in', tone: 'bad' });
+    if (!record.checkOut) out.push({ label: 'No check-out', tone: 'bad' });
+  }
+  if (record.noPunchOut) out.push({ label: 'Auto-closed', tone: 'warn' });
+  return out;
+}
+
 /** "2026-08-01" → "01 Aug 2026" for the closed field. */
 const pretty = (ymd) => {
   if (!ymd) return '';
@@ -191,6 +213,16 @@ export default function AttendanceDatePicker({ value, onChange, max = toYMD(new 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cells, month, max, holidays]);
 
+  // The days to fix, newest first, each with its punches and what is wrong.
+  const fixList = useMemo(() => {
+    if (month.state !== 'ready') return [];
+    return cells
+      .filter((c) => c.inMonth && c.ymd <= max && dayTone(month.byDate[c.ymd], offReason(c.ymd)) === 'bad')
+      .map((c) => ({ ymd: c.ymd, record: month.byDate[c.ymd] || null }))
+      .reverse();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cells, month, max, holidays]);
+
   const openPicker = () => {
     const base = value ? new Date(`${value}T00:00:00`) : new Date();
     setView({ year: base.getFullYear(), month: base.getMonth() + 1 });
@@ -304,6 +336,29 @@ export default function AttendanceDatePicker({ value, onChange, max = toYMD(new 
             <span><i className="adp-key is-off" />Off / holiday</span>
             {flagged > 0 && <span className="adp-flag">{flagged} to fix</span>}
           </div>
+
+          {/* The days to fix, spelled out — punches and what is wrong with each
+              (2026-09-30). A row picks that day, like its cell does. */}
+          {fixList.length > 0 && (
+            <div className="adp-fixlist">
+              {fixList.map(({ ymd, record }) => (
+                <button key={ymd} type="button" onClick={() => pick(ymd)}
+                  className={`adp-fixrow${ymd === value ? ' is-sel' : ''}`}>
+                  <span className="adp-fixdate">
+                    {new Date(`${ymd}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  </span>
+                  <span className="adp-fixtimes">
+                    In {record?.checkIn ? formatTime12(record.checkIn) : '—'} · Out {record?.checkOut ? formatTime12(record.checkOut) : '—'}
+                  </span>
+                  <span className="adp-fixchips">
+                    {dayChips(record).map((ch) => (
+                      <span key={ch.label} className={`adp-chip is-${ch.tone}`}>{ch.label}</span>
+                    ))}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-center justify-between border-t border-gray-100 px-3 py-2">
             <button type="button" onClick={() => { onChange('', { state: 'idle', record: null }); setOpen(false); }}

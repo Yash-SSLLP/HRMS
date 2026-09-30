@@ -23,6 +23,16 @@ const regularizationSchema = new mongoose.Schema(
     requestedCheckIn: { type: String }, // corrected check-in time the employee is asking for
     requestedCheckOut: { type: String }, // corrected check-out time the employee is asking for
     reason: { type: String, required: true, trim: true },
+    // Proof the employee attaches — a photo or a PDF (2026-09-30, user: "while
+    // regularisation give option to upload photos or PDF"). Stored in GridFS
+    // (services/storage); read through GET /regularizations/:id/attachments/:fileId.
+    attachments: [{
+      name: { type: String, trim: true },
+      storagePath: { type: String },
+      contentType: { type: String },
+      sizeBytes: { type: Number },
+      uploadedAt: { type: Date, default: Date.now },
+    }],
     status: { type: String, enum: REGULARIZATION_STATUS, default: 'Pending', index: true },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: { type: Date },

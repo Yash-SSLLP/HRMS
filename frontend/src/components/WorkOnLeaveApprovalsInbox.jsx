@@ -16,6 +16,7 @@
  * by me as an HR override — with who decided, when, and the note.
  */
 import { useEffect, useState } from 'react';
+import RequestedAt from './RequestedAt';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import ApprovalsTabs, { useShowMore, OUTCOME_COLORS, HistoryEmpty } from './ApprovalsTabs';
@@ -114,6 +115,7 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
                     )}
                   </div>
                   <div className="text-sm text-gray-600 mt-0.5">{fmtDate(r.date)}</div>
+                  <RequestedAt at={r.workOnLeave?.requestedAt || r.checkIn} />
                   <div className="text-xs text-gray-700 mt-1.5">
                     <span className="text-gray-400 inline-block w-7">In</span>
                     <span className="font-medium">{t12(r.checkIn)}</span>
@@ -180,6 +182,7 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
                       )}
                       <span className="text-xs text-gray-500"> · {fmtDate(r.date)} · {claim.leaveType || 'Leave'}</span>
                     </div>
+                    <RequestedAt at={claim.requestedAt || r.checkIn} />
                     <div className="text-xs text-gray-600 mt-0.5">
                       In {t12(r.checkIn)} · Out {t12(r.checkOut)}
                       {r.hoursWorked > 0 && <span className="text-gray-400"> · {formatHours(r.hoursWorked)}</span>}

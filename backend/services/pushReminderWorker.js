@@ -96,7 +96,8 @@ async function pushEach(userIds, payload) {
   let sent = 0;
   for (const id of userIds) {
     try {
-      await notify({ recipient: id, ...payload });
+      // The punch reminder is theirs to act on — see services/notify.js (CEO/MD).
+      await notify({ recipient: id, action: true, ...payload });
       sent += 1;
     } catch (err) {
       console.error('attendance reminder failed for a user:', err.message);

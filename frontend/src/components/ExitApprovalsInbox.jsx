@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import RequestedAt from './RequestedAt';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import ApprovalsTabs, { useShowMore } from './ApprovalsTabs';
 import { promptDialog } from './dialogs';
@@ -109,6 +110,7 @@ export default function ExitApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     <div className="text-xs text-gray-500">
                       {meta(r)}{r.reason ? ` · “${r.reason}”` : ''}
                     </div>
@@ -140,6 +142,7 @@ export default function ExitApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {meta(r)}</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                   </div>
                   <span className={`inline-block px-2 py-0.5 text-xs rounded-lg shrink-0 ${REQ_COLORS[r.status] || ''}`}>{r.status}</span>

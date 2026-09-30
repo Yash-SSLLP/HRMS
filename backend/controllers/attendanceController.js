@@ -234,6 +234,35 @@ const to12hIst = (d, tz) => new Date(d)
 
 const fmtIstTime = (d) => (d ? to12hIst(d, 'Asia/Kolkata') : '');
 
+/**
+ * One server-log line per punch (2026-09-30, user: "when users do checkin and
+ * check out show also this logs in server with time and their name"), shaped
+ * like the app's forwarded lines so the two read together:
+ *
+ *   [punch] IN  Sahana V Naik (Employee · SSL 81) 2026-09-30T04:25:06.373Z — 9:55 AM IST · app · Present
+ *   [punch] OUT Sahana V Naik (Employee · SSL 81) 2026-09-30T13:36:10.000Z — 7:06 PM IST · web · 9h 11m worked · Present
+ *
+ * Also, when they apply: WFH, outside <site> (<n> m), half day declared, on approved leave.
+ *
+ * Where it came from is read off the user agent (the app's HTTP client is
+ * okhttp, a browser says Mozilla). Never throws — a log line must not fail a punch.
+ * @param {'IN'|'OUT'} kind
+ */
+function logPunch(kind, req, profile, record, extras = []) {
+  try {
+    const u = req.user || {};
+    const name = `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email || String(u._id || '');
+    const who = [u.role, profile?.employeeCode].filter(Boolean).join(' · ');
+    const at = kind === 'IN' ? record.checkIn : record.checkOut;
+    const ua = String(req.headers['user-agent'] || '');
+    const via = /okhttp|Expo|ReactNative|Dalvik/i.test(ua) ? 'app' : /Mozilla/i.test(ua) ? 'web' : 'other';
+    const bits = [`${fmtIstTime(at)} IST`, via, ...extras.filter(Boolean), record.status].filter(Boolean);
+    console.log(`[punch] ${kind === 'IN' ? 'IN ' : 'OUT'} ${name}${who ? ` (${who})` : ''} ${new Date(at).toISOString()} — ${bits.join(' · ')}`);
+  } catch (err) {
+    console.error('punch log failed:', err.message);
+  }
+}
+
 // The cut-off itself, written the same way (e.g. "12:00 PM"), so the remark
 // stays correct if HALF_DAY_CUTOFF_HOUR is ever changed.
 const HALF_DAY_CUTOFF_LABEL = to12hIst(Date.UTC(2000, 0, 1, HALF_DAY_CUTOFF_HOUR, 0), 'UTC');
@@ -326,6 +355,7 @@ async function notifyWorkOnLeaveApprover(record, profile, claim) {
       // audienceScope), so an 'admin' notice is invisible to exactly the people
       // most likely to be the approver.
       audience: 'all',
+      action: true,
       title: 'Punch-in on a leave day needs your approval',
       body: `${name} punched in on ${fmtIstDate(record.date)} while on approved ${leaveLabel(claim.leaveType)}. Approve to give the leave day back and count the day as worked.`,
       link: 'approvals',
@@ -721,6 +751,12 @@ const checkIn = asyncHandler(async (req, res) => {
     );
   }
   await record.save();
+  logPunch('IN', req, profile, record, [
+    record.checkInWfh ? 'WFH' : '',
+    outside ? `outside ${geo.label} (${distanceM} m)` : '',
+    record.halfDayDeclared ? 'half day declared' : '',
+    claim && claim.status === 'Pending' ? 'on approved leave' : '',
+  ]);
 
   if (claim && claim.status === 'Pending') {
     await notifyWorkOnLeaveApprover(record, profile, claim);
@@ -815,6 +851,11 @@ const checkOut = asyncHandler(async (req, res) => {
     }
   }
   await record.save();
+  logPunch('OUT', req, profile, record, [
+    record.checkOutWfh ? 'WFH' : '',
+    outside ? `outside ${geo.label} (${distanceM} m)` : '',
+    formatHours(effectiveHours(record)) ? `${formatHours(effectiveHours(record))} worked` : '',
+  ]);
   res.json({ record });
 });
 

@@ -15,10 +15,12 @@
  * before asking for a correction, and the existing times prefill the request.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import AttendanceDatePicker from '../components/AttendanceDatePicker';
-import { formatTime12, formatHours, formatDuration, toHM } from '../utils/time';
+import { ProofPicker, ProofLinks } from '../components/RegularizationAttachments';
+import { formatTime12, formatHours, formatDuration } from '../utils/time';
 
 // Which punch each request type is about — drives which time fields the form
 // shows, and the nudge under them. A type that concerns exactly one punch asks
@@ -52,11 +54,16 @@ const DAY_STATUS_STYLES = {
   OnLeave: 'bg-purple-100 text-purple-800',
 };
 
+// The times a request starts with (2026-09-30, user: check-in pre-filled 9:55 AM,
+// check-out 7:05 PM) — the office's day, rather than the punches being corrected.
+const DEFAULT_IN = '09:55';
+const DEFAULT_OUT = '19:05';
+
 const emptyForm = {
   date: '',
   type: 'Other',
-  requestedCheckIn: '',
-  requestedCheckOut: '',
+  requestedCheckIn: DEFAULT_IN,
+  requestedCheckOut: DEFAULT_OUT,
   reason: '',
 };
 
@@ -147,6 +154,9 @@ export default function EmployeeRegularizations() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [day, setDay] = useState(emptyDay);
+  // Proof — photos or PDFs (2026-09-30). Kept apart from `form` because Files
+  // cannot ride in the JSON the request used to be.
+  const [proof, setProof] = useState([]);
   // Time fields the employee has typed into: prefill never overwrites those.
   const touched = useRef({ in: false, out: false });
 
@@ -169,18 +179,32 @@ export default function EmployeeRegularizations() {
 
   useEffect(() => { load(); }, []);
 
+  // Arriving from the attendance table's Regularize button (2026-09-30): open
+  // the form on that day, with its record if the button handed it over. The
+  // query is then dropped so a refresh does not reopen the form.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const ymd = new URLSearchParams(location.search).get('date');
+    if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return;
+    openModal();
+    const record = location.state?.record || null;
+    pickDate(ymd, { state: 'ready', record });
+    navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
   // The picker already holds the whole month, so it hands the record over with
   // the date — no second fetch. A time the employee typed themselves survives a
   // date change; anything that was merely prefilled from the old day is redone.
   const pickDate = (ymd, info) => {
-    const record = info?.record || null;
     setForm((f) => {
       const scope = TYPE_FIELDS[f.type] || TYPE_FIELDS.Other;
       return {
         ...f,
         date: ymd,
-        requestedCheckIn: scope.in && !touched.current.in ? toHM(record?.checkIn) : f.requestedCheckIn,
-        requestedCheckOut: scope.out && !touched.current.out ? toHM(record?.checkOut) : f.requestedCheckOut,
+        requestedCheckIn: scope.in && !touched.current.in ? DEFAULT_IN : f.requestedCheckIn,
+        requestedCheckOut: scope.out && !touched.current.out ? DEFAULT_OUT : f.requestedCheckOut,
       };
     });
     setDay(ymd ? (info || { state: 'ready', record: null }) : emptyDay);
@@ -192,12 +216,11 @@ export default function EmployeeRegularizations() {
     const f = TYPE_FIELDS[type] || TYPE_FIELDS.Other;
     if (!f.in) touched.current.in = false;
     if (!f.out) touched.current.out = false;
-    const rec = day.record;
     setForm((prev) => ({
       ...prev,
       type,
-      requestedCheckIn: f.in ? (touched.current.in ? prev.requestedCheckIn : toHM(rec?.checkIn)) : '',
-      requestedCheckOut: f.out ? (touched.current.out ? prev.requestedCheckOut : toHM(rec?.checkOut)) : '',
+      requestedCheckIn: f.in ? (touched.current.in ? prev.requestedCheckIn : DEFAULT_IN) : '',
+      requestedCheckOut: f.out ? (touched.current.out ? prev.requestedCheckOut : DEFAULT_OUT) : '',
     }));
   };
 
@@ -208,8 +231,8 @@ export default function EmployeeRegularizations() {
     setDay(emptyDay);
   };
 
-  const openModal = () => { resetForm(); setError(''); setShowModal(true); };
-  const closeModal = () => { setShowModal(false); resetForm(); };
+  const openModal = () => { resetForm(); setProof([]); setError(''); setShowModal(true); };
+  const closeModal = () => { setShowModal(false); resetForm(); setProof([]); };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -217,9 +240,18 @@ export default function EmployeeRegularizations() {
     setSaving(true);
     setError('');
     try {
-      await api.post('/regularizations', form);
+      if (proof.length) {
+        // With files it goes as multipart; without, as the JSON it always was.
+        const fd = new FormData();
+        Object.entries(form).forEach(([k, v]) => { if (v !== undefined && v !== null) fd.append(k, v); });
+        proof.forEach((f) => fd.append('attachments', f, f.name));
+        await api.post('/regularizations', fd);
+      } else {
+        await api.post('/regularizations', form);
+      }
       setShowModal(false);
       resetForm();
+      setProof([]);
       await load();
     } catch (err) {
       setError(err.response?.data?.message || 'Could not submit request');
@@ -283,6 +315,7 @@ export default function EmployeeRegularizations() {
                 </td>
                 <td className="px-4 py-3">
                   {r.reason}
+                  <ProofLinks reg={r} />
                   {r.reviewNote && (
                     <div className="text-xs text-gray-500 mt-1">Note: {r.reviewNote}</div>
                   )}
@@ -356,6 +389,7 @@ export default function EmployeeRegularizations() {
                   onChange={(e) => setForm({ ...form, reason: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
+              <ProofPicker files={proof} onChange={setProof} />
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
               )}

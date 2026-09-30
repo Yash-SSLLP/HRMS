@@ -88,6 +88,7 @@ async function broadcastUpdate(release, message) {
   await notifyMany(recipients, {
     type: 'general',
     audience: 'all',
+    action: true,
     title: `Update the app to ${release.versionName}`,
     body: custom
       || (release.notes

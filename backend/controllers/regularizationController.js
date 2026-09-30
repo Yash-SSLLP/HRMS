@@ -14,6 +14,8 @@ const { usersHoldingAny, scopeRecipientsToCompany } = require('../services/audie
 const { isReadOnlyExec } = require('../middleware/authMiddleware');
 const { scopeUserField } = require('../utils/employeeScope');
 const Setting = require('../models/Setting');
+const storage = require('../services/storage');
+const { hasPermission } = require('../middleware/authMiddleware');
 const { startOfDayIST, ymdIST, monthRangeIST } = require('../utils/dateHelpers');
 const { settleStatus } = require('../utils/workday');
 const { resolveShiftForDay } = require('../services/shiftResolver');
@@ -202,6 +204,7 @@ async function notifyRegApprover(approverUserId, item, applicantName) {
       recipient: approverUserId,
       type: 'regularization',
       audience: 'all',
+      action: true,
       title: 'Regularization needs your approval',
       body: `${applicantName} raised an attendance regularization (${item.type}) - it's awaiting your approval.`,
       link: 'approvals',
@@ -288,9 +291,14 @@ async function notifyRegHr(item, { title, body, exclude = [] }) {
     const skip = new Set([...exclude, item.employee].filter(Boolean).map(String));
     const ids = bench.filter((id) => !skip.has(String(id)));
     if (!ids.length) return;
+    // A CEO/MD sits on this bench only as a viewer — HR decides — EXCEPT for an
+    // HR's own correction, which only they or a SuperAdmin may decide
+    // (HR_REVIEW_ROLES). Only then is it theirs to act on (services/notify.js).
+    const requester = await User.findById(item.employee).select('role').lean();
     await notifyMany(ids, {
       type: 'regularization',
       audience: 'admin',
+      action: requester?.role === HR_ROLE,
       title,
       body,
       // The full admin path, not the bare 'regularizations' slug the
@@ -517,6 +525,29 @@ const createRequest = asyncHandler(async (req, res) => {
     approvalChain: chain,
     currentApprover: chain.length ? chain[0].approver : null,
   });
+
+  // The proof, if any (2026-09-30). Saved after the request exists so its id
+  // names the folder; a file that fails to store is dropped rather than
+  // losing the request with it.
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (files.length) {
+    for (const f of files.slice(0, 5)) {
+      try {
+        const { storagePath, sizeBytes } = await storage.saveBuffer({
+          buffer: f.buffer, ownerType: 'regularization', ownerId: item._id, originalName: f.originalname,
+        });
+        item.attachments.push({
+          name: f.originalname || 'attachment',
+          storagePath,
+          contentType: f.mimetype || 'application/octet-stream',
+          sizeBytes,
+        });
+      } catch (e) {
+        console.error('[regularization] attachment not stored:', e.message);
+      }
+    }
+    if (item.attachments.length) await item.save();
+  }
 
   const name = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'An employee';
   if (chain.length) {
@@ -978,7 +1009,38 @@ const adminCreate = asyncHandler(async (req, res) => {
   res.status(201).json({ item, record });
 });
 
+/**
+ * One file attached to a request (2026-09-30). The employee who asked, anyone on
+ * its approval chain, CEO/MD/SuperAdmin and HR with attendance.manage may read it.
+ * @route GET /api/regularizations/:id/attachments/:fileId
+ */
+const getAttachment = asyncHandler(async (req, res) => {
+  const item = await Regularization.findById(req.params.id).catch(() => null);
+  const file = item?.attachments?.id(req.params.fileId);
+  if (!item || !file) {
+    res.status(404);
+    throw new Error('That attachment is not there any more.');
+  }
+  const me = String(req.user._id);
+  const allowed = String(item.employee) === me
+    || (item.approvalChain || []).some((s) => String(s.approver) === me)
+    || ['SuperAdmin', 'CEO', 'MD'].includes(req.user.role)
+    || hasPermission(req.user, 'attendance.manage');
+  if (!allowed) {
+    res.status(403);
+    throw new Error('You do not have access to this attachment.');
+  }
+  res.setHeader('Content-Type', file.contentType || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${String(file.name || 'attachment').replace(/"/g, '')}"`);
+  const ok = await storage.streamTo(file.storagePath, res);
+  if (!ok && !res.headersSent) {
+    res.status(404);
+    throw new Error('That attachment could not be read.');
+  }
+});
+
 module.exports = {
+  getAttachment,
   listMine, createRequest, listAll, reviewRequest, adminCreate,
   // Used by the shared approvals inbox (controllers/approvalController.js).
   // advanceRegularizationApproval moves a NAMED rung; decideAsHr is the final

@@ -19,6 +19,11 @@
  * NOBODY IS TOLD THEIR OWN DOING. `recipients` always drops the actor. The
  * single most reliable way to make people stop reading notifications is to send
  * them one every time they press a button.
+ *
+ * `action: true` MARKS WHAT THE RECIPIENT MUST DO (2026-09-30) — a task given
+ * to them, a hand-in to approve, a decline to sort out, a chase, their own
+ * overdue work. Only those reach a CEO or MD (services/notify.js); progress,
+ * acceptances, remarks and "in the loop" news reach everybody else as before.
  */
 const { notify, notifyMany } = require('./notify');
 const { statusLabel, STATUS, KIND_REQUEST } = require('../config/tasks');
@@ -109,6 +114,7 @@ async function assigned(task, actor) {
     await notifyMany(doers, {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: task.kind === KIND_REQUEST
         ? `${nameOf(actor)} needs something from you`
         : `New task from ${nameOf(actor)}`,
@@ -187,6 +193,7 @@ async function statusMoved(task, update, actor) {
       await notifyMany(to, {
         type: 'task',
         audience: 'admin',
+        action: true,
         title: `${nameOf(actor)} handed in ${taskName(task)}`,
         body: `${String(update.note || 'Waiting on your approval.').slice(0, 160)}`,
         link: adminTaskLink(task._id),
@@ -215,6 +222,7 @@ async function statusMoved(task, update, actor) {
       await notifyMany(doers, {
         type: 'task',
         audience: 'employee',
+        action: !yes,
         title: yes
           ? `${nameOf(actor)} approved ${taskName(task)}`
           : `${nameOf(actor)} sent ${taskName(task)} back`,
@@ -314,6 +322,7 @@ async function commented(task, update, actor) {
       sender: actor?._id,
       type: 'task',
       audience: 'all',
+      action: true,
       title: `${nameOf(actor)} mentioned you`,
       body: `${taskName(task)} — ${body}`,
       link: employeeTaskLink(task._id),
@@ -356,6 +365,7 @@ async function declined(task, update, actor) {
   await notifyMany(to, {
     type: 'task',
     audience: 'admin',
+    action: true,
     title: `${nameOf(actor)} cannot take on ${taskName(task)}`,
     body: String(update.note || '').slice(0, 200),
     link: adminTaskLink(task._id),
@@ -377,6 +387,7 @@ async function delegated(task, update, actor, newAssignee) {
     await notifyMany([String(newAssignee.user)], {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: `${nameOf(actor)} passed you a ${label}`,
       body: `${taskName(task)}${meta(task)}`,
       link: employeeTaskLink(task._id),
@@ -421,6 +432,7 @@ async function taskSplit(task, update, actor, children = []) {
     await notifyMany(to, {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: `New task from ${nameOf(actor)}`,
       body: `${child.title} — part of ${taskName(task)}${meta(child)}`,
       link: employeeTaskLink(child._id),
@@ -438,6 +450,7 @@ async function taskSplit(task, update, actor, children = []) {
     await notifyMany(to, {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: 'A piece of work is up for grabs',
       body: `${child.title} — part of ${taskName(task)}. First to pick it up gets it.`,
       link: employeeTaskLink(child._id),
@@ -480,6 +493,7 @@ async function transferred(task, update, actor, leaving = []) {
     await notifyMany(to, {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: `${taskName(task)} is now yours`,
       body: `${nameOf(actor)} transferred it to you.${meta(task)}`,
       link: employeeTaskLink(task._id),
@@ -565,6 +579,7 @@ async function extensionAsked(task, update, actor, request) {
   await notifyMany(to, {
     type: 'task',
     audience: 'admin',
+    action: true,
     title: `${nameOf(actor)} needs longer on ${taskName(task)}`,
     body: `Asking for ${fmtDateTime(request.toDate)} — ${String(request.reason || '').slice(0, 140)}`,
     link: adminTaskLink(task._id),
@@ -602,6 +617,7 @@ async function edited(task, actor, what = '') {
   await notifyMany(doers, {
     type: 'task',
     audience: 'employee',
+    action: true,
     title: `${nameOf(actor)} edited a ${noun(task)} for you`,
     body: `${taskName(task)}${what ? ` — ${what}` : ''}`,
     link: employeeTaskLink(task._id),
@@ -630,6 +646,7 @@ async function nudged(task, actor, { to = [], kind = 'DOER', note = '' } = {}) {
     await notifyMany(list, {
       type: 'task',
       audience: 'admin',
+      action: true,
       title: `${nameOf(actor)} is waiting on your review`,
       body: `${taskName(task)}${said ? ` — “${said.slice(0, 140)}”` : ' — please approve it or send it back.'}`,
       link: adminTaskLink(task._id),
@@ -646,6 +663,7 @@ async function nudged(task, actor, { to = [], kind = 'DOER', note = '' } = {}) {
   await notifyMany(list, {
     type: 'task',
     audience: 'employee',
+    action: true,
     title: `Reminder from ${nameOf(actor)}`,
     body: `${taskName(task)} — ${said ? `“${said.slice(0, 140)}”` : `${state}.`}${where}`,
     link: employeeTaskLink(task._id),
@@ -670,6 +688,7 @@ async function becameOverdue(task) {
     await notifyMany(doers, {
       type: 'task',
       audience: 'employee',
+      action: true,
       title: `Overdue: ${taskName(task)}`,
       body: `It was due ${due} and is not done yet.`,
       link: employeeTaskLink(task._id),
@@ -704,6 +723,7 @@ async function reminder(task, to, { title, body, portal = 'employee' }) {
   if (!list.length) return;
   await notifyMany(list, {
     type: 'task',
+    action: portal !== 'admin',
     audience: portal === 'admin' ? 'admin' : 'employee',
     title,
     body,
@@ -722,6 +742,7 @@ async function digest(userId, { pending, overdue }) {
     recipient: userId,
     type: 'task',
     audience: 'employee',
+    action: true,
     title: 'Your tasks today',
     body: `You have ${bits.join(' and ')}.`,
     link: '/employee/tasks',

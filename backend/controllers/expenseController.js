@@ -118,6 +118,7 @@ async function notifyClaimReviewers(expense, submitter) {
   await notifyMany(reviewers, {
     type: 'expense',
     audience: 'all',
+    action: true,
     title: 'New expense claim to review',
     body: `${who} submitted a ₹${expense.amount} ${expense.category} claim.`,
     link: '/admin/expenses',

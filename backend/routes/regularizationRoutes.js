@@ -10,10 +10,24 @@ const {
   listAll,
   reviewRequest,
   adminCreate,
+  getAttachment,
 } = require('../controllers/regularizationController');
+const { createUpload } = require('../middleware/upload');
 const { protect, restrictTo, requirePermission, hasPermission } = require('../middleware/authMiddleware');
 
 const router = express.Router();
+
+// Proof attached to a request (2026-09-30): up to 5 photos or PDFs, 10 MB each.
+// multer only reads multipart bodies, so an older client's JSON still works.
+const PROOF_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const proofUpload = createUpload({
+  limits: { fileSize: 10 * 1024 * 1024, files: 5 },
+  fileFilter: (req, file, cb) => {
+    const ok = PROOF_TYPES.includes(String(file.mimetype).toLowerCase())
+      || /\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(file.originalname || '');
+    cb(ok ? null : new Error('Attach a photo (JPG, PNG) or a PDF.'), ok);
+  },
+});
 
 router.use(protect);
 
@@ -21,7 +35,10 @@ router.use(protect);
 // GET /me — list current user's regularization requests; protected.
 router.get('/me', listMine);
 // POST / — raise a regularization request; protected.
-router.post('/', createRequest);
+router.post('/', proofUpload.array('attachments', 5), createRequest);
+// GET /:id/attachments/:fileId — one attached file; the requester, an approver
+// on its chain, CEO/MD/SuperAdmin or attendance.manage (checked in the handler).
+router.get('/:id/attachments/:fileId', getAttachment);
 
 // Reviewing is the one write CEO/MD are allowed: an HR's own regularization can
 // only be decided by them or a SuperAdmin, so the blanket read-only exec gate

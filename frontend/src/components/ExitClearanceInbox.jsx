@@ -10,6 +10,7 @@
  * newest last working day first — with what I submitted, when and my remarks.
  */
 import { useEffect, useState } from 'react';
+import RequestedAt from './RequestedAt';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
@@ -151,6 +152,7 @@ export default function ExitClearanceInbox({ onCount }) {
                   {empName(r)}
                   <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
                 </div>
+                <RequestedAt at={r.createdAt} label="Resignation submitted" />
                 <div className="text-xs text-gray-500 mb-2">
                   {r.employee?.designation || ''}{r.employee?.department ? ` · ${r.employee.department}` : ''} · last working day {fmtDate(r.lastWorkingDay)}
                 </div>
@@ -268,6 +270,7 @@ export default function ExitClearanceInbox({ onCount }) {
                     {empName(r)}
                     <span className="ml-2 text-xs font-mono text-gray-400">{r.employee?.employeeCode}</span>
                   </div>
+                  <RequestedAt at={r.createdAt} label="Resignation submitted" />
                   <div className="text-xs text-gray-500">
                     {r.employee?.designation || ''}{r.employee?.department ? ` · ${r.employee.department}` : ''} · last working day {fmtDate(r.lastWorkingDay)}
                   </div>

@@ -127,6 +127,7 @@ const createComplaint = asyncHandler(async (req, res) => {
   notifyMany(recipients, {
     type: 'complaint',
     audience: 'admin',
+    action: true,
     title: '⚠ New complaint to review',
     body: 'A confidential complaint has been raised. Open the Complaints inbox to review it.',
     link: '/admin/complaints',

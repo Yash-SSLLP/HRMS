@@ -393,14 +393,21 @@ async function runReminders(dateStr, activeIds) {
       r.priority === 'High' ? 'High priority' : null,
       r.notes || null,
     ].filter(Boolean);
-    await notifyMany(ids, {
+    const message = {
       type: 'reminder',
       // Personal item — visible in both portals for dual-role users.
       audience: 'all',
       title: `⏰ Reminder today: ${r.title}`,
       body: bits.join(' · ').slice(0, 300) || 'Due today.',
       link: 'calendar',
-    });
+    };
+    // For a CEO/MD (services/notify.js) a reminder is theirs to act on when they
+    // set it or were named in it; a department- or company-wide one set by
+    // somebody else is news, and does not reach them.
+    const personal = r.scope === 'self' || r.scope === 'users';
+    const mine = personal ? ids : ids.filter((id) => id === creatorId);
+    await notifyMany(mine, { ...message, action: true });
+    await notifyMany(ids.filter((id) => !mine.includes(id)), message);
     sent += ids.length;
   }
   console.log(`Morning digest: ${reminders.length} reminder(s) → ${sent} recipient(s).`);
@@ -439,6 +446,7 @@ async function runInterviews(dateStr, activeIds) {
       recipient: r.interviewer,
       type: 'interview',
       audience: 'all',
+      action: true,
       title: `🗓 Interview today: ${c.name}`,
       body: [time, r.label, c.job?.title].filter(Boolean).join(' · '),
       link: 'calendar',
@@ -495,6 +503,7 @@ async function runTaskDeadlines(dateStr, activeIds) {
       recipient: t.assignedTo,
       type: 'task',
       audience: 'all',
+      action: true,
       title: `⏳ ${t.kind === KIND_REQUEST ? 'Request' : 'Task'} due today: ${t.title}`,
       body: bits.join(' · ') || 'Due today.',
       link: '/employee/tasks',

@@ -22,6 +22,8 @@
  * made the final decision, when, and the note.
  */
 import { useEffect, useState } from 'react';
+import RequestedAt from './RequestedAt';
+import { ProofLinks } from './RegularizationAttachments';
 import api from '../api/client';
 import ApprovalsEmpty from './ApprovalsEmpty';
 import ApprovalsTabs, { useShowMore, OUTCOME_COLORS, HistoryEmpty } from './ApprovalsTabs';
@@ -156,6 +158,7 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                     <span className="ml-2 text-xs font-normal text-gray-500">{r.type}</span>
                   </div>
                   <div className="text-sm text-gray-600 mt-0.5">{fmtDate(r.date)}</div>
+                  <RequestedAt at={r.createdAt} />
                   {/* previousCheckIn/Out are written at approval time and hold the
                       true before-value, so history rows show the real change.
                       A pending request has them empty, so it falls back to the
@@ -166,6 +169,7 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                     <ChangeLine label="Out" from={r.previousCheckOut || r.current?.checkOut} to={r.requestedCheckOut} />
                   </div>
                   <div className="text-sm text-gray-700 mt-1 break-words">{r.reason}</div>
+                  <ProofLinks reg={r} />
                 </div>
                 {/* The final rung reads differently from a step on the way to
                     it: approving here APPLIES the correction to the day, where
@@ -223,11 +227,13 @@ export default function RegularizationApprovalsInbox({ onCount }) {
                       {empName(r)}
                       <span className="text-xs text-gray-500"> · {r.type} · {fmtDate(r.date)}</span>
                     </div>
+                    <RequestedAt at={r.createdAt} />
                     <div className="mt-1 space-y-0.5">
                       <ChangeLine label="In" from={r.previousCheckIn || r.current?.checkIn} to={r.requestedCheckIn} />
                       <ChangeLine label="Out" from={r.previousCheckOut || r.current?.checkOut} to={r.requestedCheckOut} />
                     </div>
                     {r.reason && <div className="text-xs text-gray-600 mt-0.5 break-words">“{r.reason}”</div>}
+                    <ProofLinks reg={r} />
                     {r.approvalChain?.length > 0 && (
                       <div className="mt-1"><ChainProgress chain={r.approvalChain} /></div>
                     )}

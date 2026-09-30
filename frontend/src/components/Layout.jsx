@@ -44,6 +44,9 @@ const NOTIF_POLL_MS = 20000;
 
 // Where the collapsed/expanded choice for the desktop sidebar is remembered.
 const SIDEBAR_PREF_KEY = 'hrms-sidebar-collapsed';
+// The portal's name under "HRMS" in the sidebar header (BrandLockup, option E).
+// Any other section title reads "<title> portal".
+const PORTAL_LABEL = { Admin: 'Admin portal', 'My Portal': 'My portal', Consultancy: 'Consultancy portal' };
 
 function initials(user) {
   const a = (user?.firstName || '').trim()[0] || '';
@@ -1382,9 +1385,10 @@ export default function Layout({ navItems = [], sectionTitle }) {
     // rows came out ~240px in a 320px sidebar, leaving a 67px dead strip on the
     // right. (The mobile drawer's <aside> is a block, so it was unaffected.)
     <div className="flex flex-col h-full w-full min-w-0">
-      <div className={`brand-bar h-24 flex items-center justify-center gap-2 shrink-0 ${rail ? 'px-0' : 'px-4'}`}>
+      {/* Option E (2026-09-30): logo left, divider, "HRMS" over the portal name. */}
+      <div className={`brand-bar h-16 flex items-center gap-2 shrink-0 ${rail ? 'justify-center px-0' : 'justify-start px-4'}`}>
         <Link to={isAdmin || external ? '/admin' : '/employee'} onClick={closeMobile} aria-label={COMPANY_NAME} className="min-w-0">
-          <BrandLockup />
+          <BrandLockup portal={PORTAL_LABEL[sectionTitle] || (sectionTitle ? `${sectionTitle} portal` : '')} />
         </Link>
       </div>
       {/* pr-[2px]: the scrollbar track is always reserved (see .sidebar-nav in

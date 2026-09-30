@@ -127,6 +127,17 @@ export default function AdminPayroll() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState({ year: new Date().getFullYear(), month: '', status: '' });
+  // TWO TABS (2026-09-30, user: "show only current month, to see previous
+  // months data in different tab"). CURRENT is the CALENDAR month, always —
+  // on 30 Sept it is September, even before its payslips exist (user, the
+  // same day: "this should show … September"; a fallback to last month was
+  // tried and reverted). PREVIOUS is every other month, with the Year/Month
+  // filters. `filter` belongs to Previous; Status applies to both.
+  const [view, setView] = useState('current');
+  const [curPeriod] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() + 1 };
+  });
 
   const [showModal, setShowModal] = useState(false);
   const [params] = useSearchParams();
@@ -187,7 +198,13 @@ export default function AdminPayroll() {
   // payroll-202-09.xlsx and Run opened on year 202. One helper, three callers.
   const effectiveYear = (y) => (Number(y) >= 2000 ? Number(y) : new Date().getFullYear());
 
-  const loadPayslips = async (period = filter) => {
+  // What the list asks the server for: the current period on the Current tab,
+  // the filters on Previous.
+  const periodFor = (v = view) => (v === 'current'
+    ? { year: curPeriod?.year, month: curPeriod?.month, status: filter.status }
+    : filter);
+
+  const loadPayslips = async (period = periodFor()) => {
     setLoading(true);
     // No `setError('')` on the way IN. The employee-directory read above shares
     // this one state and resolves on mount, while this runs 350ms later behind
@@ -217,10 +234,16 @@ export default function AdminPayroll() {
   // that rebuilds an identical filter does not refetch; debounced because the
   // Year box is typed into a digit at a time.
   useEffect(() => {
-    const t = setTimeout(loadPayslips, 350);
+    if (view === 'current' && !curPeriod) return undefined;
+    const t = setTimeout(() => loadPayslips(periodFor()), view === 'current' ? 0 : 350);
     return () => clearTimeout(t);
     /* eslint-disable-next-line */
-  }, [filter.year, filter.month, filter.status]);
+  }, [view, curPeriod?.year, curPeriod?.month, filter.year, filter.month, filter.status]);
+
+  // Previous never shows the current period's rows (a year filter with "All"
+  // months would otherwise bring them back in).
+  const isCurrent = (p) => curPeriod && p.payPeriodYear === curPeriod.year && p.payPeriodMonth === curPeriod.month;
+  const shownPayslips = view === 'previous' ? payslips.filter((p) => !isCurrent(p)) : payslips;
 
   // Live gross/deductions/net totals for the payslip form footer.
   const gross = useMemo(() =>
@@ -295,7 +318,14 @@ export default function AdminPayroll() {
       // period that is ALREADY selected changes none of them and would leave
       // the drafts that were just created invisible.
       const ran = { year: runModal.year, month: runModal.month, status: '' };
-      setFilter((f) => ({ ...f, ...ran }));
+      // Show the month just run in whichever tab holds it.
+      if (ran.year === curPeriod.year && ran.month === curPeriod.month) {
+        setFilter((f) => ({ ...f, status: '' }));
+        setView('current');
+      } else {
+        setFilter((f) => ({ ...f, ...ran }));
+        setView('previous');
+      }
       await loadPayslips(ran);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Run failed');
@@ -583,14 +613,14 @@ export default function AdminPayroll() {
       <PageHeader title="Payroll">
         <button
           onClick={() => {
-            const m = Number(filter.month) || new Date().getMonth() + 1;
-            const y = effectiveYear(filter.year);
+            const m = view === 'current' && curPeriod ? curPeriod.month : (Number(filter.month) || new Date().getMonth() + 1);
+            const y = view === 'current' && curPeriod ? curPeriod.year : effectiveYear(filter.year);
             const q = `year=${y}&month=${m}`;
             // Server names the file payroll_<Month>-<Year>_<date>_<time>.xlsx (Content-Disposition).
             downloadFile(`/payroll/export-sheet?${q}`, `payroll-${y}-${String(m).padStart(2, '0')}.xlsx`)
               .catch((err) => toast.error(err.response?.data?.message || 'Export failed'));
           }}
-          title={filter.month ? 'Download this month\'s payroll register (.xlsx)' : 'No month selected · exports the current month'}
+          title={view === 'current' || filter.month ? 'Download this month\'s payroll register (.xlsx)' : 'No month selected · exports the current month'}
           className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm mr-2">
           ⬇ Download Excel
         </button>
@@ -608,21 +638,39 @@ export default function AdminPayroll() {
         )}
       </PageHeader>
 
+      {/* Current month | Previous months (2026-09-30). */}
+      <div className="seg-track mb-3" role="tablist" aria-label="Which months">
+        {[
+          ['current', curPeriod ? `Current month · ${MONTHS[curPeriod.month - 1]} ${curPeriod.year}` : 'Current month'],
+          ['previous', 'Previous months'],
+        ].map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={view === id}
+            onClick={() => setView(id)}
+            className={`seg-btn inline-flex items-center gap-1.5 whitespace-nowrap${view === id ? ' is-active' : ''}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
-        <div>
-          <label className="block text-xs text-gray-600">Year</label>
-          <input type="number" value={filter.year}
-            onChange={(e) => setFilter({ ...filter, year: Number(e.target.value) })}
-            className="border rounded-lg px-2 py-1 w-24" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-600">Month</label>
-          <select value={filter.month} onChange={(e) => setFilter({ ...filter, month: e.target.value })}
-            className="border rounded-lg px-2 py-1">
-            <option value="">All</option>
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
-        </div>
+        {view === 'previous' && (
+          <>
+            <div>
+              <label className="block text-xs text-gray-600">Year</label>
+              <input type="number" value={filter.year}
+                onChange={(e) => setFilter({ ...filter, year: Number(e.target.value) })}
+                className="border rounded-lg px-2 py-1 w-24" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600">Month</label>
+              <select value={filter.month} onChange={(e) => setFilter({ ...filter, month: e.target.value })}
+                className="border rounded-lg px-2 py-1">
+                <option value="">All</option>
+                {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+            </div>
+          </>
+        )}
         <div>
           <label className="block text-xs text-gray-600">Status</label>
           <select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}
@@ -658,9 +706,13 @@ export default function AdminPayroll() {
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : payslips.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No payslips</td></tr>
-            ) : payslips.map((p) => (
+            ) : shownPayslips.length === 0 ? (
+              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">
+                {view === 'current'
+                  ? `No payslips for ${curPeriod ? `${MONTHS[curPeriod.month - 1]} ${curPeriod.year}` : 'this month'} yet — use Run Payroll to generate them.`
+                  : 'No payslips in these months.'}
+              </td></tr>
+            ) : shownPayslips.map((p) => (
               <tr key={p._id}>
                 <td className="px-4 py-3">
                   {p.employee?.user?.firstName} {p.employee?.user?.lastName}

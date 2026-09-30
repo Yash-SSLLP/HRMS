@@ -126,6 +126,11 @@ const EXEC_WRITE_PATHS = [
   // alerts read — opening one from the bell, "Mark all read". Nothing here
   // changes company data.
   /\/notifications(\/|$|\?)/,
+  // CALENDAR REMINDERS. /reminders runs on `protect` alone and the controller
+  // names CEO/MD as broadcast roles, so a read-only exec adds, edits and
+  // deletes reminders on the server. Missing here (until 2026-09-30), the
+  // Calendar's "+ Reminder" save was refused one step early.
+  /\/reminders(\/|$|\?)/,
   // THE ADVANCE REQUEST FORM'S purposes and terms. The CEO and MD write them in
   // either mode — routes/loanRoutes.js names them in requireLoanFormEditor — so
   // the save must not be refused here first.

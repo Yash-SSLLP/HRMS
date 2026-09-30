@@ -503,6 +503,7 @@ const sendMessage = asyncHandler(async (req, res) => {
   const fromName = `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'New message';
   notify({
     recipient: recipientId,
+    action: true,
     type: 'chat',
     title: fromName,
     body: preview(body),

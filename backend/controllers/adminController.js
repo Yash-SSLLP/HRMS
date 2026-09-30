@@ -1516,6 +1516,7 @@ const requirePasswordChange = asyncHandler(async (req, res) => {
       recipient: user._id,
       type: 'general',
       audience: 'all',
+      action: true,
       title: 'Choose a new password',
       body: 'You will be asked to set a new password the next time you sign in.',
     }).catch((err) => console.error('require-password-change notify failed:', err.message));
