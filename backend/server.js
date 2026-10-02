@@ -16,7 +16,7 @@
  * Mounted route groups: everything under /api/*
  *
  * Startup (after connectDB): email, celebration, attendance, push-reminder,
- * exit, late-policy, task-reminder and task-recurrence workers; a one-off
+ * exit, late-policy, task-reminder, task-recurrence and training workers; a one-off
  * HR-profile backfill; then app.listen on PORT (default 5000).
  * The workers own their own cron schedules internally.
  */
@@ -43,6 +43,7 @@ const { startWorker: startLatePolicySync } = require('./services/latePolicy');
 const { startWorker: startTaskReminderWorker } = require('./services/taskReminderWorker');
 const { startWorker: startTaskRecurrenceWorker } = require('./services/taskRecurrenceWorker');
 const { startWorker: startNotificationCleanup } = require('./services/notificationCleanupWorker');
+const { startWorker: startTrainingWorker } = require('./services/trainingWorker');
 
 const { backfillHrProfiles } = require('./services/ensureProfile');
 const { requestContext } = require('./middleware/requestContext');
@@ -263,6 +264,10 @@ connectDB()
     // reminders or mint the same recurring instance twice.
     startTaskReminderWorker();
     startTaskRecurrenceWorker();
+    // Training: status follows the schedule, "starting soon" a quarter-hour
+    // before, and the review request after the end — each once (claimed), and
+    // never stale (see the worker).
+    startTrainingWorker();
 
     // One-time HR profile backfill
     backfillHrProfiles().catch((err) => {

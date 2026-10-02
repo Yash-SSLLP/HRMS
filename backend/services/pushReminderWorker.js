@@ -42,6 +42,7 @@ const { startOfDayIST } = require('../utils/dateHelpers');
 const { istDateString, IST_TZ } = require('../utils/istDate');
 const { WORKDAY_END_HOUR, NON_WORKING_STATUSES } = require('../utils/workday');
 const Shift = require('../models/Shift');
+const RosterEntry = require('../models/RosterEntry');
 const { parseHm, crossesMidnight, to12h } = require('../utils/shiftWindow');
 
 // Every 5 minutes, so a 09:45 reminder actually lands near 09:45 rather than up
@@ -123,14 +124,29 @@ async function remindPunchIn(today, shiftId = null) {
   // shift's people; the org-wide run takes only those with NO shift, rather than
   // everyone — otherwise a night worker would get the 09:45 nudge as well as
   // their own, which is the noise that teaches people to mute the app.
+  //
+  // "Their shift" is TODAY's: a roster row for today overrides the standing
+  // assignment, exactly as the punch itself resolves it (services/shiftResolver).
+  // Without that, somebody rostered onto an 11:00 AM shift is nudged at 09:45
+  // with everyone on the office hours, and never at 10:45.
   const profiles = await EmployeeProfile.find({
     $or: [{ dateOfExit: null }, { dateOfExit: { $exists: false } }],
-    ...(shiftId ? { shiftRef: shiftId } : { shiftRef: null }),
   })
-    .select('user')
+    .select('user shiftRef')
     .populate({ path: 'user', select: 'isActive' })
     .lean();
-  const active = profiles.filter((p) => p.user?._id && p.user.isActive !== false);
+  const living = profiles.filter((p) => p.user?._id && p.user.isActive !== false);
+  if (!living.length) return 0;
+  const rostered = new Map(
+    (await RosterEntry.find({ date: today, employee: { $in: living.map((p) => p.user._id) } })
+      .select('employee shift').lean())
+      .map((r) => [String(r.employee), String(r.shift)])
+  );
+  const want = shiftId ? String(shiftId) : '';
+  const active = living.filter((p) => {
+    const todays = rostered.get(String(p.user._id)) ?? (p.shiftRef ? String(p.shiftRef) : '');
+    return todays === want;
+  });
   if (!active.length) return 0;
 
   const ids = active.map((p) => p._id);

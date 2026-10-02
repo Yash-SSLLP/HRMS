@@ -6,7 +6,7 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const {
-  listAudit, countAudit, deleteAuditEntries, purgeAudit,
+  listAudit, countAudit, getAuditDetails, deleteAuditEntries, purgeAudit,
 } = require('../controllers/auditController');
 
 const router = express.Router();
@@ -27,6 +27,8 @@ router.use(protect, (req, res, next) => {
 router.get('/', listAudit);
 // GET /count — how many entries the filters match; feeds the purge confirmation.
 router.get('/count', countAudit);
+// GET /:id — one entry in words, the record it points at, and its history.
+router.get('/:id', getAuditDetails);
 // POST /delete — permanently delete the chosen entries ({ ids }).
 router.post('/delete', deleteAuditEntries);
 // POST /purge — permanently delete every entry matching the filters.

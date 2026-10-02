@@ -301,13 +301,21 @@ A video may have **questions built into it**. When playback reaches one the vide
 
 A question you have already answered is never asked again, and a lesson you have already finished plays straight through if you watch it a second time.
 
+### 8.4 My Trainings
+
+Every training you are booked on — as a participant, or as its trainer — with its date and time, the trainer, what it covers and any files to download. You are told when you are added, when a session moves or is cancelled, and a quarter of an hour before it starts. A session that is on right now sits at the top in red, and the next one is shown on your dashboard too.
+
+**Join** from here: the button lights up half an hour before the start, and joining from My Trainings is what records that you attended.
+
+When a session is over you are asked **how clear the training was** — tap a star from 1 to 5 — and, if you like, how useful it was, how well the trainer explained, and anything that was not clear. Your review is shared with the training team with your name, and you can change it later. If you ran the session, you see how it was rated.
+
 ---
 
 ## 9. Work and resources
 
 ### 9.1 Tasks
 
-Work handed to you, and work you have handed on. The screen opens on two cards — **Assigned to me** and **Assigned by me** — each showing how much is still open, what is overdue and what is waiting on a review. Tap one to see that pile. **In the loop** beside them holds the tasks somebody asked to keep you informed on — yours to follow, not to do. Under them are a **search** box (a task's name, or the name of whoever set it or holds it), a **Filter** button (due date, department, people, priority and the order), **Completed** beside it — the finished tasks, one tap away; tap it again to go back — and six figures: **Total, Not Accepted Yet, Overdue, In Progress, Under Review** and **More Time Asked**. **Not Accepted Yet** is work nobody has taken on: accepting a task moves it to In Progress. A late task counts under Overdue only, so Not Accepted Yet, Overdue, In Progress and Under Review add up to Total. **More Time Asked** is the unfinished tasks with a request for more time still waiting for an answer — once it is granted or refused, or the task is finished, it leaves that list. Every task card says where its latest ask stands: Pending, Approved or Declined. Tap a figure to see only those tasks; tap it again to see them all. The figures themselves stay put when you pick one or type in the search box — they always describe the whole pile. The list shows every due date unless you choose one under Filter.
+Work handed to you, and work you have handed on. The screen opens on the cards **Assigned to me**, **Assigned by me** and **In the loop** (and **All tasks** for managers) — each showing how much is still open, what is overdue and what is waiting on a review. Tap one to see that pile. On the phone they sit in one row, two at a time: slide the row sideways for the rest. **In the loop** holds the tasks somebody asked to keep you informed on — yours to follow, not to do. **Search** finds a task by its name, or by the name of whoever set it or holds it; **Filter** covers due date, department, people (assigned to and assigned by), priority and the order. On the phone, Search and Filter are the two icons at the top right — tap the magnifier and the keyboard opens — and finished tasks are under Filter → **Completed tasks** (hide them, show them in Total, or show only them; tasks called off or kept as rejected come with them). On the web, **Completed** sits beside Filter. Then come six figures: **Total, Not Accepted Yet, Overdue, In Progress, Under Review** and **More Time Asked**. **Not Accepted Yet** is work nobody has taken on: accepting a task moves it to In Progress. A late task counts under Overdue only, so Not Accepted Yet, Overdue, In Progress and Under Review add up to Total. **More Time Asked** is the unfinished tasks with a request for more time still waiting for an answer — once it is granted or refused, or the task is finished, it leaves that list. Every task card says where its latest ask stands: Pending, Approved or Declined. Tap a figure to see only those tasks; tap it again to see them all. The figures themselves stay put when you pick one or type in the search box — they always describe the whole pile. The list shows every due date unless you choose one under Filter.
 
 Every task shows who set it, who it is for and the day it was assigned, beside its deadline. If the Backend has allowed you, the assign form also has **On behalf of**: pick whose task it is and it goes out in their name — they approve it, and it shows that you sent it. It is theirs from then on: it does not stay in your own task list. Every task has a **status button** on the right. Tap it to see what you can do with that task right now — only the moves that apply to you are offered:
 
@@ -318,7 +326,11 @@ Every task shows who set it, who it is for and the day it was assigned, beside i
 - **In Review** — hand your work in for the person who set it to check.
 - **Completed** — mark it done, where no review is needed.
 
+**When a task you set is rejected.** Once everybody you gave it to has rejected it, it leaves their list and comes back to you under **Assigned by me**, marked **Rejected**, with their reasons. Its status button then offers three choices: **Edit and send again** — change what was wrong, or pick somebody else, and on Save they are asked to accept it again; **Keep rejected** — the task closes with the reasons on it; or **Delete task**.
+
 Everything else — progress, comments, files, asking for more time — is under **Open task** at the bottom of the same list, or tap the task itself.
+
+**Swiping on the phone.** Swipe a task right to accept it (no reason needed — it is accepted at once) or to complete it, and left to reject it, send it back or ask for more time. On a task you set that nobody has accepted yet, a swipe right opens **Edit**.
 
 A task moves through four stages:
 
@@ -334,7 +346,7 @@ A task moves through four stages:
 
 [!NOTE] A task is coloured by how urgent it is — red for Urgent, amber for Medium, grey for Low — and turns **green** once it is finished. A task past its deadline also carries a red **Overdue** tag.
 
-**If you cannot make the deadline, say so.** Use **Ask for more time**, pick the new date and give a reason. The person who set the task grants it or refuses it, and you are told either way. The work carries on while you wait — asking is not the same as stopping.
+**If you cannot make the deadline, say so.** Use **Ask for more time**, pick the new date and give a reason — the reason (*Why do you need longer?*) is required. The person who set the task grants it or refuses it, and you are told either way. The work carries on while you wait — asking is not the same as stopping.
 
 **If a task is too big for one person**, use **Delegate**. You can hand the whole thing to somebody on your team, or break it into pieces and give each piece to a different person. Each piece is a task in its own right, with its own deadline and its own share of the points — shared out equally unless you change the figures. A piece you leave unassigned is offered to your team, and the first person to **pick it up** gets it. Whichever way you delegate, **you become the person who approves it**.
 

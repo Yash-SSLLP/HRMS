@@ -161,6 +161,10 @@ async function run(handler, req) {
     check('every round cleared → selected', sectionOf({ stage: 'Interview', rounds: allCleared }), 'selected');
     check('an offer made → selected', sectionOf({ stage: 'Offer', rounds: rounds('Cleared') }), 'selected');
     check('joined the company → selected', sectionOf({ stage: 'Hired', rounds: rounds('Cleared'), employee: { user: oid() } }), 'selected');
+    const r2Rejected = { stage: 'Interview', rounds: rounds('Cleared', { status: 'Rejected', interviewer: oid() }) };
+    check('company rejects Round 2, stage left open → rejected', sectionOf(r2Rejected), 'rejected');
+    check('…the agency is told where', lockReason(r2Rejected, agencyId), 'Rejected by the company at Round 2.');
+    check('…and its details lock with the same reason', editLock(r2Rejected), 'Rejected by the company at Round 2.');
 
     check('details editable while the company has not acted', editLock({ stage: 'Interview', rounds: rounds('Cleared') }), '');
     check('…locked once Round 2 is booked', editLock({ stage: 'Interview', rounds: rounds('Cleared', { interviewer: oid() }) }), 'The company has taken this candidate forward.');

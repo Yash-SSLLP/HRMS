@@ -115,6 +115,9 @@ const SELECTED_STAGES = ['Offer', 'Onboarding', 'NewJoinee', 'Hired'];
  *   selected — the company selected them: every round cleared, an offer or
  *              beyond, or they have joined;
  *   rejected — turned down (by the company; or at Round 1 on an older row).
+ *              A round the company marks Rejected counts on its own (user
+ *              2026-10-02) — HR often rejects Round 2 without also closing the
+ *              candidate's stage, and they must not linger under Ongoing.
  * @param {object} c - a candidate
  * @returns {'ongoing'|'selected'|'rejected'}
  */
@@ -122,8 +125,21 @@ function sectionOf(c) {
   if (c.stage === 'Rejected') return 'rejected';
   if (c.employee?.user || SELECTED_STAGES.includes(c.stage)) return 'selected';
   const rounds = c.rounds || [];
+  if (rounds.some((r) => r.status === 'Rejected')) return 'rejected';
   if (rounds.length && rounds.every((r) => r.status === 'Cleared')) return 'selected';
   return 'ongoing';
+}
+
+/**
+ * The later round (2-4) the company rejected the candidate at, as "Round N",
+ * or '' when none was rejected.
+ * @param {object} c - the candidate
+ * @returns {string}
+ */
+function companyRejectedAt(c) {
+  const idx = (c.rounds || []).findIndex((r, i) => i > 0 && r.status === 'Rejected');
+  if (idx < 0) return '';
+  return c.rounds[idx].label || `Round ${idx + 1}`;
 }
 
 /**
@@ -137,6 +153,8 @@ function sectionOf(c) {
 function editLock(c) {
   if (c.employee?.user) return 'This candidate has joined the company.';
   if (c.stage === 'Rejected') return 'The company has closed this candidate.';
+  const rejectedAt = companyRejectedAt(c);
+  if (rejectedAt) return `Rejected by the company at ${rejectedAt}.`;
   const laterTouched = (c.rounds || []).slice(1)
     .some((r) => (r.status && r.status !== 'Pending') || r.interviewer || r.scheduledAt);
   if (laterTouched || !AGENCY_STAGES.includes(c.stage)) return 'The company has taken this candidate forward.';
@@ -159,6 +177,8 @@ function editLock(c) {
 function lockReason(c, meId) {
   if (c.employee?.user) return 'This candidate has joined the company.';
   const r0 = c.rounds?.[0];
+  const rejectedAt = companyRejectedAt(c);
+  if (rejectedAt) return `Rejected by the company at ${rejectedAt}.`;
   if (r0?.status === 'Cleared') return 'Shortlisted — the company schedules the next rounds.';
   if (r0?.status === 'Rejected') return 'Rejected at Round 1.';
   if (r0?.interviewer && String(r0.interviewer) !== String(meId)) {

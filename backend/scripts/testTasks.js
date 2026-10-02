@@ -838,8 +838,30 @@ function testSeptember28() {
   ok('the approver who is also on it may edit', access.capabilitiesFor(me, delegatedBack).canEdit, true);
 }
 
+// ===== 2026-10-02: bulk delete is a Super Admin grant =====
+
+function testBulkDeleteGrant() {
+  console.log('\nBulk delete: a Super Admin by role, others by grant (2026-10-02)');
+  const emp = (extra = {}) => ({ _id: A, role: 'Employee', permissions: [], ...extra });
+  ok('bulk: a Super Admin by role', access.canBulkDelete({ _id: A, role: 'SuperAdmin' }), true);
+  ok('bulk: an employee with the switch', access.canBulkDelete(emp({ taskBulkDeleteAccess: true })), true);
+  ok('bulk: a CEO with the switch', access.canBulkDelete({ _id: A, role: 'CEO', taskBulkDeleteAccess: true }), true);
+  ok('bulk: not without it', access.canBulkDelete(emp()), false);
+  ok('bulk: nor by being CEO', access.canBulkDelete({ _id: A, role: 'CEO' }), false);
+  ok('bulk: nor by holding every capability', access.canBulkDelete({ _id: A, role: 'HRManager' }), false);
+  // The grant deletes "like" a Super Admin — any task the holder can SEE.
+  const seen = { createdBy: C, status: 'PENDING', loopUsers: [A], assignees: [{ user: B, status: 'PENDING', acceptance: 'AWAITING' }] };
+  const unseen = { createdBy: C, status: 'PENDING', assignees: [{ user: B, status: 'PENDING', acceptance: 'AWAITING' }] };
+  ok('grant: deletes a task they can see but did not set', access.canDelete(emp({ taskBulkDeleteAccess: true }), seen), true);
+  ok('grant: not a task they cannot see', access.canDelete(emp({ taskBulkDeleteAccess: true }), unseen), false);
+  ok('no grant: not somebody else\'s task', access.canDelete(emp(), seen), false);
+  ok('no grant: still their own', access.canDelete(emp(), { ...unseen, createdBy: A }), true);
+  ok('grant: never a purge', access.canPurge(emp({ taskBulkDeleteAccess: true })), false);
+}
+
 async function run() {
   console.log('Task module — rules');
+  testBulkDeleteGrant();
   testSeptember28();
   testEditLock();
   testNudge();

@@ -210,6 +210,16 @@ const userSchema = new mongoose.Schema(
      * (services/taskAccess.canSetPoints).
      */
     taskPointsAccess: { type: Boolean, default: false },
+    /**
+     * DELETE TASKS IN BULK (2026-10-02, the user: "Super Admin can delete
+     * multiple task at a time but to give other user ( CEO or MD too ) set a
+     * permission to allow someone to delete like that"). Ticks several tasks
+     * and removes them together — and, like a Super Admin, any task this
+     * account can see, not only the ones it set. Deleting FOR GOOD stays a
+     * Super Admin's. A Super Admin holds it by role
+     * (services/taskAccess.canBulkDelete).
+     */
+    taskBulkDeleteAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

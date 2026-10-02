@@ -23,6 +23,7 @@ import AnnouncementsBanner from '../components/AnnouncementsBanner';
 import RnrBanner from '../components/RnrBanner';
 import SurveysBanner from '../components/SurveysBanner';
 import InterviewsBanner from '../components/InterviewsBanner';
+import TrainingsBanner from '../components/TrainingsBanner';
 import ManagerTeamStatus from '../components/ManagerTeamStatus';
 // Same icon set as the sidebar (config/nav.jsx): FiTool is Regularization,
 // FiUmbrella is Leave — the banner buttons point at exactly those pages.
@@ -181,6 +182,10 @@ export default function EmployeeDashboard() {
 
       {/* Upcoming interviews the employee is assigned to conduct. */}
       <InterviewsBanner />
+
+      {/* A training I am on that is live or starts within a day (Join right
+          here), and any finished one still waiting for my review. */}
+      <TrainingsBanner />
 
       {/* Managers: today's status of everyone reporting to them (self-hides when
           the viewer has no reports). */}

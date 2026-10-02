@@ -2453,7 +2453,9 @@ const deleteTask = asyncHandler(async (req, res) => {
  */
 const MAX_BULK_DELETE = 200;
 const bulkDeleteTasks = asyncHandler(async (req, res) => {
-  if (!access.canBulkDelete(req.user)) bad(res, 'You cannot delete tasks.', 403);
+  if (!access.canBulkDelete(req.user)) {
+    bad(res, 'Deleting several tasks at once needs the "Bulk delete" permission — ask a Super Admin.', 403);
+  }
   const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))]
     .filter(mongoose.Types.ObjectId.isValid);
   if (!ids.length) bad(res, 'Pick at least one task.');

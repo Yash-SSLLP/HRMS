@@ -7,8 +7,24 @@
  * GET /employees. The late-marking block is SuperAdmin-only — the server drops
  * it from anyone else — so it renders read-only for HR rather than offering a
  * control that would silently do nothing.
+ *
+ * REDESIGNED 2026-10-02 (user: "make it more premium looking and user
+ * friendly — if we scroll down we cannot see properly that the previous day
+ * has started"). The records are no longer one long table with the date
+ * repeated on every row: each DAY is its own section, headed by a day bar
+ * that sticks under the top bar while that day's rows scroll past (and is
+ * pushed off by the next day's), naming the date and that day's present /
+ * late / absent / leave / outside counts. One long table could not do this —
+ * every table sits in a sideways scroller (index.css `:has(> table)`), and a
+ * row inside a sideways scroller cannot stick to the page. Above the days: a
+ * KPI strip for the period (also the quick "show only…" filter), the period
+ * picker with a Today shortcut, and a name/code search over what is loaded.
  */
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import {
+  FiSettings, FiPlus, FiSearch, FiX, FiDownload, FiCalendar, FiCheckCircle, FiClock, FiXCircle,
+  FiCoffee, FiAlertTriangle, FiEdit2, FiTrash2, FiUsers,
+} from 'react-icons/fi';
 import { useDateSort, DateSortButton } from '../components/DateSort';
 import { toast } from 'react-toastify';
 import api from '../api/client';
@@ -31,13 +47,40 @@ const MONTHS = [
 
 const STATUS = ['Present', 'Absent', 'HalfDay', 'WeeklyOff', 'Holiday', 'OnLeave'];
 
-const STATUS_COLORS = {
-  Present: 'bg-green-100 text-green-800',
-  Absent: 'bg-red-100 text-red-800',
-  HalfDay: 'bg-amber-100 text-amber-800',
-  WeeklyOff: 'bg-gray-100 text-gray-700',
-  Holiday: 'bg-blue-100 text-blue-800',
-  OnLeave: 'bg-purple-100 text-purple-800',
+// How a status reads, and its tone class (index.css `.att-status.is-*`).
+const STATUS_LABEL = {
+  Present: 'Present', Absent: 'Absent', HalfDay: 'Half day', WeeklyOff: 'Weekly off', Holiday: 'Holiday', OnLeave: 'On leave',
+};
+const STATUS_TONE = {
+  Present: 'is-present', Absent: 'is-absent', HalfDay: 'is-half', WeeklyOff: 'is-off', Holiday: 'is-holiday', OnLeave: 'is-leave',
+};
+
+// The quick "show only…" views over the loaded rows (client-side — the period
+// and employee filters above them are the server's).
+const VIEWS = [
+  { id: 'all', label: 'Everyone' },
+  { id: 'present', label: 'Present' },
+  { id: 'late', label: 'Late' },
+  { id: 'absent', label: 'Absent' },
+  { id: 'leave', label: 'On leave' },
+  { id: 'outside', label: 'Outside area' },
+];
+
+const WEEKDAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const personName = (r) => `${r.employee?.user?.firstName || ''} ${r.employee?.user?.lastName || ''}`.trim() || 'Employee';
+const initialsOf = (name) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '·';
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+};
+// One steady colour per person, so the same face reads the same on every day.
+const AVATAR_HUES = ['#2563eb', '#0d9488', '#7c3aed', '#d97706', '#db2777', '#0891b2', '#16a34a', '#ea580c', '#4f46e5', '#be123c'];
+const hueOf = (key) => {
+  let h = 0;
+  for (const ch of String(key || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_HUES[h % AVATAR_HUES.length];
 };
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
@@ -150,6 +193,97 @@ function DistanceTag({ label, loc, distanceM, thresholdM, wfh, exempt, locationN
   );
 }
 
+/** Which quick view a record belongs to (a record can be in several). */
+function inView(r, view, fallbackRadius) {
+  if (view === 'present') return r.status === 'Present' || r.status === 'HalfDay';
+  if (view === 'late') return r.lateMinutes > 0;
+  if (view === 'absent') return r.status === 'Absent';
+  if (view === 'leave') return r.status === 'OnLeave';
+  if (view === 'outside') return isRecordFlagged(r, fallbackRadius);
+  return true;
+}
+
+/** How a set of records adds up — the KPI strip and every day bar count with this. */
+function tally(rows, fallbackRadius) {
+  const t = { total: rows.length, present: 0, half: 0, late: 0, absent: 0, leave: 0, off: 0, outside: 0 };
+  rows.forEach((r) => {
+    if (r.status === 'Present') t.present += 1;
+    else if (r.status === 'HalfDay') t.half += 1;
+    else if (r.status === 'Absent') t.absent += 1;
+    else if (r.status === 'OnLeave') t.leave += 1;
+    else if (r.status === 'WeeklyOff' || r.status === 'Holiday') t.off += 1;
+    if (r.lateMinutes > 0) t.late += 1;
+    if (isRecordFlagged(r, fallbackRadius)) t.outside += 1;
+  });
+  return t;
+}
+
+function Kpi({ icon: Icon, hue, label, value, sub, onClick, on }) {
+  return (
+    <button type="button" className={`trn-kpi ${on ? 'is-on' : ''}`} onClick={onClick} aria-pressed={!!on}>
+      <span className="trn-kpi-icon" style={{ '--kpi-hue': hue }}><Icon size={19} /></span>
+      <span className="min-w-0">
+        <span className="trn-kpi-label block text-gray-600">{label}</span>
+        <span className="trn-kpi-value block text-gray-900">{value}</span>
+        {sub && <span className="trn-kpi-sub block text-gray-600">{sub}</span>}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * The bar that opens a day: the date as a calendar tile, the weekday and full
+ * date (with Today / Yesterday), and what that day adds up to. It sticks under
+ * the top bar while the day's rows scroll by, so the day you are reading is
+ * always named — and the next day's bar visibly takes its place.
+ */
+function DayBar({ ymd, counts, shown }) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = toYMD(new Date());
+  const yesterday = toYMD(new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate() - 1));
+  const rel = ymd === today ? 'Today' : ymd === yesterday ? 'Yesterday' : '';
+  const weekend = date.getDay() === 0;
+  const chips = [
+    counts.present && { k: 'present', text: `${counts.present} present` },
+    counts.half && { k: 'half', text: `${counts.half} half day` },
+    counts.late && { k: 'late', text: `${counts.late} late` },
+    counts.absent && { k: 'absent', text: `${counts.absent} absent` },
+    counts.leave && { k: 'leave', text: `${counts.leave} on leave` },
+    counts.off && { k: 'off', text: `${counts.off} off` },
+    counts.outside && { k: 'outside', text: `${counts.outside} outside area` },
+  ].filter(Boolean);
+  const stats = (where) => chips.length > 0 && (
+    <div className={`att-day-stats ${where}`}>
+      {chips.map((c) => <span key={c.k} className={`att-chip is-${c.k}`}>{c.text}</span>)}
+    </div>
+  );
+  // The counts ride inside the bar on a wide screen; on a phone they sit just
+  // under it instead, so the part that stays pinned is one slim line.
+  return (
+    <>
+    <div className={`att-day-bar ${rel === 'Today' ? 'is-today' : ''}`}>
+      <div className={`att-day-tile ${weekend ? 'is-weekend' : ''}`} aria-hidden="true">
+        <span className={`att-day-tile-m ${weekend ? '' : 'accent-bg on-accent'}`}>{MONTHS_SHORT[m - 1]}</span>
+        <span className="att-day-tile-d text-gray-900">{d}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="att-day-title text-gray-900">
+          {WEEKDAYS_LONG[date.getDay()]}
+          {rel && <span className={`att-day-rel ${rel === 'Today' ? 'is-today' : ''}`}>{rel}</span>}
+        </div>
+        <div className="att-day-sub text-gray-500">
+          {d} {MONTHS[m - 1]} {y} · {counts.total} {counts.total === 1 ? 'record' : 'records'}
+          {shown !== counts.total && <> · showing {shown}</>}
+        </div>
+      </div>
+      {stats('is-inline')}
+    </div>
+    {stats('is-below')}
+    </>
+  );
+}
+
 /**
  * A stored punch as the local-datetime input wants it, and back again.
  *
@@ -202,6 +336,9 @@ export default function AdminAttendance() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  // Client-side over what is loaded: a quick "show only…" view and a name/code search.
+  const [view, setView] = useState('all');
+  const [search, setSearch] = useState('');
 
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -510,126 +647,217 @@ export default function AdminAttendance() {
     }
   };
 
+  // ---- the period at a glance, and the days ----
+  const radius = settings.geofenceThresholdM;
+  const totals = useMemo(() => tally(records, radius), [records, radius]);
+  // Each day's own count, over ALL its rows — a "Late" view still shows the
+  // day bar's full picture, with "showing N" for what is listed under it.
+  const dayCounts = useMemo(() => {
+    const byDay = new Map();
+    records.forEach((r) => {
+      const key = toYMD(r.date);
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(r);
+    });
+    const out = new Map();
+    byDay.forEach((rows, key) => out.set(key, tally(rows, radius)));
+    return out;
+  }, [records, radius]);
+  const needle = search.trim().toLowerCase();
+  // Rows arrive sorted by date (either way), so a day's rows are contiguous.
+  const days = useMemo(() => {
+    const groups = [];
+    let cur = null;
+    sortedRecords.forEach((r) => {
+      if (!inView(r, view, radius)) return;
+      if (needle && !`${personName(r)} ${r.employee?.employeeCode || ''}`.toLowerCase().includes(needle)) return;
+      const key = toYMD(r.date);
+      if (!cur || cur.key !== key) { cur = { key, rows: [] }; groups.push(cur); }
+      cur.rows.push(r);
+    });
+    return groups;
+  }, [sortedRecords, view, needle, radius]);
+  const shownCount = days.reduce((n, g) => n + g.rows.length, 0);
+  const narrowed = view !== 'all' || !!needle;
+  const period = filter.day
+    ? `on ${filter.day} ${MONTHS_SHORT[filter.month - 1]}`
+    : `in ${MONTHS[filter.month - 1]}`;
+  const todayYmd = toYMD(new Date());
+  const isTodayView = filter.day && toYMD(new Date(filter.year, filter.month - 1, Number(filter.day))) === todayYmd;
+  const showToday = () => {
+    const t = new Date();
+    setFilter((f) => ({ ...f, year: t.getFullYear(), month: t.getMonth() + 1, day: String(t.getDate()) }));
+  };
+  const pickView = (id) => setView((v) => (v === id ? 'all' : id));
+
   return (
     <div>
-      <PageHeader title="Attendance">
+      <PageHeader title="Attendance" subtitle="Every punch, day by day — who came in, when, and from where">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {!viewOnly && (
-          <button onClick={openSettings}
-            className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
-            ⚙ Office &amp; Geofence
+          <button type="button" onClick={openSettings} className="trn-btn">
+            <FiSettings size={15} /> Office &amp; geofence
           </button>
         )}
         {!viewOnly && (
-        <button onClick={openCreate}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-          + Manual Entry
-        </button>
+          <button type="button" onClick={openCreate} className="trn-btn is-primary accent-bg on-accent">
+            <FiPlus size={16} /> Manual entry
+          </button>
         )}
       </PageHeader>
 
-      <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
-        <div>
-          <label className="block text-xs text-gray-600">Year</label>
-          {/* A select, not a free-typed number. Typing "2026" here used to fire
-              a request per keystroke — three each, with no cancellation — so a
-              slow reply for year 202 could land after the one for 2026 and
-              leave an empty table under a correct-looking filter. Clearing the
-              box asked the server for year 0. */}
-          <select value={filter.year}
-            onChange={(e) => setFilter({ ...filter, year: Number(e.target.value) })}
-            className="border rounded-lg px-2 py-1">
-            {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
+      {/* The period at a glance. Each card is also a "show only…" switch over
+          the rows below; tapping the lit one again shows everyone. */}
+      <div className="att-kpis mb-4">
+        <Kpi icon={FiCheckCircle} hue="#16a34a" label="Present" value={loading ? '—' : totals.present + totals.half}
+          sub={totals.half ? `incl. ${totals.half} half day` : period} onClick={() => pickView('present')} on={view === 'present'} />
+        <Kpi icon={FiClock} hue="#d97706" label="Late" value={loading ? '—' : totals.late}
+          sub="after the cut-off" onClick={() => pickView('late')} on={view === 'late'} />
+        <Kpi icon={FiXCircle} hue="#dc2626" label="Absent" value={loading ? '—' : totals.absent}
+          sub={period} onClick={() => pickView('absent')} on={view === 'absent'} />
+        <Kpi icon={FiCoffee} hue="#7c3aed" label="On leave" value={loading ? '—' : totals.leave}
+          sub={period} onClick={() => pickView('leave')} on={view === 'leave'} />
+        <Kpi icon={FiAlertTriangle} hue="#ea580c" label="Outside area" value={loading ? '—' : totals.outside}
+          sub="away from work" onClick={() => pickView('outside')} on={view === 'outside'} />
+      </div>
+
+      <div className="trn-card-base att-toolbar mb-3">
+        <div className="att-period">
+          <label className="att-field">
+            <span className="att-field-label text-gray-600">Year</span>
+            {/* A select, not a free-typed number. Typing "2026" here used to fire
+                a request per keystroke — three each, with no cancellation — so a
+                slow reply for year 202 could land after the one for 2026 and
+                leave an empty table under a correct-looking filter. Clearing the
+                box asked the server for year 0. */}
+            <select value={filter.year} className="trn-select"
+              onChange={(e) => setFilter({ ...filter, year: Number(e.target.value) })}>
+              {[thisYear - 1, thisYear, thisYear + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </label>
+          <label className="att-field">
+            <span className="att-field-label text-gray-600">Month</span>
+            <select value={filter.month} className="trn-select"
+              onChange={(e) => setFilter({ ...filter, month: Number(e.target.value) })}>
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+          </label>
+          <label className="att-field">
+            <span className="att-field-label text-gray-600">Day</span>
+            {/* Narrows the month already chosen rather than being a date of its
+                own: a free date box here would be a second, disagreeing answer to
+                the Year/Month above it — and there is already one on the export
+                row below, which deliberately exports a day you are not viewing. */}
+            <select value={filter.day} className="trn-select"
+              onChange={(e) => setFilter({ ...filter, day: e.target.value })}>
+              <option value="">All days</option>
+              {Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
+          </label>
+          <div className="att-field att-field-wide">
+            <span className="att-field-label text-gray-600">Employee</span>
+            <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
+              className="trn-select w-full" aria-label="Employee">
+              <option value="">Everyone</option>
+              {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
+            </SearchableSelect>
+          </div>
+          <div className="att-quick">
+            <button type="button" className={`trn-btn ${isTodayView ? 'is-on' : ''}`} onClick={showToday} aria-pressed={!!isTodayView}>
+              <FiCalendar size={14} /> Today
+            </button>
+            {filter.day && (
+              <button type="button" className="trn-btn" onClick={() => setFilter({ ...filter, day: '' })}>
+                Whole month
+              </button>
+            )}
+          </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-600">Month</label>
-          <select value={filter.month} onChange={(e) => setFilter({ ...filter, month: Number(e.target.value) })}
-            className="border rounded-lg px-2 py-1">
-            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-600">Day</label>
-          {/* Narrows the month already chosen rather than being a date of its
-              own: a free date box here would be a second, disagreeing answer to
-              the Year/Month above it — and there is already one on the export
-              row below, which deliberately exports a day you are not viewing. */}
-          <select value={filter.day}
-            onChange={(e) => setFilter({ ...filter, day: e.target.value })}
-            className="border rounded-lg px-2 py-1">
-            <option value="">All days</option>
-            {Array.from({ length: daysInSelectedMonth }, (_, i) => i + 1).map((d) => (
-              <option key={d} value={d}>{d}</option>
+        <div className="att-toolbar-row">
+          <label className="trn-search text-gray-700">
+            <FiSearch size={15} className="shrink-0 text-gray-400" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Find a name or employee code…" aria-label="Find a name or employee code" />
+            {search && (
+              <button type="button" className="att-clear text-gray-400" onClick={() => setSearch('')} aria-label="Clear search"><FiX size={14} /></button>
+            )}
+          </label>
+          <div className="trn-seg" role="group" aria-label="Show">
+            {VIEWS.map((v) => (
+              <button key={v.id} type="button" className={`trn-seg-btn ${view === v.id ? 'is-on' : ''}`} onClick={() => setView(v.id)} aria-pressed={view === v.id}>
+                {v.label}
+              </button>
             ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-gray-600">Employee</label>
-          <SearchableSelect value={filter.employee} onChange={(e) => setFilter({ ...filter, employee: e.target.value })}
-            className="border rounded-lg px-2 py-1">
-            <option value="">All</option>
-            {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
-          </SearchableSelect>
+          </div>
+          <DateSortButton dir={dateSort} onToggle={toggleDateSort} compact label={dateSort === 'asc' ? 'Oldest day first' : 'Newest day first'} />
         </div>
       </div>
 
-      {/* Export to Excel (CSV). Respects the Employee filter above:
-          "All" exports everyone, a specific employee exports just that person. */}
-      <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-gray-500 mr-1">Export to Excel:</span>
-        <button onClick={() => exportCsv('month')} disabled={!!exporting}
-          title={filter.employee ? 'Selected employee · selected month' : 'All employees · selected month'}
-          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
-          ⬇ {exporting === 'month' ? 'Exporting…' : `Month (${MONTHS[filter.month - 1]} ${filter.year})`}
-        </button>
-        <span className="mx-1 h-5 w-px bg-gray-200" />
-        <input type="date" value={exportDay} onChange={(e) => setExportDay(e.target.value)}
-          className="border rounded-lg px-2 py-1 text-sm" />
-        <button onClick={() => exportCsv('day')} disabled={!!exporting}
-          title={filter.employee ? 'Selected employee · this day' : 'All employees · this day'}
-          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
-          ⬇ {exporting === 'day' ? 'Exporting…' : 'Day'}
-        </button>
-        <span className="mx-1 h-5 w-px bg-gray-200" />
-        <span className="inline-flex flex-wrap items-center gap-2">
-          <label className="text-xs text-gray-500">From</label>
-          <input type="date" value={exportRange.from} max={exportRange.to || undefined}
-            onChange={(e) => setExportRange((r) => ({ ...r, from: e.target.value }))}
-            className="border rounded-lg px-2 py-1 text-sm" />
-          <label className="text-xs text-gray-500">To</label>
-          <input type="date" value={exportRange.to} min={exportRange.from || undefined}
-            onChange={(e) => setExportRange((r) => ({ ...r, to: e.target.value }))}
-            className="border rounded-lg px-2 py-1 text-sm" />
-          <button onClick={() => exportCsv('range')} disabled={!!exporting}
-            title={filter.employee ? 'Selected employee · this date range' : 'All employees · this date range'}
-            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
-            ⬇ {exporting === 'range' ? 'Exporting…' : 'Date range'}
-          </button>
-        </span>
-        <span className="text-xs text-gray-400 ml-1">
-          {filter.employee ? 'Exporting the selected employee' : 'Exporting all employees'}
-        </span>
-        <span className="basis-full text-xs text-gray-400">
-          Full report: summary, every day, Sunday &amp; holiday work (2× status), WFH, outside punches with distance, regularizations, leave and worked-on-leave, each on its own sheet.
-        </span>
+      {/* Export to Excel. Respects the Employee filter above: "Everyone"
+          exports everyone, a specific employee exports just that person. */}
+      <div className="trn-card-base att-export mb-4">
+        <div className="att-export-head">
+          <span className="att-export-icon"><FiDownload size={16} /></span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-800">Export to Excel</div>
+            <div className="text-xs text-gray-500">
+              {filter.employee ? 'The selected employee' : 'All employees'} · summary, every day, Sunday &amp; holiday work (2× status), WFH,
+              outside punches with distance, regularizations, leave and worked-on-leave — each on its own sheet.
+            </div>
+          </div>
+        </div>
+        <div className="att-export-row">
+          <div className="att-export-opt">
+            <span className="att-field-label text-gray-600">Month</span>
+            <button type="button" onClick={() => exportCsv('month')} disabled={!!exporting} className="trn-btn"
+              title={filter.employee ? 'Selected employee · selected month' : 'All employees · selected month'}>
+              <FiDownload size={14} /> {exporting === 'month' ? 'Exporting…' : `${MONTHS[filter.month - 1]} ${filter.year}`}
+            </button>
+          </div>
+          <div className="att-export-opt">
+            <span className="att-field-label text-gray-600">One day</span>
+            <div className="att-export-pair">
+              <input type="date" value={exportDay} onChange={(e) => setExportDay(e.target.value)} className="trn-select" aria-label="Day to export" />
+              <button type="button" onClick={() => exportCsv('day')} disabled={!!exporting} className="trn-btn"
+                title={filter.employee ? 'Selected employee · this day' : 'All employees · this day'}>
+                <FiDownload size={14} /> {exporting === 'day' ? 'Exporting…' : 'Day'}
+              </button>
+            </div>
+          </div>
+          <div className="att-export-opt">
+            <span className="att-field-label text-gray-600">Date range</span>
+            <div className="att-export-pair">
+              <input type="date" value={exportRange.from} max={exportRange.to || undefined} className="trn-select" aria-label="From"
+                onChange={(e) => setExportRange((r) => ({ ...r, from: e.target.value }))} />
+              <span className="text-xs text-gray-500">to</span>
+              <input type="date" value={exportRange.to} min={exportRange.from || undefined} className="trn-select" aria-label="To"
+                onChange={(e) => setExportRange((r) => ({ ...r, to: e.target.value }))} />
+              <button type="button" onClick={() => exportCsv('range')} disabled={!!exporting} className="trn-btn"
+                title={filter.employee ? 'Selected employee · this date range' : 'All employees · this date range'}>
+                <FiDownload size={14} /> {exporting === 'range' ? 'Exporting…' : 'Range'}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {error && (
-        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+        <div className="trn-note is-warn text-gray-700 mb-4"><FiAlertTriangle size={14} className="mt-0.5 shrink-0" />{error}</div>
       )}
 
       {/* Sunday & comp-off duty. Working a company day off is paid double — but
           only for the days approved here, so an unauthorised weekend punch never
           quietly turns into money. */}
       {duty.claims.length > 0 && (
-        <div className="bg-white shadow rounded-lg mb-4 overflow-hidden">
+        <div className="trn-card-base att-duty mb-4 overflow-hidden">
           {/* The title opens and closes the list; "See all" sits between it and
               the arrow, so the arrow is a toggle of its own — for the mouse only,
               since the title already is one for the keyboard. */}
           <div className="flex items-center gap-2 hover:bg-gray-50">
             <button type="button" onClick={dutyQueue.toggle} aria-expanded={dutyQueue.isOpen}
               className="flex-1 min-w-0 flex flex-wrap sm:flex-nowrap items-center gap-2 pl-4 py-3 text-left">
+              <span className="att-duty-icon" aria-hidden="true"><FiCalendar size={15} /></span>
               <span className="font-semibold text-gray-800">Sunday &amp; comp-off duty</span>
               {duty.counts.pending > 0 ? (
                 <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold">
@@ -754,100 +982,160 @@ export default function AdminAttendance() {
         </div>
       )}
 
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">
-                <DateSortButton dir={dateSort} onToggle={toggleDateSort} />
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">In</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Out</th>
-              <th className="px-4 py-3 text-center font-medium text-gray-700">Photos</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Location</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Hrs</th>
-              <th className="px-4 py-3 text-right"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : records.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">No records for this period</td></tr>
-            ) : sortedRecords.map((r) => (
-              <tr key={r._id} className={isRecordFlagged(r, settings.geofenceThresholdM) ? 'bg-amber-50' : ''}>
-                <td className="px-4 py-3">
-                  {fmtDate(r.date)}
-                  {isRecordFlagged(r, settings.geofenceThresholdM) && (
-                    <span className="ml-1 text-amber-600" title={`A punch was made outside ${r.locationName || 'the work area'}`}>⚠</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {r.employee?.user?.firstName} {r.employee?.user?.lastName}
-                  <div className="text-xs text-gray-500 font-mono">{r.employee?.employeeCode}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${STATUS_COLORS[r.status]}`}>{r.status}</span>
-                </td>
-                {/* Lateness rides under the punch-in rather than taking a tenth
-                    column: the arrival time is the thing it qualifies, and the
-                    row is already carrying photos, two distance chips and the
-                    actions. Same red "+1h 20m" the monthly view uses. */}
-                <td className="px-4 py-3 font-mono">
-                  <div className={r.lateMinutes > 0 ? 'text-red-600 font-medium' : ''}>{fmtTime(r.checkIn)}</div>
-                  {r.lateMinutes > 0 && (
-                    <div className="text-[10px] text-red-600" title={`Late by ${formatDuration(r.lateMinutes)}`}>
-                      +{formatDuration(r.lateMinutes)}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3 font-mono">{fmtTime(r.checkOut)}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-center gap-1">
-                    {r.hasCheckInPhoto ? (
-                      <AuthImage
-                        url={`/attendance/${r._id}/photo/checkin`}
-                        alt="in"
-                        className="w-9 h-9 rounded object-cover border cursor-pointer"
-                        onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkin`, label: 'Check-in photo' })}
-                      />
-                    ) : <span className="text-xs text-gray-300">-</span>}
-                    {r.hasCheckOutPhoto ? (
-                      <AuthImage
-                        url={`/attendance/${r._id}/photo/checkout`}
-                        alt="out"
-                        className="w-9 h-9 rounded object-cover border cursor-pointer"
-                        onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkout`, label: 'Check-out photo' })}
-                      />
-                    ) : <span className="text-xs text-gray-300">-</span>}
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-col gap-1">
-                    <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
-                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkInWfh}
-                      exempt={r.remotePunchAllowed} locationName={r.locationName} />
-                    <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
-                      thresholdM={r.geofenceRadiusM ?? settings.geofenceThresholdM} wfh={r.checkOutWfh}
-                      exempt={r.remotePunchAllowed} locationName={r.locationName} />
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-right font-mono">{formatHours(r.hoursWorked)}</td>
-                <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                  {!viewOnly && (
-                    <>
-                      <button onClick={() => openEdit(r)} className="text-blue-600 hover:underline">Edit</button>
-                      <button onClick={() => onDelete(r)} className="text-red-600 hover:underline">Delete</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* The records, one section per day. A day bar opens each section and
+          sticks under the top bar while its rows scroll (see the header note);
+          the table under it no longer repeats the date on every row. */}
+      {loading ? (
+        <div className="trn-card-base p-4 space-y-3">
+          <div className="skeleton h-12 rounded-xl" />
+          <div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" />
+        </div>
+      ) : days.length === 0 ? (
+        <div className="trn-card-base trn-empty">
+          <span className="trn-empty-icon"><FiUsers size={24} /></span>
+          <p className="font-semibold text-gray-800">
+            {records.length === 0 ? 'No records for this period' : 'Nobody matches this view'}
+          </p>
+          <p className="text-sm text-gray-500 max-w-sm">
+            {records.length === 0
+              ? 'Pick another month or day above — punches appear here as people check in.'
+              : 'Try another “show” option or clear the search.'}
+          </p>
+          {narrowed && (
+            <button type="button" className="trn-btn" onClick={() => { setView('all'); setSearch(''); }}>
+              <FiX size={14} /> Show everyone
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className={refreshing ? 'att-refreshing' : undefined}>
+          {narrowed && (
+            <p className="att-showing text-gray-600">
+              Showing {shownCount} of {records.length} {records.length === 1 ? 'record' : 'records'}
+              {view !== 'all' && <> · {VIEWS.find((v) => v.id === view)?.label}</>}
+              {needle && <> · “{search.trim()}”</>}
+              <button type="button" className="att-showing-clear" onClick={() => { setView('all'); setSearch(''); }}>Show everyone</button>
+            </p>
+          )}
+          {days.map((day) => (
+            <section key={day.key} className="att-day">
+              <DayBar ymd={day.key} counts={dayCounts.get(day.key) || tally(day.rows, radius)} shown={day.rows.length} />
+              <div className="trn-card-base att-day-card">
+                <div className="att-table-wrap">
+                  <table className="att-table text-sm">
+                    <colgroup>
+                      <col className="att-col-person" />
+                      <col className="att-col-status" />
+                      <col className="att-col-in" />
+                      <col className="att-col-out" />
+                      <col className="att-col-photos" />
+                      <col className="att-col-loc" />
+                      <col className="att-col-hrs" />
+                      <col className="att-col-act" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th className="text-left">Employee</th>
+                        <th className="text-left">Status</th>
+                        <th className="text-left">In</th>
+                        <th className="text-left">Out</th>
+                        <th className="text-center">Photos</th>
+                        <th className="text-left">Location</th>
+                        <th className="text-right">Hours</th>
+                        <th className="text-right"><span className="sr-only">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {day.rows.map((r) => {
+                        const flagged = isRecordFlagged(r, radius);
+                        const name = personName(r);
+                        return (
+                          <tr key={r._id} className={flagged ? 'att-row is-flagged' : 'att-row'}>
+                            <td>
+                              <div className="att-person">
+                                <span className="att-av" style={{ '--hue': hueOf(r.employee?._id || name) }} aria-hidden="true">{initialsOf(name)}</span>
+                                <span className="min-w-0">
+                                  <span className="att-name text-gray-900">{name}</span>
+                                  <span className="att-code text-gray-500">
+                                    {r.employee?.employeeCode || '—'}
+                                    {flagged && (
+                                      <span className="att-flag" title={`A punch was made outside ${r.locationName || 'the work area'}`}>
+                                        <FiAlertTriangle size={11} /> outside
+                                      </span>
+                                    )}
+                                  </span>
+                                </span>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`att-status ${STATUS_TONE[r.status] || ''}`}>{STATUS_LABEL[r.status] || r.status}</span>
+                            </td>
+                            {/* Lateness rides under the punch-in rather than taking a
+                                column of its own: the arrival time is the thing it
+                                qualifies. Same red "+1h 20m" the monthly view uses. */}
+                            <td>
+                              <div className={`att-time ${r.lateMinutes > 0 ? 'is-late' : 'text-gray-800'}`}>{fmtTime(r.checkIn)}</div>
+                              {r.lateMinutes > 0 && (
+                                <span className="att-late" title={`Late by ${formatDuration(r.lateMinutes)}`}>
+                                  +{formatDuration(r.lateMinutes)} late
+                                </span>
+                              )}
+                            </td>
+                            <td><div className="att-time text-gray-800">{fmtTime(r.checkOut)}</div></td>
+                            <td>
+                              <div className="flex items-center justify-center gap-1.5">
+                                {r.hasCheckInPhoto ? (
+                                  <AuthImage
+                                    url={`/attendance/${r._id}/photo/checkin`}
+                                    alt="Check-in selfie"
+                                    className="att-thumb"
+                                    onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkin`, label: `${name} · check-in` })}
+                                  />
+                                ) : <span className="att-thumb-empty" aria-label="No check-in photo" />}
+                                {r.hasCheckOutPhoto ? (
+                                  <AuthImage
+                                    url={`/attendance/${r._id}/photo/checkout`}
+                                    alt="Check-out selfie"
+                                    className="att-thumb"
+                                    onClick={() => setPhotoModal({ url: `/attendance/${r._id}/photo/checkout`, label: `${name} · check-out` })}
+                                  />
+                                ) : <span className="att-thumb-empty" aria-label="No check-out photo" />}
+                              </div>
+                            </td>
+                            <td>
+                              <div className="flex flex-col gap-1">
+                                <DistanceTag label="In" loc={r.checkInLocation} distanceM={r.checkInDistanceM}
+                                  thresholdM={r.geofenceRadiusM ?? radius} wfh={r.checkInWfh}
+                                  exempt={r.remotePunchAllowed} locationName={r.locationName} />
+                                <DistanceTag label="Out" loc={r.checkOutLocation} distanceM={r.checkOutDistanceM}
+                                  thresholdM={r.geofenceRadiusM ?? radius} wfh={r.checkOutWfh}
+                                  exempt={r.remotePunchAllowed} locationName={r.locationName} />
+                              </div>
+                            </td>
+                            <td className="text-right"><span className="att-hours text-gray-800">{formatHours(r.hoursWorked)}</span></td>
+                            <td className="text-right">
+                              {!viewOnly && (
+                                <span className="att-actions">
+                                  <button type="button" onClick={() => openEdit(r)} className="trn-btn att-act" aria-label={`Edit ${name}'s day`}>
+                                    <FiEdit2 size={13} /> Edit
+                                  </button>
+                                  <button type="button" onClick={() => onDelete(r)} className="trn-btn att-act is-danger" aria-label={`Delete ${name}'s record`} title="Delete this record">
+                                    <FiTrash2 size={13} />
+                                  </button>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
       {photoModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center px-4 z-50"

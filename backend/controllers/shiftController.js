@@ -23,8 +23,37 @@ const EmployeeProfile = require('../models/EmployeeProfile');
 const AuditLog = require('../models/AuditLog');
 const { startOfDayIST } = require('../utils/dateHelpers');
 const { crossesMidnight, shiftDurationMin, to12h } = require('../utils/shiftWindow');
+const { restampDayShift } = require('../services/shiftResolver');
+const { lateMinutes } = require('../utils/workday');
 
 const USER_FIELDS = 'firstName lastName';
+
+/**
+ * Bring an already-punched day in line with a roster change for it, so the
+ * day's lateness and hours are judged against the shift HR just set. Never
+ * fails the roster write — the roster row is the source of truth, and a hiccup
+ * here is logged, not thrown.
+ *
+ * Returns one sentence for HR when a punched day was re-judged, or null. It is
+ * written HERE so the web page and the app print the identical words.
+ */
+async function restampAfterRosterChange(employeeId, date, actor) {
+  try {
+    const name = `${actor?.firstName || ''} ${actor?.lastName || ''}`.trim();
+    const rec = await restampDayShift(employeeId, date, { name });
+    if (!rec || !rec.checkIn) return null;
+    const at = new Date(rec.checkIn)
+      .toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true });
+    const late = lateMinutes(rec);
+    const verdict = late > 0
+      ? `late by ${late >= 60 ? `${Math.floor(late / 60)}h ${late % 60}m` : `${late}m`}`
+      : 'on time';
+    return `They had already punched in at ${at} that day — now counted as ${verdict} for this shift.`;
+  } catch (err) {
+    console.error('roster restamp failed:', err.message);
+    return null;
+  }
+}
 
 // to12h now comes from utils/shiftWindow — the same formatter the punch paths,
 // the worker and the admin UI use, so a shift can never be printed one way here
@@ -497,7 +526,13 @@ const assignRoster = asyncHandler(async (req, res) => {
       createdBy: req.user._id,
     });
   }
-  res.status(201).json({ entry });
+  // Already punched in that day? The punch froze whatever shift was in force
+  // then; the day now follows the roster. Before the response so the
+  // attendance screens HR opens next already show the re-judged day.
+  const attendanceNote = shiftChanged
+    ? await restampAfterRosterChange(employee, startOfDayIST(date), req.user)
+    : null;
+  res.status(201).json({ entry, attendanceNote });
 
   // Only notify when the employee lands on a *new* shift (skip no-op re-saves,
   // e.g. editing just the note). Runs after the response — best-effort.
@@ -526,7 +561,10 @@ const deleteRoster = asyncHandler(async (req, res) => {
     throw new Error('Roster entry not found');
   }
   await entry.deleteOne();
-  res.json({ id: req.params.id, deleted: true });
+  // The day falls back to the standing shift (or the office hours) — and a day
+  // already punched has to be re-judged on those, not on the deleted roster.
+  const attendanceNote = await restampAfterRosterChange(entry.employee, entry.date, req.user);
+  res.json({ id: req.params.id, deleted: true, attendanceNote });
 });
 
 // ===== Roster (Employee self-service) =====

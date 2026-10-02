@@ -86,6 +86,7 @@ const GRANT_HELP = {
   taskProxy: 'Assign a task on somebody else’s behalf: the assign form offers “On behalf of”, and the task goes out in that person’s name — they approve it and it sits in their “Assigned by me” — while the record keeps who actually sent it. The sender does not keep it: once sent, it leaves their own lists and they hear nothing more about it. For an assistant or coordinator who hands out work for a director or a department head.',
   taskRecurring: 'Set up recurring tasks: opens the Recurring Tasks page — daily, weekly, monthly or yearly schedules that drop a task into people’s Tasks each time one comes round — and lets them pause, change and stop the ones they set. Schedules already running keep running either way; this decides who may see and change them.',
   taskPoints: 'Set a task’s points: the Points box on the assign form (and on recurring tasks). Without it the box is not shown and every task they set carries the company’s default points.',
+  taskBulkDelete: 'Delete tasks in bulk: tick several tasks on the Tasks page and remove them together — any task they can see, like a Super Admin, not only the ones they set. Removed tasks keep their history and any points already credited; deleting for good stays a Super Admin’s.',
   taskReminders: 'Set a task’s notifications: the Reminders section on the assign form — before or after the deadline, or repeating until it is done, by app or email. Without it the section is not shown and the task simply gets the company’s default reminder.',
   loans: 'Decide staff loans and salary advances: the queue of requests, approve or decline, raise one on somebody’s behalf, and record repayments. A standalone grant — sanctioning an advance is as often an accounts job as an HR one, and this is the only way to give it to an account that is neither.',
   incentive: 'A role per incentive tab. Manager runs it — the point rate, the yield, the sheet counts, and correcting anything saved. Picker only puts together their own team for the day, and cannot edit it once saved.',
@@ -375,6 +376,13 @@ function AccessTab({ showGuide, setShowGuide }) {
     errorText: 'Could not update the task points permission',
   });
 
+  // 2026-10-02 — "Super Admin can delete multiple task at a time but to give
+  // other user ( CEO or MD too ) set a permission".
+  const toggleTaskBulkDelete = (u) => toggleAccess(u, {
+    path: 'task-bulk-delete-access', field: 'taskBulkDeleteAccess', enabled: !u.taskBulkDeleteAccess,
+    errorText: 'Could not update the bulk delete permission',
+  });
+
   const toggleTraining = (u) => toggleAccess(u, {
     path: 'training-access', field: 'trainingAccess', enabled: !u.trainingAccess, errorText: 'Could not update training access',
   });
@@ -587,6 +595,7 @@ function AccessTab({ showGuide, setShowGuide }) {
               ['Tasks · Recurring', GRANT_HELP.taskRecurring],
               ['Tasks · Reminders', GRANT_HELP.taskReminders],
               ['Tasks · Points', GRANT_HELP.taskPoints],
+              ['Tasks · Bulk delete', GRANT_HELP.taskBulkDelete],
               ['Employee Cashbook · Module', GRANT_HELP.khata],
               ['Employee Cashbook · Export', GRANT_HELP.khataExport],
               ['Attendance · WFH', GRANT_HELP.wfh],
@@ -863,6 +872,8 @@ function AccessTab({ showGuide, setShowGuide }) {
                           busy={isBusy('taskReminderAccess')} title={GRANT_HELP.taskReminders} onChange={() => toggleTaskReminders(u)} />
                         <GrantRow label="Points" aria="Set a task's points" checked={!!u.taskPointsAccess}
                           busy={isBusy('taskPointsAccess')} title={GRANT_HELP.taskPoints} onChange={() => toggleTaskPoints(u)} />
+                        <GrantRow label="Bulk delete" aria="Delete tasks in bulk" checked={!!u.taskBulkDeleteAccess}
+                          busy={isBusy('taskBulkDeleteAccess')} title={GRANT_HELP.taskBulkDelete} onChange={() => toggleTaskBulkDelete(u)} />
                       </div>
                     )}
                   </td>

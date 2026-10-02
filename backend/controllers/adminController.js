@@ -750,6 +750,25 @@ const setTaskPointsAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke "delete tasks in bulk" (2026-10-02). With it the Tasks page
+ * offers tick boxes and Delete on every task the holder can see, like a Super
+ * Admin; deleting for good stays a Super Admin's.
+ * @route PATCH /api/admin/users/:id/task-bulk-delete-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, taskBulkDeleteAccess}}
+ */
+const setTaskBulkDeleteAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.taskBulkDeleteAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, taskBulkDeleteAccess: user.taskBulkDeleteAccess });
+});
+
+/**
  * Grant or revoke "set a task's reminders" (2026-09-28). Without it the assign
  * form hides the Reminders section and the server ignores any sent, so the
  * task gets the company's default reminders.
@@ -1746,6 +1765,7 @@ module.exports = {
   setTaskRecurringAccess,
   setTaskReminderAccess,
   setTaskPointsAccess,
+  setTaskBulkDeleteAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,

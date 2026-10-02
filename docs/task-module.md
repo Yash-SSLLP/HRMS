@@ -5,6 +5,15 @@ replaced the twelve-status workflow engine of 2026-09-17, and **simplified
 2026-09-25** (see the section right below). The through-line has not changed: a
 task app a business owner can work without being taught.
 
+### 2026-10-02, later — accept, more time, edit swipe, bulk-delete grant
+
+| the brief | what it is |
+|---|---|
+| *"while accepting any task no need to give reason"* | A swipe right on a not-yet-accepted task accepts it AT ONCE (web `Tasks.onSwipe` → `onAction('accept')`, app `TasksScreen.onSwipe` → `T.acceptTask`), like the dropdown/status sheet already did. `swipeRemarkRequired` still governs the other swipe moves. |
+| *"while asking more time in 'Why do you need longer?' mark that as mandatory"* | Web `ExtensionModal` label "Why do you need longer? * (required)", app `ExtensionSheet` red `*`; the Ask button is disabled while the box is empty. The server already refused an empty reason. |
+| *"for assign by me for right swipe it should be for Edit (only before accepting that task)"* | `swipeActionsFor` (both clients): when no paired move takes the right side and `can.canEdit && !can.canAccept` → right = **Edit** (opens the editor / AssignTask). `can.canEdit` is the server's `termsOpen`, so it disappears once anybody accepts. Your own self-task keeps Accept. |
+| *"Super Admin can delete multiple task at a time but to give other user (CEO or MD too) set a permission"* | REPLACES the same day's "everybody may bulk delete". `User.taskBulkDeleteAccess`, `PATCH /admin/users/:id/task-bulk-delete-access` (SuperAdmin), Permissions → Tasks · **Bulk delete** (web GrantRow, app GRANTS). `canBulkDelete` = SuperAdmin or grant; the grant also widens `canDelete` to any task the holder can SEE (`canSee`), so tick boxes and server agree. Purge stays SuperAdmin. `/tasks/bulk-delete` added to `EXEC_WRITE_PATHS` on both clients and web `canBulk` allows a view-only CEO/MD holding the grant. |
+
 ### What the 2026-10-02 pass added
 
 | the brief | what it is |

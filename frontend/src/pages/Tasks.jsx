@@ -43,6 +43,8 @@ import {
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
 import useViewOnly from '../hooks/useViewOnly';
+import { useAuthStore } from '../store/authStore';
+import { isReadOnlyExec } from '../config/permissions';
 import { useTabParam } from '../hooks/useTabParam';
 import AssignTaskModal from '../components/task/AssignTaskModal';
 import TaskModal from '../components/task/TaskModal';
@@ -78,6 +80,7 @@ const PAGE_SIZE = 50;
 
 export default function Tasks({ base = '/employee/tasks' }) {
   const viewOnly = useViewOnly();
+  const readOnlyExec = useAuthStore((s) => isReadOnlyExec(s.user));
 
   const [meta, setMeta] = useState(null);
   const isAdmin = Boolean(meta?.isAdmin);
@@ -228,11 +231,13 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
   const showTask = useCallback((task) => setOpenTask({ id: task._id }), []);
 
-  // ===== Many at once (2026-10-02) — first a Super Admin's, then EVERYBODY's
-  // ("give option to delete tasks in bulk by multi selecting them"). Only a row
-  // this person could delete on its own (`can.canDelete` — one they set; a
-  // Super Admin: any) gets a tick box; the server re-checks every one.
-  const canBulk = Boolean(meta?.canBulkDelete) && !viewOnly;
+  // ===== Many at once (2026-10-02) — a Super Admin's, and anybody a Super
+  // Admin grants "Bulk delete" to (User.taskBulkDeleteAccess — "to give other
+  // user ( CEO or MD too ) set a permission"). Only a row this person could
+  // delete on its own (`can.canDelete`) gets a tick box; the server re-checks
+  // every one. A view-only CEO/MD holding the grant gets it too — the grant is
+  // the Super Admin's say-so (api/client lets /tasks/bulk-delete through).
+  const canBulk = Boolean(meta?.canBulkDelete) && (!viewOnly || readOnlyExec);
   const deletableRows = useMemo(() => tasks.filter((t) => t.can?.canDelete), [tasks]);
   const stopSelecting = useCallback(() => { setSelecting(false); setSelected(new Set()); }, []);
   const toggleRow = useCallback((id) => setSelected((cur) => {
@@ -363,11 +368,16 @@ export default function Tasks({ base = '/employee/tasks' }) {
    * A SWIPE on a touch screen (2026-09-27) — the same moves as the dropdown,
    * opened straight on their remark box, which is REQUIRED while the server
    * says so. "More time" opens its own form (a date and a reason).
+   *
+   * ACCEPT ASKS FOR NOTHING (2026-10-02, the user: "while accepting any task
+   * no need to give reason") — it happens at once, as from the dropdown. EDIT
+   * (a task I set that nobody has accepted yet) opens the editor.
    */
   const onSwipe = useCallback((key, task) => {
     if (key === 'extension') { setExtending(task); return; }
+    if (key === 'accept' || key === 'edit') { onAction(key, task); return; }
     setAction({ key, task, swipe: true });
-  }, []);
+  }, [onAction]);
   const requireSwipeRemark = meta?.swipeRemarkRequired !== false;
   const anySwipe = useMemo(
     () => !viewOnly && tasks.some((t) => { const a = swipeActionsFor(t); return a.left || a.right; }),
@@ -617,11 +627,11 @@ export default function Tasks({ base = '/employee/tasks' }) {
               dropdown), and only while some row on screen actually swipes. */}
           {anySwipe && (
             <p className="swipe-hint -mt-1 hidden text-[11px] text-gray-400 [@media(pointer:coarse)]:block">
-              Swipe a task right to accept or complete it, left to reject, send back or ask for more time.
+              Swipe a task right to accept, complete or edit it, left to reject, send back or ask for more time.
             </p>
           )}
 
-          {/* ── Many at once — a Super Admin's (2026-10-02) ─────── */}
+          {/* ── Many at once — a Super Admin's, or the "Bulk delete" grant (2026-10-02) ── */}
           {canBulk && !loading && deletableRows.length > 0 && (
             selecting ? (
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-red-200 bg-red-50/60 px-3 py-2">

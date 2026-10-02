@@ -265,7 +265,8 @@ export default function ExtensionModal({
 
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="extension-reason">
-                Why <span className="text-red-500">*</span>
+                Why do you need longer? <span className="text-red-500">*</span>
+                <span className="ml-1 font-normal text-gray-400">(required)</span>
               </label>
               <textarea
                 id="extension-reason"
@@ -288,8 +289,10 @@ export default function ExtensionModal({
               <button
                 type="button"
                 onClick={askIt}
-                disabled={saving || !can.canRequestExtension}
-                title={can.canRequestExtension ? undefined : 'You already have a request waiting on this task'}
+                disabled={saving || !can.canRequestExtension || !reason.trim()}
+                title={!can.canRequestExtension
+                  ? 'You already have a request waiting on this task'
+                  : !reason.trim() ? 'Say why you need longer first' : undefined}
                 className={`${BTN} ${WARN} disabled:opacity-50`}
               >
                 <FiClock size={14} /> {saving ? 'Asking…' : 'Ask for more time'}

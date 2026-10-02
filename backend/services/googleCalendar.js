@@ -158,4 +158,71 @@ async function moveEvent(eventId, start, end) {
   }
 }
 
-module.exports = { isConfigured, createMeetEvent, moveEvent, getAccessToken };
+/**
+ * Change an existing event in place — any of its title, description, times and
+ * attendee list (a training rescheduled, renamed, or with people added or taken
+ * off). The Meet link is untouched. With sendUpdates=all Google emails the
+ * change: new attendees get the invite, removed ones a cancellation, everyone
+ * else the update — the same channel that delivered the original invite.
+ * @param {string} eventId - the id createMeetEvent returned
+ * @param {{summary?:string, description?:string, start?:Date, end?:Date, attendees?:string[]}} patch
+ *   only the keys present are changed; `attendees` REPLACES the list
+ * @returns {Promise<void>}
+ * @throws {Error} when unconfigured or Google refuses the update
+ */
+async function updateEvent(eventId, patch = {}) {
+  if (!isConfigured()) throw new Error('Google Calendar is not configured on the server.');
+  if (!eventId) throw new Error('No calendar event to update.');
+
+  const body = {};
+  if (patch.summary !== undefined) body.summary = patch.summary;
+  if (patch.description !== undefined) body.description = patch.description || '';
+  if (patch.start) body.start = { dateTime: new Date(patch.start).toISOString(), timeZone: 'Asia/Kolkata' };
+  if (patch.end) body.end = { dateTime: new Date(patch.end).toISOString(), timeZone: 'Asia/Kolkata' };
+  if (Array.isArray(patch.attendees)) {
+    const unique = [...new Set(patch.attendees.filter((e) => e && /@/.test(e)).map((e) => e.trim().toLowerCase()))];
+    body.attendees = unique.map((email) => ({ email }));
+  }
+  if (!Object.keys(body).length) return;
+
+  const token = await getAccessToken();
+  const calendarId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const url =
+    `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(eventId)}` +
+    `?sendUpdates=all`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const ev = await res.json().catch(() => ({}));
+    throw new Error(`Google Calendar event update failed: ${ev.error?.message || res.status}`);
+  }
+}
+
+/**
+ * Delete an event (a training called off, or deleted outright). Attendees get
+ * Google's cancellation email. An event that is already gone (404/410) counts
+ * as deleted — the goal state is reached either way.
+ * @param {string} eventId
+ * @returns {Promise<void>}
+ * @throws {Error} when unconfigured or Google refuses for any other reason
+ */
+async function deleteEvent(eventId) {
+  if (!isConfigured()) throw new Error('Google Calendar is not configured on the server.');
+  if (!eventId) return;
+
+  const token = await getAccessToken();
+  const calendarId = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const url =
+    `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(eventId)}` +
+    `?sendUpdates=all`;
+  const res = await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    const ev = await res.json().catch(() => ({}));
+    throw new Error(`Google Calendar event delete failed: ${ev.error?.message || res.status}`);
+  }
+}
+
+module.exports = { isConfigured, createMeetEvent, moveEvent, updateEvent, deleteEvent, getAccessToken };

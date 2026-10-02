@@ -20,13 +20,13 @@
  * opens the task underneath.
  */
 import { useRef, useState } from 'react';
-import { FiCheck, FiCheckCircle, FiClock, FiRotateCcw, FiThumbsDown, FiThumbsUp } from 'react-icons/fi';
+import { FiCheck, FiCheckCircle, FiClock, FiEdit2, FiRotateCcw, FiThumbsDown, FiThumbsUp } from 'react-icons/fi';
 
-const ICONS = { FiCheck, FiCheckCircle, FiClock, FiRotateCcw, FiThumbsDown, FiThumbsUp };
+const ICONS = { FiCheck, FiCheckCircle, FiClock, FiEdit2, FiRotateCcw, FiThumbsDown, FiThumbsUp };
 /** How far the row must travel before the move counts, and how far it can. */
 const THRESHOLD = 84;
 const MAX = 120;
-const FILL = { green: '#16a34a', red: '#dc2626', amber: '#b54708' };
+const FILL = { green: '#16a34a', red: '#dc2626', amber: '#b54708', blue: '#2563eb' };
 
 function Pane({ action, side, pull }) {
   const Icon = ICONS[action.icon] || FiCheck;

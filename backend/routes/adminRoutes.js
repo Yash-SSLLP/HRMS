@@ -30,6 +30,7 @@ const {
   setTaskRecurringAccess,
   setTaskReminderAccess,
   setTaskPointsAccess,
+  setTaskBulkDeleteAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,
@@ -171,6 +172,9 @@ router.patch('/users/:id/task-reminder-access', restrictTo('SuperAdmin'), setTas
 // PATCH /users/:id/task-points-access — let this account set a task's points
 // when assigning it; protected, SuperAdmin only (2026-10-02).
 router.patch('/users/:id/task-points-access', restrictTo('SuperAdmin'), setTaskPointsAccess);
+// PATCH /users/:id/task-bulk-delete-access — let this account tick several
+// tasks and delete them together, like a Super Admin; SuperAdmin only (2026-10-02).
+router.patch('/users/:id/task-bulk-delete-access', restrictTo('SuperAdmin'), setTaskBulkDeleteAccess);
 // PATCH /users/:id/incentive-role — set this account's role in ONE incentive
 // tab (manager / picker / none); protected, SuperAdmin only.
 router.patch('/users/:id/incentive-role', restrictTo('SuperAdmin'), setIncentiveRole);

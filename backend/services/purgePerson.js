@@ -88,6 +88,9 @@ const PULL_FROM = [
   ['RnrAward', 'winners', 'user'], // array of subdocuments keyed by .user
   ['Project', 'members'],
   ['Training', 'participants'],
+  // Their join record and their review on each session — keyed by .user.
+  ['Training', 'attendance', 'user'],
+  ['Training', 'feedback', 'user'],
   ['Reminder', 'recipients'],
   ['Message', 'deletedFor'],
   ['EmployeeProfile', 'regularizationApprovers'],
@@ -107,6 +110,8 @@ const UNSET_REF = [
   ['Candidate', 'employee.user'],
   ['Candidate', 'employee.profile'],
   ['Project', 'manager'],
+  // The session stays; its trainer's NAME (Training.trainer) still says who ran it.
+  ['Training', 'trainerUser'],
 ];
 
 const RETAINED_COLLECTIONS = ['payrolls', 'auditlogs', 'cashbookentries'];

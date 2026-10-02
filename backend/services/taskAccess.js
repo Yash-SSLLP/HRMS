@@ -682,6 +682,9 @@ function canDelete(user, task) {
   return (
     String(task.createdBy?._id || task.createdBy || '') === String(user._id)
     || user.role === 'SuperAdmin'
+    // The bulk-delete grant deletes "like" a Super Admin (2026-10-02) — any
+    // task this account can see.
+    || (user.taskBulkDeleteAccess === true && canSee(user, task))
     || seesEverything(user)
   );
 }
@@ -717,15 +720,19 @@ function canSettleRejection(user, task) {
 }
 
 /**
- * May this caller tick several tasks and remove them at once? EVERYBODY since
- * 2026-10-02 (the user, after the Super Admin-only first cut: "give option to
- * delete tasks in bulk by multi selecting them"). It grants nothing new: each
- * ticked task is still checked with canDelete — the person who set it, or a
- * Super Admin / tasks.manage — and the rest are skipped. Deleting FOR GOOD
+ * May this caller tick several tasks and remove them at once?
+ *
+ * A Super Admin by role, and anybody a Super Admin grants it to
+ * (User.taskBulkDeleteAccess) — the user, 2026-10-02: "Super Admin can delete
+ * multiple task at a time but to give other user ( CEO or MD too ) set a
+ * permission to allow someone to delete like that". This REPLACES the same
+ * day's "everybody may" cut. The grant also widens canDelete to any task the
+ * holder can see, so the tick boxes and the server agree. Each ticked task is
+ * still checked with canDelete and the rest are skipped. Deleting FOR GOOD
  * stays a Super Admin's (canPurge).
  */
 function canBulkDelete(user) {
-  return Boolean(user);
+  return user?.role === 'SuperAdmin' || user?.taskBulkDeleteAccess === true;
 }
 
 /**

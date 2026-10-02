@@ -557,6 +557,10 @@ function NotificationBell({ isAdmin, portal }) {
     // page in both portals: a CEO/MD has no employee portal and reads the
     // rounds booked with them under /admin.
     if (n.link === 'interviews') return portal === 'employee' ? '/employee/interviews' : '/admin/my-interviews';
+    // Training notices (booked, rescheduled, starting soon, please review) —
+    // a bare slug like 'interviews', and a page in both portals for the same
+    // reason: a CEO/MD reads the sessions they are on under /admin.
+    if (n.link === 'trainings') return portal === 'employee' ? '/employee/my-trainings' : '/admin/my-trainings';
     // Two more bare slugs with a page in BOTH portals, and the same relative-
     // navigation bug as 'interviews' above. 'approvals' is where a named
     // approver acts on a request whatever their role — a regularization or

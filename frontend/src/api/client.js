@@ -153,6 +153,15 @@ const EXEC_WRITE_PATHS = [
   // before the server would have let it through.
   /\/khata\/entries\/[^/]+\/exec-decision(\?|$)/,
   /\/khata\/advance-approvals\/decide(\?|$)/,
+  // A TRAINING THEY ARE ON. Joining the meeting (which records attendance) and
+  // reviewing it afterwards run on `protect` alone and authorise by identity
+  // (trainingRoutes, above the training.manage gate) — a CEO/MD booked on a
+  // session takes part like anybody else.
+  /\/training\/[^/]+\/(join|feedback)(\?|$)/,
+  // DELETING TASKS IN BULK — a Super Admin grants it per account
+  // (User.taskBulkDeleteAccess, "CEO or MD too"); the server's
+  // taskAccess.canBulkDelete is the gate, in either mode.
+  /\/tasks\/bulk-delete(\?|$)/,
 ];
 
 // Endpoints reached WITHOUT signing in — a public document upload, a job

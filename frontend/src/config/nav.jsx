@@ -279,7 +279,14 @@ export const adminNav = [
     // moderate — all worked from the side panels of this one page.
     { to: '/admin/courses', label: 'Courses', icon: FiBook, perm: 'courses.manage', ld: true,
       badge: 'course' },
-    { to: '/admin/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage' },
+    { to: '/admin/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage',
+      keywords: ['training', 'session', 'workshop', 'trainer', 'programme', 'program', 'schedule',
+        'category', 'meet', 'google meet', 'report', 'export', 'feedback', 'review', 'clarity'] },
+    // The sessions a CEO/MD is booked on (or running). They have no employee
+    // portal, so without this row an invitation would have nowhere to open —
+    // the same reason My Interviews sits here for them.
+    { to: '/admin/my-trainings', label: 'My Trainings', icon: FiVideo, roles: ['CEO', 'MD'],
+      keywords: ['my training', 'training', 'join', 'meet', 'session', 'review'] },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
     { to: '/admin/projects', label: 'Projects', icon: FiFolder, perm: 'projects.manage' },
@@ -514,12 +521,18 @@ export const employeeNav = [
     { to: '/employee/goals', label: 'Goals', icon: FiTarget },
     { to: '/employee/reviews', label: 'My Reviews', icon: FiEdit },
     { to: '/employee/learning', label: 'Learning', icon: FiBookOpen },
+    // The sessions I am ON (2026-10-02) — every employee, no grant: the date,
+    // the join link, the files, and my review once each one is over.
+    { to: '/employee/my-trainings', label: 'My Trainings', icon: FiVideo,
+      keywords: ['training', 'my training', 'session', 'workshop', 'join', 'meet', 'google meet', 'trainer', 'review', 'feedback', 'rate'] },
     // Instructor-led training, as opposed to the LMS courses above it. Shown to
     // whoever holds `training.manage` — which a SuperAdmin can hand to any
     // account, whatever its role, with the standalone Training switch. They can
-    // book sessions from here, not just read them.
-    { to: '/employee/training', label: 'Training', icon: FiBookOpen, perm: 'training.manage',
-      keywords: ['training', 'session', 'workshop', 'trainer', 'programme', 'program', 'schedule'] },
+    // book sessions from here, not just read them. Named apart from My
+    // Trainings above, which is only what this person is booked on.
+    { to: '/employee/training', label: 'Manage Training', icon: FiBookOpen, perm: 'training.manage',
+      keywords: ['training', 'session', 'workshop', 'trainer', 'programme', 'program', 'schedule',
+        'category', 'book training', 'report', 'export', 'feedback'] },
   ] },
   { group: 'Projects & Resources', icon: FiFolder, items: [
     // The SAME badge the admin row wears. It is a personal count — your own

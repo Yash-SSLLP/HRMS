@@ -154,14 +154,21 @@ export default function AdminRoster() {
   const saveAssign = async (e) => {
     e.preventDefault(); setSavingAssign(true); setError('');
     try {
-      await api.post('/shifts/roster', assignForm);
+      const { data } = await api.post('/shifts/roster', assignForm);
       setShowAssign(false); await loadRoster();
+      // Set when the person had already punched in that day: the server has
+      // re-judged the day on the new shift and says how it came out.
+      if (data?.attendanceNote) toast.success(data.attendanceNote);
     } catch (err) { setError(err.response?.data?.message || 'Assign failed'); }
     finally { setSavingAssign(false); }
   };
   const removeEntry = async (en) => {
     if (!(await confirmDialog({ message: 'Delete this roster entry?', tone: 'danger', confirmText: 'Delete' }))) return;
-    try { await api.delete(`/shifts/roster/${en._id}`); await loadRoster(); }
+    try {
+      const { data } = await api.delete(`/shifts/roster/${en._id}`);
+      await loadRoster();
+      if (data?.attendanceNote) toast.success(data.attendanceNote);
+    }
     catch (err) { toast.error(err.response?.data?.message || 'Delete failed'); }
   };
 

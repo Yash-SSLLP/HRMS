@@ -7,6 +7,11 @@
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const AuditLog = require('../models/AuditLog');
+const User = require('../models/User');
+const {
+  moduleInfo, describe, badgeFor, fieldLabel, valueText, resolveUnknownTypes, findRecord, summarizeRecord,
+} = require('../services/auditDescribe');
+const { istDateString, istDayRange } = require('../utils/istDate');
 
 const badRequest = (message, status = 400) => Object.assign(new Error(message), { status });
 
@@ -59,8 +64,15 @@ function buildFilter({ entity, by, q, from, to }, viewer) {
   if (by) filter.by = by;
   if (from || to) {
     filter.at = {};
-    if (from) filter.at.$gte = new Date(from);
-    if (to) { const d = new Date(to); d.setHours(23, 59, 59, 999); filter.at.$lte = d; }
+    // A plain 'YYYY-MM-DD' is an IST calendar day — its own midnight to
+    // midnight, whatever zone the server runs in (a UTC server read "from 2 Oct"
+    // as 5:30 AM IST and lost the night before it).
+    const day = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (from) filter.at.$gte = day(from) ? istDayRange(from)[0] : new Date(from);
+    if (to) {
+      if (day(to)) filter.at.$lte = istDayRange(to)[1];
+      else { const d = new Date(to); d.setHours(23, 59, 59, 999); filter.at.$lte = d; }
+    }
   }
   if (q) {
     const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -96,16 +108,151 @@ function capAt(filter, asOf) {
  * @param {string} [req.query.from] - start date (inclusive)
  * @param {string} [req.query.to] - end date (inclusive, end-of-day)
  * @param {number} [req.query.limit] - max rows, capped at 500 (default 200)
- * @returns {{count: number, items: Object[], entities: string[]}}
+ * @param {string} [req.query.stats] - '1' adds the whole log's headline counts
+ * @returns {{count: number, items: Object[], entities: string[], modules: Object[], stats?: Object}}
+ *   each item also carries `moduleLabel`, `summary` (one sentence) and, when its
+ *   record turned out to be of another type than the row says, `resolvedType`
  */
 const listAudit = asyncHandler(async (req, res) => {
   const filter = buildFilter(readFilters(req.query), req.user);
   const limit = Math.min(Number(req.query.limit) || 200, 500);
-  const [items, entities] = await Promise.all([
+  const [items, entities, stats] = await Promise.all([
     AuditLog.find(filter).sort({ at: -1 }).limit(limit).lean(),
     AuditLog.distinct('entity'),
+    req.query.stats === '1' ? headlineCounts(req.user) : null,
   ]);
-  res.json({ count: items.length, items, entities: entities.sort() });
+  // Best-effort: a failed look-up only means the row is described by its own name.
+  const types = await resolveUnknownTypes(items).catch(() => new Map());
+  const modules = entities.map((value) => {
+    const m = moduleInfo(value);
+    return { value, label: m.label, known: m.known };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+  res.json({
+    count: items.length,
+    items: items.map((e) => withWords(e, types.get(String(e.entityId)))),
+    entities: entities.sort(),
+    modules,
+    ...(stats ? { stats } : {}),
+  });
+});
+
+/**
+ * A row plus the words to show it with: the module's name, what the record
+ * really is (when the row's own name is not one this portal writes) and one
+ * sentence saying what happened.
+ * @param {Object} e - lean AuditLog row
+ * @param {string} [foundType] - the model its record was found in
+ * @returns {Object}
+ */
+function withWords(e, foundType) {
+  const logged = moduleInfo(e.entity);
+  // Looked up per record id, so a row whose OWN name is that type gets it back
+  // too — only a different type is a resolution.
+  const resolvedType = foundType && foundType !== (logged.model || logged.key) && foundType !== e.entity ? foundType : undefined;
+  const actual = resolvedType ? moduleInfo(resolvedType) : null;
+  return {
+    ...e,
+    moduleLabel: (actual && actual.known ? actual : logged).label,
+    moduleKnown: logged.known,
+    ...(resolvedType ? { resolvedType } : {}),
+    summary: describe(e, resolvedType),
+    badge: badgeFor(e, resolvedType),
+    fieldLabel: fieldLabel(e),
+    fromText: valueText(e.fromStatus, e.field),
+    toText: valueText(e.toStatus, e.field),
+  };
+}
+
+/**
+ * The whole log at a glance: entries in all, today (IST), the last 7 days, and
+ * how many people made them this week. Counted under the viewer's redaction.
+ * @param {Object} viewer - req.user
+ * @returns {Promise<{total: number, today: number, week: number, people: number}>}
+ */
+async function headlineCounts(viewer) {
+  const base = buildFilter({}, viewer);
+  const [dayStart] = istDayRange(istDateString());
+  const weekStart = new Date(dayStart.getTime() - 6 * 86400000);
+  const [total, today, week, people] = await Promise.all([
+    AuditLog.countDocuments(base),
+    AuditLog.countDocuments({ ...base, at: { $gte: dayStart } }),
+    AuditLog.countDocuments({ ...base, at: { $gte: weekStart } }),
+    AuditLog.distinct('byName', { ...base, at: { $gte: weekStart } }),
+  ]);
+  return { total, today, week, people: people.filter(Boolean).length };
+}
+
+/**
+ * Everything about one entry, for the Details panel: the entry in words, the
+ * record it points at (found by id, wherever it lives, summarised without
+ * sensitive fields), the record's whole logged history, and who made the change.
+ * @route GET /api/audit/:id
+ * @returns {{entry, module, record, history, actor}}
+ */
+const getAuditDetails = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!mongoose.isObjectIdOrHexString(id)) throw badRequest('Invalid entry id');
+  const redaction = buildFilter({}, req.user);
+  const entry = await AuditLog.findOne({ ...redaction, _id: id }).lean();
+  if (!entry) throw badRequest('That entry is no longer in the audit log — it may have been deleted.', 404);
+
+  const logged = moduleInfo(entry.entity);
+  const found = await findRecord(entry).catch(() => ({ type: null, collection: null, doc: null, viaModel: false }));
+  const ownType = logged.model || logged.key;
+  // Only call it something else when the record really is something else.
+  const resolvedType = found.type && found.type !== ownType && found.type !== entry.entity ? found.type : null;
+  const actual = moduleInfo(found.type || resolvedType || entry.entity);
+
+  const [fields, historyRows, actor] = await Promise.all([
+    summarizeRecord(found.type, found.doc).catch(() => []),
+    // The latest 100, shown oldest first — so a record with a long past still
+    // shows the entry being looked at.
+    entry.entityId
+      ? AuditLog.find({ ...redaction, entityId: entry.entityId }).sort({ at: -1 }).limit(100).lean().then((rows) => rows.reverse())
+      : [entry],
+    entry.by && mongoose.isValidObjectId(entry.by)
+      ? User.findById(entry.by).select('firstName lastName role isActive').lean().catch(() => null)
+      : null,
+  ]);
+
+  res.json({
+    entry: withWords(entry, resolvedType),
+    module: {
+      loggedAs: entry.entity,
+      label: logged.label,
+      known: logged.known,
+      link: (actual.known && actual.link) || logged.link || null,
+      // What this kind of record is, for a module whose statuses do not speak for themselves.
+      about: (actual.known && actual.about) || logged.about || null,
+    },
+    record: {
+      found: !!found.doc,
+      type: found.type,
+      typeLabel: found.type ? moduleInfo(found.type).label : null,
+      typeNoun: found.type ? moduleInfo(found.type).noun : null,
+      collection: found.collection,
+      // In this database but in no model this portal has — a sibling app's record.
+      otherApp: !!found.doc && !found.viaModel,
+      fields,
+    },
+    history: historyRows.map((h) => ({
+      _id: h._id,
+      at: h.at,
+      byName: h.byName,
+      byRole: h.byRole,
+      field: h.field,
+      fromStatus: h.fromStatus,
+      toStatus: h.toStatus,
+      summary: describe(h, resolvedType),
+      badge: badgeFor(h, resolvedType),
+      current: String(h._id) === String(entry._id),
+    })),
+    actor: actor ? {
+      name: `${actor.firstName || ''} ${actor.lastName || ''}`.trim(),
+      role: actor.role,
+      active: actor.isActive !== false,
+    } : null,
+  });
 });
 
 /**
@@ -170,4 +317,6 @@ const purgeAudit = asyncHandler(async (req, res) => {
   res.json({ deleted: deletedCount });
 });
 
-module.exports = { listAudit, countAudit, deleteAuditEntries, purgeAudit };
+module.exports = {
+  listAudit, countAudit, getAuditDetails, deleteAuditEntries, purgeAudit,
+};

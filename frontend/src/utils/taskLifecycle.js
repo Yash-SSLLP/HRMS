@@ -279,8 +279,22 @@ export function patternLabel(s = {}) {
  *
  * …plus a routine (daily) task, whose only move is Done. Read off the server's
  * `can`, exactly as the app's twin (mobile utils/taskStatus) reads it.
+ *
+ * A TASK I SET, NOT YET ACCEPTED (2026-10-02, the user: "for assign by me for
+ * right swipe it should be for Edit ( only before accepting that task )"):
+ * right → Edit. `can.canEdit` is the server's own "nobody has taken it on
+ * yet", so the swipe goes the moment somebody accepts.
  */
 export function swipeActionsFor(task) {
+  const pair = pairedSwipes(task);
+  const can = task?.can || {};
+  if (!pair.right && can.canEdit && !can.canAccept) {
+    return { ...pair, right: { key: 'edit', label: 'Edit', icon: 'FiEdit2', tone: 'blue' } };
+  }
+  return pair;
+}
+
+function pairedSwipes(task) {
   const can = task?.can || {};
   const status = task?.status;
   if (can.canApprove) {

@@ -88,6 +88,9 @@ const ConsultancyJobs = lazy(() => import('./pages/ConsultancyJobs.jsx'));
 const AdminAssets = lazy(() => import('./pages/AdminAssets.jsx'));
 const AdminPerformance = lazy(() => import('./pages/AdminPerformance.jsx'));
 const AdminTraining = lazy(() => import('./pages/AdminTraining.jsx'));
+// The sessions I am on, from my own side — every employee, plus CEO/MD in the
+// admin portal (they have no employee portal), like My Interviews.
+const EmployeeTrainings = lazy(() => import('./pages/EmployeeTrainings.jsx'));
 const EmployeeAssets = lazy(() => import('./pages/EmployeeAssets.jsx'));
 const EmployeeGoals = lazy(() => import('./pages/EmployeeGoals.jsx'));
 const AdminOnboarding = lazy(() => import('./pages/AdminOnboarding.jsx'));
@@ -330,6 +333,9 @@ export default function App() {
             record them from — same page as /employee/interviews, which
             authorises on identity rather than on a role. */}
         <Route path="my-interviews" element={<EmployeeInterviews />} />
+        {/* A CEO/MD booked on — or running — a training reads it here; the
+            server answers /training/mine by identity, whatever the role. */}
+        <Route path="my-trainings" element={<EmployeeTrainings />} />
         <Route path="hiring-onboarding" element={<AdminHiringOnboarding />} />
         <Route path="new-joinees" element={<AdminNewJoinees />} />
         <Route path="assets" element={<AdminAssets />} />
@@ -416,6 +422,9 @@ export default function App() {
             with the same buttons — the grant is the whole module, booking
             included — and the server's gate is the real check. */}
         <Route path="training" element={<AdminTraining />} />
+        {/* My Trainings — open to everyone: the sessions I am on, their join
+            link, files, and my review once each is over. */}
+        <Route path="my-trainings" element={<EmployeeTrainings />} />
         {/* Loan approvals for a standalone `loansAccess` holder — an accounts
             clerk with no admin portal. Same page HR uses at /admin/loans. */}
         <Route path="loans-manage" element={<AdminLoans />} />
