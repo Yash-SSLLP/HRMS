@@ -731,6 +731,25 @@ const setTaskRecurringAccess = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grant or revoke "set a task's points" (2026-10-02). Without it the assign
+ * forms hide the Points box and the server ignores any points sent, so the
+ * task carries the company's default points.
+ * @route PATCH /api/admin/users/:id/task-points-access  (SuperAdmin)
+ * @param {boolean} req.body.enabled
+ * @returns {{id, taskPointsAccess}}
+ */
+const setTaskPointsAccess = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  user.taskPointsAccess = !!req.body.enabled;
+  await user.save();
+  res.json({ id: user._id, taskPointsAccess: user.taskPointsAccess });
+});
+
+/**
  * Grant or revoke "set a task's reminders" (2026-09-28). Without it the assign
  * form hides the Reminders section and the server ignores any sent, so the
  * task gets the company's default reminders.
@@ -1726,6 +1745,7 @@ module.exports = {
   setTaskProxyAccess,
   setTaskRecurringAccess,
   setTaskReminderAccess,
+  setTaskPointsAccess,
   setIncentiveRole,
   setKhataAccess,
   setKhataExportAccess,

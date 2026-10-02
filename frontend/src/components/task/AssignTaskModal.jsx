@@ -207,6 +207,11 @@ export default function AssignTaskModal({
    * which it would do anyway, ignoring anything sent by somebody not granted.
    */
   const canRemind = Boolean(meta?.canSetReminders);
+  // POINTS ARE A GRANT since 2026-10-02 (User.taskPointsAccess — the user: "while
+  // assigning task for points remove them but give Super Admin to add back in
+  // Permission tab"). Without it the box is gone, nothing is sent, and the task
+  // carries the company default (which still budgets any pieces).
+  const canPoints = Boolean(meta?.canSetPoints);
   const [recur, setRecurState] = useState(emptyRecur);
   const setRecur = useCallback((patch) => setRecurState((r) => ({ ...r, ...patch })), []);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
@@ -441,7 +446,7 @@ export default function AssignTaskModal({
         loopUsers: form.loopUsers,
         category: form.category,
         priority: form.priority,
-        points: selfOnly ? 0 : Number(form.points) || 0,
+        ...(canPoints ? { points: selfOnly ? 0 : Number(form.points) || 0 } : {}),
         requiresApproval: selfOnly || routine ? false : form.requiresApproval !== false,
         links: form.links,
         ...pattern,
@@ -471,7 +476,7 @@ export default function AssignTaskModal({
     } finally {
       setSaving(false);
     }
-  }, [form, recur, pattern, selfOnly, routine, onBehalf, scheduleId, voice, onCreated, onClose, canRemind]);
+  }, [form, recur, pattern, selfOnly, routine, onBehalf, scheduleId, voice, onCreated, onClose, canRemind, canPoints]);
 
   const submit = useCallback(async () => {
     if (recurringMode) { submitRecurring(); return; }
@@ -507,7 +512,7 @@ export default function AssignTaskModal({
         loopUsers: form.loopUsers,
         category: form.category,
         priority: form.priority,
-        points: budget,
+        ...(canPoints ? { points: budget } : {}),
         requiresApproval: selfOnly ? false : form.requiresApproval !== false,
         dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : null,
         // A one-off, always: repeating tasks are set up on Recurring Tasks.
@@ -569,7 +574,7 @@ export default function AssignTaskModal({
       setSaving(false);
     }
   }, [form, selfOnly, onBehalf, onBehalfName, voice, files, pieces, more, recurring, linkedTask, onCreated, onClose,
-    recurringMode, submitRecurring, canRemind]);
+    recurringMode, submitRecurring, canRemind, canPoints]);
 
   if (!open) return null;
 
@@ -734,8 +739,8 @@ export default function AssignTaskModal({
             </p>
           )}
 
-          {/* ── Points ───────────────────────────────────────────── */}
-          {!selfOnly && (
+          {/* ── Points — the points grant's alone (2026-10-02) ───── */}
+          {!selfOnly && canPoints && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
                 <FiAward size={12} /> Points

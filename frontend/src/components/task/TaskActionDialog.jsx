@@ -20,7 +20,7 @@
  * routine task's Done.
  */
 import { useEffect, useRef, useState } from 'react';
-import { FiX, FiCheckCircle, FiRotateCcw, FiThumbsDown, FiThumbsUp, FiSend, FiCheck } from 'react-icons/fi';
+import { FiX, FiCheckCircle, FiRotateCcw, FiThumbsDown, FiThumbsUp, FiSend, FiCheck, FiXCircle } from 'react-icons/fi';
 
 /**
  * What each move says. `defaultNote` is sent when the box is left empty; a
@@ -84,6 +84,17 @@ const COPY = {
     confirm: 'Send for review',
     icon: FiSend,
     tone: 'violet',
+  },
+  // Everybody refused it; whoever set it leaves it that way (2026-10-02).
+  keepRejected: {
+    title: 'Keep it rejected?',
+    body: 'The task closes with the refusals on it. Find it again under Filter → Completed tasks.',
+    label: 'Remark',
+    placeholder: 'Anything to add? (optional)',
+    defaultNote: 'Kept as rejected.',
+    confirm: 'Keep rejected',
+    icon: FiXCircle,
+    tone: 'red',
   },
   complete: {
     title: 'Mark as completed?',

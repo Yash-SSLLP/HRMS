@@ -145,6 +145,9 @@ router.get('/board', task.boardTasks);
 // The list as an Excel report (2026-09-28) — the same query as GET /, every
 // page of it. Also before '/:id'.
 router.get('/export', task.exportTasks);
+// Tick several and delete them in one go — a Super Admin's (2026-10-02;
+// checked in the handler). Before '/:id' like every literal path.
+router.post('/bulk-delete', task.bulkDeleteTasks);
 // Not gated. See the docblock: assigning is not a privilege, direction is.
 router.post('/', taskUpload.any(), task.createTask);
 
@@ -170,6 +173,9 @@ router.post('/:id/status', taskUpload.any(), task.changeStatus);
 router.post('/:id/accept', task.acceptTask);
 router.post('/:id/decline', task.declineTask);
 router.post('/:id/delegate', task.delegateTask);
+// Everybody refused it: whoever set it keeps it as rejected (2026-10-02) — the
+// other two answers are the ordinary edit (PATCH /:id) and DELETE /:id.
+router.post('/:id/keep-rejected', task.keepRejected);
 
 /* --- The reminder bell (2026-09-27) ------------------------------------
    Whoever set it chases the people still doing it (not accepted / in progress

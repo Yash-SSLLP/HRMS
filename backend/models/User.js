@@ -201,6 +201,15 @@ const userSchema = new mongoose.Schema(
      * (services/taskAccess.canSetReminders).
      */
     taskReminderAccess: { type: Boolean, default: false },
+    /**
+     * SET A TASK'S POINTS (2026-10-02, the user: "while assigning task for
+     * points remove them but give Super Admin to add back in Permission tab").
+     * Without it the assign forms show no Points box and the server ignores
+     * any points sent (an older app always sends them), so the task carries the
+     * company's default. A Super Admin holds it by role
+     * (services/taskAccess.canSetPoints).
+     */
+    taskPointsAccess: { type: Boolean, default: false },
     // Incentive access, per TAB. The section holds several incentives (Boys
     // today, more later) and each is run by different people, so this is not one
     // switch but a role per tab — see config/incentiveRoles.js for what a

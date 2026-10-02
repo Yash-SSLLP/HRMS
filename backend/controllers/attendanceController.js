@@ -10,14 +10,14 @@
  */
 const asyncHandler = require('express-async-handler');
 const path = require('path');
-const ExcelJS = require('exceljs');
 const Attendance = require('../models/Attendance');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const Setting = require('../models/Setting');
 const storage = require('../services/storage');
 const cloudinary = require('../services/cloudinary');
 const { haversineMeters } = require('../utils/geo');
-const { formatDuration, formatHours } = require('../utils/duration');
+const { formatHours } = require('../utils/duration');
+const { buildAttendanceReport } = require('../services/attendanceReportExcel');
 const {
   HALF_DAY_CUTOFF_HOUR, getLatePolicy, setLatePolicy, normalizeLatePolicy,
   lateMinutes, statusFromHours, settleStatus, effectiveHours, halfDayCutoffPassed,
@@ -1692,108 +1692,16 @@ const punchMap = asyncHandler(async (req, res) => {
   });
 });
 
-// Column layout for the attendance export (order = worksheet column order).
-const ATT_EXPORT_COLUMNS = [
-  { header: 'Employee Code', width: 14 },
-  { header: 'Name', width: 22 },
-  { header: 'Email', width: 26 },
-  { header: 'Date', width: 12 },
-  { header: 'Weekday', width: 10 },
-  { header: 'Status', width: 12 },
-  { header: 'Check In', width: 12 },
-  { header: 'Check Out', width: 12 },
-  { header: 'Hours Worked', width: 13 },
-  // Two columns on purpose: the number stays sortable/summable in Excel, the
-  // text one is what a person reads without decoding minutes in their head.
-  { header: 'Late (min)', width: 10 },
-  { header: 'Late By', width: 11 },
-  { header: 'No Punch Out', width: 13 },
-  { header: 'WFH', width: 7 },
-  { header: 'Distant Punch', width: 13 },
-  { header: 'Remarks', width: 34 },
-];
-
-// Turn attendance records into the ordered value rows for the export — one array
-// of cell values per record, in ATT_EXPORT_COLUMNS order. Records are grouped per
-// employee (by code) then chronological, which reads well for bulk/day exports.
-function attendanceExportRows(records, settings) {
-  const todayStart = startOfDay(new Date());
-  const fmtT = (d) =>
-    d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '';
-
-  const ordered = records
-    .filter((r) => r.employee)
-    .sort((a, b) => {
-      const ca = a.employee.employeeCode || '';
-      const cb = b.employee.employeeCode || '';
-      if (ca !== cb) return ca.localeCompare(cb);
-      return new Date(a.date) - new Date(b.date);
-    });
-
-  return ordered.map((r) => {
-    const p = r.employee;
-    const u = p.user || {};
-    const geo = resolveGeofence(p, settings);
-    const inDist = haversineMeters(geo.center, r.checkInLocation);
-    const outDist = haversineMeters(geo.center, r.checkOutLocation);
-    const distant = Boolean(
-      !geo.exempt && geo.radiusM &&
-        ((inDist != null && inDist > geo.radiusM && !r.checkInWfh) ||
-          (outDist != null && outDist > geo.radiusM && !r.checkOutWfh))
-    );
-    const lateMin = lateMinutes(r);
-    const noPunchOut = r.noPunchOut || Boolean(r.checkIn && !r.checkOut && startOfDay(r.date) < todayStart);
-    const weekday = new Date(r.date).toLocaleDateString('en-IN', { weekday: 'short', timeZone: 'Asia/Kolkata' });
-    return [
-      p.employeeCode || '',
-      `${u.firstName || ''} ${u.lastName || ''}`.trim(),
-      u.email || '',
-      ymdLocal(r.date),
-      weekday,
-      r.status || '',
-      fmtT(r.checkIn),
-      fmtT(r.checkOut),
-      r.hoursWorked || 0,           // real number cell
-      lateMin,                      // real number cell
-      lateMin ? formatDuration(lateMin) : '',
-      noPunchOut ? 'Yes' : '',
-      r.checkInWfh || r.checkOutWfh ? 'Yes' : '',
-      distant ? 'Yes' : '',
-      r.remarks || '',
-    ];
-  });
-}
-
-// Build a real .xlsx workbook of attendance — one row per attendance day. Shared
-// by the admin export and the manager (team) export so both produce identical
-// columns. Follows the same ExcelJS pattern as services/employeeExcel.js.
-function buildAttendanceWorkbook(records, settings) {
-  const wb = new ExcelJS.Workbook();
-  wb.creator = 'Sequence - HRMS';
-  wb.created = new Date();
-  const ws = wb.addWorksheet('Attendance');
-  ws.columns = ATT_EXPORT_COLUMNS.map((c) => ({ header: c.header, width: c.width }));
-
-  // Header row styling (mirrors the employee export).
-  ws.getRow(1).font = { bold: true };
-  ws.getRow(1).alignment = { vertical: 'middle' };
-  ws.getRow(1).height = 20;
-  ws.getRow(1).eachCell((cell) => {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4F4F5' } };
-    cell.border = { bottom: { style: 'thin', color: { argb: 'FFD4D4D8' } } };
-  });
-
-  for (const row of attendanceExportRows(records, settings)) ws.addRow(row);
-  return wb;
-}
-
-// Shared attendance-export runner (.xlsx workbook, one row per attendance
-// day). A single code path serves every shape the UI offers, off these query
-// params:  employee, year, month, day, months.
+// Shared attendance-export runner — the full attendance REPORT workbook
+// (services/attendanceReportExcel.js: Summary, every day, Sunday & holiday work,
+// WFH, regularizations, leave, worked-on-leave). A single code path serves every
+// shape the UI offers, off these query params:  employee, year, month, day, months.
 //   • day set (1-31)                    → one IST day  (day-wise export)
 //   • employee set, months=1 (default)  → one employee, one month
 //   • employee unset                    → every in-scope employee, that month
 //   • employee set, months=N (2-12)     → one employee, the trailing N months
+//   • from + to (YYYY-MM-DD)            → any date range, both days inclusive
+//                                         (wins over everything above; max 366 days)
 // `opts.scopeIds` (array of EmployeeProfile ids) limits the export to a subset —
 // used by the manager route so a manager only exports their direct reports; when
 // null (admin/HR), the whole org is in scope. `opts.bulkLabel` names the bulk
@@ -1809,13 +1717,47 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   const months = Math.min(Math.max(Number(req.query.months) || 1, 1), 12);
   const day = Number(req.query.day) || 0; // 0 ⇒ whole month(s)
 
-  // Resolve the date window. A specific day wins over the trailing-month window.
+  // A custom From–To range: IST days, both inclusive. Validated strictly so a
+  // typo is an error rather than a silently different window.
+  const YMD = /^\d{4}-\d{2}-\d{2}$/;
+  const rangeMode = Boolean(req.query.from || req.query.to);
+  let fromKey = null;
+  let toKey = null;
+  if (rangeMode) {
+    fromKey = String(req.query.from || '');
+    toKey = String(req.query.to || '');
+    // Round-trips through Date so 2026-02-30 is refused instead of rolling over.
+    const valid = (k) => YMD.test(k) && !Number.isNaN(Date.parse(`${k}T12:00:00Z`))
+      && new Date(`${k}T12:00:00Z`).toISOString().slice(0, 10) === k;
+    if (!fromKey || !toKey) {
+      res.status(400);
+      throw new Error('Pick both a From and a To date');
+    }
+    if (!valid(fromKey) || !valid(toKey)) {
+      res.status(400);
+      throw new Error('From and To must be real calendar dates');
+    }
+    if (toKey < fromKey) {
+      res.status(400);
+      throw new Error('The To date must be on or after the From date');
+    }
+    const spanDays = Math.round((Date.parse(`${toKey}T00:00:00Z`) - Date.parse(`${fromKey}T00:00:00Z`)) / 86400000) + 1;
+    if (spanDays > 366) {
+      res.status(400);
+      throw new Error('A date range can cover at most one year (366 days)');
+    }
+  }
+
+  // Resolve the date window. A range wins, then a specific day, then months.
   let start;
   let end;
   let sy = year;
   let sm = month;
-  const dayMode = day >= 1 && day <= 31;
-  if (dayMode) {
+  const dayMode = !rangeMode && day >= 1 && day <= 31;
+  if (rangeMode) {
+    start = new Date(`${fromKey}T00:00:00+05:30`);
+    end = new Date(new Date(`${toKey}T00:00:00+05:30`).getTime() + 86400000);
+  } else if (dayMode) {
     start = new Date(`${year}-${pad(month)}-${pad(day)}T00:00:00+05:30`);
     end = new Date(start);
     end.setDate(end.getDate() + 1);
@@ -1825,10 +1767,10 @@ const runAttendanceExport = async (req, res, opts = {}) => {
     ({ start } = monthRange(sy, sm));
     ({ end } = monthRange(year, month));
   }
-
   // Same rule as the on-screen registers: an export of the running month stops
   // at today rather than shipping rows for days that have not happened yet.
-  const filter = { date: { $gte: start, $lt: capToToday(end) } };
+  const endCap = capToToday(end);
+
   let employeeProfile = null;
   if (req.query.employee) {
     // When scoped (manager), the requested employee must be one of their reports.
@@ -1843,24 +1785,78 @@ const runAttendanceExport = async (req, res, opts = {}) => {
       res.status(404);
       throw new Error('Employee not found');
     }
-    filter.employee = employeeProfile._id;
-  } else if (scopeIds) {
-    filter.employee = { $in: scopeIds };
   }
 
-  const [records, settings] = await Promise.all([
-    Attendance.find(filter).populate({
-      path: 'employee',
-      select: 'employeeCode user workLocationRef remotePunchAllowed',
-      populate: [
-        { path: 'user', select: 'firstName lastName email' },
-        { path: 'workLocationRef', select: 'name lat lng radiusM' },
-      ],
-    }),
+  const recordFilter = { date: { $gte: start, $lt: endCap } };
+  if (employeeProfile) recordFilter.employee = employeeProfile._id;
+  else if (scopeIds) recordFilter.employee = { $in: scopeIds };
+
+  const records = endCap > start
+    ? await Attendance.find(recordFilter)
+      .select('-checkInPhoto -checkOutPhoto -checkInPhotoCloud -checkOutPhotoCloud')
+      .populate({ path: 'doublePay.decidedBy', select: 'firstName lastName role' })
+      .populate({ path: 'workOnLeave.decidedBy', select: 'firstName lastName role' })
+      .lean()
+    : [];
+
+  // Who the report covers: everyone on the roll during the window (so a day
+  // with no punch at all still gets its row), plus anyone who has a record in
+  // it even if they have since left.
+  const workedIds = [...new Set(records.map((r) => String(r.employee)))];
+  let profileQuery;
+  if (employeeProfile) {
+    profileQuery = { _id: employeeProfile._id };
+  } else {
+    const onRoll = { dateOfJoining: { $lt: endCap }, $or: [{ dateOfExit: null }, { dateOfExit: { $gte: start } }] };
+    const either = { $or: [{ _id: { $in: workedIds } }, onRoll] };
+    profileQuery = scopeIds ? { $and: [{ _id: { $in: scopeIds } }, either] } : either;
+  }
+  // Registered before populate('company') / populate('workLocationRef').
+  require('../models/Company');
+  require('../models/WorkLocation');
+  const worked = new Set(workedIds);
+  const profiles = (await EmployeeProfile.find(profileQuery)
+    .select('employeeCode designation department user company dateOfJoining dateOfExit workLocationRef remotePunchAllowed')
+    .populate('user', 'firstName lastName email isActive role')
+    .populate('workLocationRef', 'name lat lng radiusM')
+    .populate('company', 'name')
+    .lean())
+    .filter((p) => p.user)
+    // A login switched off with no exit date, or a hidden account, only
+    // appears when it actually has attendance in the window.
+    .filter((p) => worked.has(String(p._id)) || employeeProfile
+      || (p.user.isActive !== false && !HIDDEN_ROLES.includes(p.user.role)));
+
+  const profileIds = profiles.map((p) => p._id);
+  const userIds = profiles.map((p) => p.user._id);
+  const { LeaveRequest } = require('../models/Leave');
+  const [settings, holidays, regularizations, leaves] = await Promise.all([
     Setting.getSettings(),
+    require('../models/Holiday').find({ date: { $gte: start, $lt: end } }).select('date name type').lean().catch(() => []),
+    require('../models/Regularization')
+      .find({ employee: { $in: userIds }, date: { $gte: start, $lt: endCap } })
+      .select('-attachments.storagePath')
+      .populate('reviewedBy', 'firstName lastName role')
+      .lean(),
+    LeaveRequest
+      .find({ employee: { $in: profileIds }, startDate: { $lt: endCap }, endDate: { $gte: start } })
+      .select('employee leaveType startDate endDate isHalfDay totalDays paidDays lopDays workedDays reason status appliedAt createdAt approver decisionAt')
+      .populate('approver', 'firstName lastName role')
+      .lean(),
   ]);
 
-  const wb = buildAttendanceWorkbook(records, settings);
+  const monLabel = (y, m) => `${MONTH_NAMES[m - 1]}-${y}`;
+  const prettyKey = (k) => `${k.slice(8, 10)} ${MONTH_NAMES[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`;
+  let title;
+  if (rangeMode) title = fromKey === toKey ? prettyKey(fromKey) : `${prettyKey(fromKey)} to ${prettyKey(toKey)}`;
+  else if (dayMode) title = `${pad(day)} ${MONTH_NAMES[month - 1]} ${year}`;
+  else if (months > 1) title = `${MONTH_NAMES[sm - 1]} ${sy} to ${MONTH_NAMES[month - 1]} ${year}`;
+  else title = `${MONTH_NAMES[month - 1]} ${year}`;
+
+  const wb = buildAttendanceReport({
+    profiles, records, holidays, regularizations, leaves, settings, resolveGeofence,
+    start, end: endCap > start ? endCap : start, viewer: req.user, title,
+  });
 
   // Build a self-describing filename: attendance_<employee>_<month>_<day>.xlsx
   // where employee = the person's name (or 'all'/'team' for bulk), month = the
@@ -1868,7 +1864,6 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   // day number for a single-day export, else 'all'. Every segment is sanitized so
   // spaces/quotes can't break the Content-Disposition header.
   const sanitize = (s) => (s || '').trim().replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
-  const monLabel = (y, m) => `${MONTH_NAMES[m - 1]}-${y}`;
 
   let empSeg;
   if (employeeProfile) {
@@ -1877,9 +1872,18 @@ const runAttendanceExport = async (req, res, opts = {}) => {
   } else {
     empSeg = bulkLabel; // 'all' (admin) | 'team' (manager)
   }
-  const monthSeg = months > 1 ? `${monLabel(sy, sm)}-to-${monLabel(year, month)}` : monLabel(year, month);
-  const daySeg = dayMode ? pad(day) : 'all';
-  const fname = `attendance_${empSeg}_${monthSeg}_${daySeg}.xlsx`;
+  let fname;
+  if (rangeMode) {
+    // attendance_<employee>_<from>_to_<to>.xlsx, dates as DD-MM-YYYY.
+    const dmy = (k) => `${k.slice(8, 10)}-${k.slice(5, 7)}-${k.slice(0, 4)}`;
+    fname = fromKey === toKey
+      ? `attendance_${empSeg}_${dmy(fromKey)}.xlsx`
+      : `attendance_${empSeg}_${dmy(fromKey)}_to_${dmy(toKey)}.xlsx`;
+  } else {
+    const monthSeg = months > 1 ? `${monLabel(sy, sm)}-to-${monLabel(year, month)}` : monLabel(year, month);
+    const daySeg = dayMode ? pad(day) : 'all';
+    fname = `attendance_${empSeg}_${monthSeg}_${daySeg}.xlsx`;
+  }
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
@@ -1890,10 +1894,10 @@ const runAttendanceExport = async (req, res, opts = {}) => {
 /**
  * Export attendance as an Excel workbook for the whole org (see runAttendanceExport
  * for the supported day/month/trailing-months shapes).
- * @route GET /api/attendance/export?employee=&year=&month=&day=&months=  (HR/Admin)
+ * @route GET /api/attendance/export?employee=&year=&month=&day=&months=&from=&to=  (HR/Admin)
  * @returns {xlsx}
  */
-// GET /api/attendance/export?employee=&year=&month=&day=&months=   (HR/Admin)
+// GET /api/attendance/export?employee=&year=&month=&day=&months=&from=&to=   (HR/Admin)
 // Whole org in scope. See runAttendanceExport for the supported shapes.
 const exportAttendance = asyncHandler(async (req, res) =>
   runAttendanceExport(req, res, { scopeIds: await allowedEmployeeIds(req) }));

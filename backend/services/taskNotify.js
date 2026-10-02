@@ -611,8 +611,9 @@ async function extensionDecided(task, update, actor, request) {
  * in one line — "Deadline: 28 Sep, 6:00 PM → 30 Sep, 6:00 PM" — so the person
  * about to accept it reads what moved without opening it.
  */
-async function edited(task, actor, what = '') {
-  const doers = recipients(ids(task.assignees), actor?._id);
+async function edited(task, actor, what = '', { skip = [] } = {}) {
+  // `skip`: the people sentAgain() is telling instead (2026-10-02).
+  const doers = recipients(ids(task.assignees), actor?._id).filter((id) => !skip.includes(id));
   if (!doers.length) return;
   await notifyMany(doers, {
     type: 'task',
@@ -623,6 +624,38 @@ async function edited(task, actor, what = '') {
     link: employeeTaskLink(task._id),
     data: { taskId: String(task._id), edited: true },
   });
+}
+
+/**
+ * A rejected task, edited and sent again (2026-10-02) — or somebody newly put
+ * on a task by an edit. To them it is a task to answer, not "an edit": the
+ * people who refused it are asked again, the newcomers are given it.
+ */
+async function sentAgain(task, actor, to = [], { again = [] } = {}) {
+  const list = recipients(to, actor?._id);
+  const asked = list.filter((id) => again.includes(id));
+  const fresh = list.filter((id) => !again.includes(id));
+  const base = {
+    type: 'task',
+    audience: 'employee',
+    action: true,
+    body: `${taskName(task)}${meta(task)}`,
+    link: employeeTaskLink(task._id),
+  };
+  if (asked.length) {
+    await notifyMany(asked, {
+      ...base,
+      title: `${nameOf(actor)} changed a ${noun(task)} you rejected and sent it again`,
+      data: { taskId: String(task._id), sentAgain: true },
+    });
+  }
+  if (fresh.length) {
+    await notifyMany(fresh, {
+      ...base,
+      title: `New task from ${nameOf(actor)}`,
+      data: { taskId: String(task._id), kind: task.kind },
+    });
+  }
 }
 
 /**
@@ -764,6 +797,7 @@ module.exports = {
   extensionDecided,
   commented,
   edited,
+  sentAgain,
   nudged,
   becameOverdue,
   reminder,

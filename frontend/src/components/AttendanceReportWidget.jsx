@@ -3,13 +3,12 @@ import api from '../api/client';
 import AttendanceDayChart from './AttendanceDayChart';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
+import { ALL_EMPLOYEES, attendanceSeries } from '../utils/attendanceDays';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-
-const minutesOfDay = (d) => { const t = new Date(d); return t.getHours() * 60 + t.getMinutes(); };
 
 // Self-contained daily login/logout report: employee + month picker, fetch, and
 // the combo chart. Reused on the full report page and (compact) on the dashboard.
@@ -40,7 +39,9 @@ export default function AttendanceReportWidget({ compact = false, height }) {
     (async () => {
       setLoading(true); setError('');
       try {
-        const params = new URLSearchParams({ year: filter.year, month: filter.month, employee: filter.employee });
+        const params = new URLSearchParams({ year: filter.year, month: filter.month });
+        // No employee param = everyone in scope; the chart then shows daily averages.
+        if (filter.employee !== ALL_EMPLOYEES) params.set('employee', filter.employee);
         const { data } = await api.get(`/attendance?${params}`);
         setRecords(data.records || []);
       } catch (err) {
@@ -51,19 +52,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
     })();
   }, [filter]);
 
-  const days = useMemo(() => (
-    [...records]
-      .filter((r) => r.checkIn || r.checkOut)
-      .sort((a, b) => new Date(a.date) - new Date(b.date))
-      .map((r) => {
-        const login = r.checkIn ? minutesOfDay(r.checkIn) : null;
-        const logout = r.checkOut ? minutesOfDay(r.checkOut) : null;
-        let present = null;
-        if (login != null && logout != null && logout > login) present = logout - login;
-        else if (r.hoursWorked) present = Math.round(r.hoursWorked * 60);
-        return { label: new Date(r.date).getDate().toString().padStart(2, '0'), login, logout, present };
-      })
-  ), [records]);
+  const { days } = useMemo(() => attendanceSeries(records), [records]);
 
   return (
     <div>
@@ -74,6 +63,7 @@ export default function AttendanceReportWidget({ compact = false, height }) {
           className="border rounded-lg px-2 py-1 text-sm min-w-[10rem] max-w-full"
         >
           <option value="">Select employee…</option>
+          <option value={ALL_EMPLOYEES}>All employees</option>
           {peopleOptions(employees, (e) => `${e.employeeCode} · ${e.user?.firstName || ''} ${e.user?.lastName || ''}`, { keep: [filter.employee] })}
         </SearchableSelect>
         <select

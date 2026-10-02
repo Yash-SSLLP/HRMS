@@ -690,6 +690,19 @@ export function statQueryFor(key) {
 export function statusActions(task) {
   const can = task?.can || {};
   const out = [];
+  // REJECTED BY EVERYBODY ON IT, and this reader set it (2026-10-02, the user:
+  // "that task will go back to who assigned that task then they will have
+  // option to delete or edit then reassign to anyone or keep them rejected").
+  // The app draws the same three in its status sheet.
+  if (can.canSettleRejection) {
+    if (can.canEdit) {
+      out.push({ key: 'resend', label: 'Edit and send again', hint: 'Change it or pick someone else — they are asked again', tone: 'indigo', icon: 'FiEdit2' });
+    }
+    out.push({ key: 'keepRejected', label: 'Keep rejected', hint: 'Close it as rejected, with the reasons on it', tone: 'red', icon: 'FiXCircle' });
+    if (can.canDelete) {
+      out.push({ key: 'deleteRejected', label: 'Delete task', hint: 'Remove it altogether', tone: 'red', icon: 'FiTrash2' });
+    }
+  }
   if (can.canClaim) {
     out.push({ key: 'claim', label: 'Pick it up', hint: 'Nobody is on this piece yet — make it yours', tone: 'blue', icon: 'FiUserPlus' });
   }
@@ -731,7 +744,9 @@ export function statusActions(task) {
  */
 export function statusBadge(task) {
   if (!task) return { label: '', key: STATUS.PENDING };
-  if (task.declined) return { label: 'Declined', key: 'DECLINED' };
+  // "Rejected" (2026-10-02) — the doer's move is called Reject, so the task
+  // says the same word, open (back with whoever set it) or kept that way.
+  if (task.declined || task.rejectionKept) return { label: 'Rejected', key: 'DECLINED' };
   if (task.status === STATUS.SUBMITTED && task.can?.canApprove) return { label: 'Needs your review', key: STATUS.SUBMITTED };
   if (task.status === STATUS.PENDING && task.awaitingAcceptance) return { label: 'Not accepted', key: STATUS.PENDING };
   // A routine (daily) task is never "accepted" — it is to do, or done.

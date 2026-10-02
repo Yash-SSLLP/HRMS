@@ -209,8 +209,13 @@ export default function AdminAttendance() {
   const [saving, setSaving] = useState(false);
   const [photoModal, setPhotoModal] = useState(null); // { url, label }
 
-  const [exporting, setExporting] = useState(''); // '' | 'month' | 'day'
+  const [exporting, setExporting] = useState(''); // '' | 'month' | 'day' | 'range'
   const [exportDay, setExportDay] = useState(toYMD(new Date()));
+  // Custom From–To export range; defaults to the 1st of this month → today.
+  const [exportRange, setExportRange] = useState(() => {
+    const t = new Date();
+    return { from: toYMD(new Date(t.getFullYear(), t.getMonth(), 1)), to: toYMD(t) };
+  });
 
   // Office / geofence settings (editable by SuperAdmin & HR)
   const [settings, setSettings] = useState({
@@ -304,7 +309,12 @@ export default function AdminAttendance() {
     setExporting(kind);
     try {
       const params = new URLSearchParams();
-      if (kind === 'day') {
+      if (kind === 'range') {
+        if (!exportRange.from || !exportRange.to) { toast.error('Pick both a From and a To date'); setExporting(''); return; }
+        if (exportRange.to < exportRange.from) { toast.error('The To date must be on or after the From date'); setExporting(''); return; }
+        params.set('from', exportRange.from);
+        params.set('to', exportRange.to);
+      } else if (kind === 'day') {
         if (!exportDay) { toast.error('Pick a day to export'); setExporting(''); return; }
         const [y, m, d] = exportDay.split('-').map(Number);
         params.set('year', y);
@@ -581,8 +591,27 @@ export default function AdminAttendance() {
           className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
           ⬇ {exporting === 'day' ? 'Exporting…' : 'Day'}
         </button>
+        <span className="mx-1 h-5 w-px bg-gray-200" />
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <label className="text-xs text-gray-500">From</label>
+          <input type="date" value={exportRange.from} max={exportRange.to || undefined}
+            onChange={(e) => setExportRange((r) => ({ ...r, from: e.target.value }))}
+            className="border rounded-lg px-2 py-1 text-sm" />
+          <label className="text-xs text-gray-500">To</label>
+          <input type="date" value={exportRange.to} min={exportRange.from || undefined}
+            onChange={(e) => setExportRange((r) => ({ ...r, to: e.target.value }))}
+            className="border rounded-lg px-2 py-1 text-sm" />
+          <button onClick={() => exportCsv('range')} disabled={!!exporting}
+            title={filter.employee ? 'Selected employee · this date range' : 'All employees · this date range'}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60">
+            ⬇ {exporting === 'range' ? 'Exporting…' : 'Date range'}
+          </button>
+        </span>
         <span className="text-xs text-gray-400 ml-1">
           {filter.employee ? 'Exporting the selected employee' : 'Exporting all employees'}
+        </span>
+        <span className="basis-full text-xs text-gray-400">
+          Full report: summary, every day, Sunday &amp; holiday work (2× status), WFH, outside punches with distance, regularizations, leave and worked-on-leave, each on its own sheet.
         </span>
       </div>
 

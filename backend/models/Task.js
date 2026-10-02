@@ -617,6 +617,15 @@ const taskSchema = new mongoose.Schema(
     completedAt: Date,
     /** The roll-up of assignees[].completedLate — see that field's note. */
     completedLate: { type: Boolean, default: false },
+    /**
+     * KEPT AS REJECTED (2026-10-02). Everybody on it said no, and whoever set
+     * it chose to leave it that way rather than edit + send it again or delete
+     * it. The task is closed (status CANCELLED, assignee rows untouched so the
+     * refusals and their reasons stay on it) and reads "Rejected" everywhere.
+     */
+    rejectionKeptAt: Date,
+    rejectionKeptBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    rejectionKeptByName: String,
 
     // ===== Content =====
     voiceNote: { type: voiceNoteSchema, default: undefined },

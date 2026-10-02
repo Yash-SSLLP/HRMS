@@ -245,6 +245,59 @@ export default function AdminPayroll() {
   const isCurrent = (p) => curPeriod && p.payPeriodYear === curPeriod.year && p.payPeriodMonth === curPeriod.month;
   const shownPayslips = view === 'previous' ? payslips.filter((p) => !isCurrent(p)) : payslips;
 
+  // ---- Tick-and-delete (2026-10-02) ----------------------------------------
+  // Only unpaid payslips can be deleted: Draft, plus Approved / On Hold, whose
+  // approval the delete reverses. Paid ones are voided one at a time instead.
+  const DELETABLE = ['Draft', 'Approved', 'OnHold'];
+  const canTick = (p) => !viewOnly && DELETABLE.includes(p.status);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const tickable = shownPayslips.filter(canTick);
+  // Keep only ticks that are still on screen and still deletable — a filter
+  // change or a reload must never leave a hidden row selected.
+  useEffect(() => {
+    setSelected((prev) => {
+      const ok = new Set(tickable.map((p) => p._id));
+      const next = new Set([...prev].filter((id) => ok.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payslips, view]);
+  const allTicked = tickable.length > 0 && tickable.every((p) => selected.has(p._id));
+  const toggleOne = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allTicked ? new Set() : new Set(tickable.map((p) => p._id)));
+
+  const deleteSelected = async () => {
+    const rows = shownPayslips.filter((p) => selected.has(p._id));
+    if (!rows.length) return;
+    const approved = rows.filter((p) => p.status !== 'Draft').length;
+    const message = `Delete ${rows.length} payslip${rows.length === 1 ? '' : 's'}?`
+      + (approved
+        ? ` ${approved} of them ${approved === 1 ? 'is' : 'are'} approved — deleting reverses that approval and is logged against your account.`
+        : '')
+      + ' Run Payroll can generate them again.';
+    if (!(await confirmDialog({ message, tone: 'danger', confirmText: `Delete ${rows.length}` }))) return;
+    setBulkDeleting(true);
+    try {
+      const { data } = await api.post('/payroll/bulk-delete', { ids: rows.map((p) => p._id) });
+      if (data.deleted) toast.success(`Deleted ${data.deleted} payslip${data.deleted === 1 ? '' : 's'}`);
+      if (data.skipped?.length) {
+        const first = data.skipped.slice(0, 3).map((s) => `${s.name || 'A payslip'}: ${s.reason}`).join(' · ');
+        toast.warn(`${data.skipped.length} not deleted — ${first}${data.skipped.length > 3 ? ' …' : ''}`, { autoClose: 9000 });
+      }
+      setSelected(new Set());
+      await loadPayslips();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Delete failed');
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   // Live gross/deductions/net totals for the payslip form footer.
   const gross = useMemo(() =>
     Object.values(form.earnings).reduce((a, b) => a + Number(b || 0), 0), [form.earnings]);
@@ -561,7 +614,10 @@ export default function AdminPayroll() {
             + 'happened — voiding cancels the payslip, takes it out of the employee\'s view and out of '
             + 'the year\'s totals, and leaves it on the record as cancelled. The month stays locked, so '
             + 'it cannot be paid twice. This is logged against your account.'
-          : 'Delete this draft payslip?';
+          : payslip?.status && payslip.status !== 'Draft'
+            ? 'This payslip is approved. Deleting it reverses the approval and removes it '
+              + '(logged against your account) — Run Payroll can generate it again.'
+            : 'Delete this draft payslip?';
         if (!(await confirmDialog({ message, tone: 'danger', confirmText: paid ? 'Void payslip' : 'Delete' }))) return;
         await api.delete(`/payroll/${id}`);
       } else {
@@ -685,10 +741,34 @@ export default function AdminPayroll() {
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
+      {/* Shown only while something is ticked. */}
+      {selected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm">
+          <span className="font-medium text-red-800">{selected.size} selected</span>
+          <button type="button" onClick={deleteSelected} disabled={bulkDeleting}
+            className="px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60">
+            {bulkDeleting ? 'Deleting…' : `Delete selected (${selected.size})`}
+          </button>
+          <button type="button" onClick={() => setSelected(new Set())} disabled={bulkDeleting}
+            className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
+            Clear
+          </button>
+          <span className="text-xs text-red-700">Draft and approved payslips only — paid ones are voided one at a time.</span>
+        </div>
+      )}
+
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
+              <th className="pl-4 pr-1 py-3 w-8">
+                {!viewOnly && (
+                  <input type="checkbox" checked={allTicked} onChange={toggleAll}
+                    disabled={!tickable.length || loading}
+                    aria-label="Select all draft and approved payslips"
+                    title="Select all draft and approved payslips shown" />
+                )}
+              </th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Period</th>
               <th className="px-4 py-3 text-right font-medium text-gray-700">Gross</th>
@@ -705,15 +785,21 @@ export default function AdminPayroll() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={10} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : shownPayslips.length === 0 ? (
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">
+              <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-500">
                 {view === 'current'
                   ? `No payslips for ${curPeriod ? `${MONTHS[curPeriod.month - 1]} ${curPeriod.year}` : 'this month'} yet — use Run Payroll to generate them.`
                   : 'No payslips in these months.'}
               </td></tr>
             ) : shownPayslips.map((p) => (
-              <tr key={p._id}>
+              <tr key={p._id} className={selected.has(p._id) ? 'bg-red-50/60' : undefined}>
+                <td className="pl-4 pr-1 py-3 w-8">
+                  {canTick(p) && (
+                    <input type="checkbox" checked={selected.has(p._id)} onChange={() => toggleOne(p._id)}
+                      aria-label={`Select ${p.employee?.user?.firstName || 'this'} payslip`} />
+                  )}
+                </td>
                 <td className="px-4 py-3">
                   {p.employee?.user?.firstName} {p.employee?.user?.lastName}
                   <div className="text-xs text-gray-500 font-mono">{p.employee?.employeeCode}</div>
@@ -785,6 +871,11 @@ export default function AdminPayroll() {
                   )}
                   {!viewOnly && p.status === 'Approved' && (
                     <button onClick={() => doAction(p._id, 'pay')} className="text-green-700 hover:underline">Mark Paid</button>
+                  )}
+                  {/* Approved / On Hold: nothing has been paid, so Delete reverses
+                      the approval (the server logs it). Paid uses Void below. */}
+                  {!viewOnly && (p.status === 'Approved' || p.status === 'OnHold') && (
+                    <button onClick={() => doAction(p._id, 'delete', p)} className="text-red-600 hover:underline">Delete</button>
                   )}
                   {/* Correcting a payslip after it has been paid. Hidden from
                       everyone but the Backend — the server refuses it for anyone

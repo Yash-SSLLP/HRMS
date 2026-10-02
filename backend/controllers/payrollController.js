@@ -2372,7 +2372,7 @@ const canOverridePaidLock = (user) => user?.role === 'SuperAdmin';
  * @param {string} action - 'edited' | 'voided'
  * @returns {Promise<void>}
  */
-async function auditLockOverride(payslip, user, before, action) {
+async function auditLockOverride(payslip, user, before, action, toStatusText) {
   try {
     const AuditLog = require('../models/AuditLog');
     const prof = await EmployeeProfile.findById(payslip.employee)
@@ -2390,7 +2390,7 @@ async function auditLockOverride(payslip, user, before, action) {
       field: 'payslipLock',
       // Both amounts on one row is what makes a correction readable later.
       fromStatus: `${before.status} · net ${before.netPay}`,
-      toStatus: `${action} by Backend · net ${payslip.netPay}`,
+      toStatus: toStatusText || `${action} by Backend · net ${payslip.netPay}`,
       by: user?._id,
       byName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
       byRole: user?.role,
@@ -2767,13 +2767,34 @@ const downloadPublicPayslip = asyncHandler(async (req, res) => {
   res.send(buffer);
 });
 
+// Payslips that may be removed outright: nothing has been paid on them.
+// Approving a payslip only flips its status (see approvePayslip — no money,
+// ledger or notification moves), so deleting an Approved or On Hold one simply
+// reverses that sign-off; the audit row written below keeps who did it and what
+// the net pay was. Paid is the exception and is voided, never deleted.
+const DELETABLE_PAYSLIP_STATUSES = ['Draft', 'Approved', 'OnHold'];
+
 /**
- * Delete a payslip (Draft only).
+ * Delete one unpaid payslip, auditing it when an approval is being reversed.
+ * The caller has already checked scope and DELETABLE_PAYSLIP_STATUSES.
+ * @param {Object} payslip Payroll document
+ * @param {Object} user req.user
+ */
+async function removeUnpaidPayslip(payslip, user) {
+  const before = { status: payslip.status, netPay: payslip.netPay };
+  await payslip.deleteOne();
+  if (before.status !== 'Draft') {
+    await auditLockOverride(payslip, user, before, 'deleted', `Deleted — approval reversed · net ${before.netPay}`);
+  }
+}
+
+/**
+ * Delete a payslip (Draft, Approved or On Hold; a Paid one is voided by the Backend).
  * @route DELETE /api/payroll/:id  (HR/Admin)
  * @param {string} req.params.id - payslip id
- * @returns {{id: string, deleted: boolean}}; 400 unless Draft
+ * @returns {{id: string, deleted: boolean}}; 400 for a Void payslip
  */
-// DELETE /api/payroll/:id  (HR/Admin) — Draft only
+// DELETE /api/payroll/:id  (HR/Admin)
 const deletePayslip = asyncHandler(async (req, res) => {
   const payslip = await Payroll.findById(req.params.id);
   if (!payslip) {
@@ -2781,11 +2802,10 @@ const deletePayslip = asyncHandler(async (req, res) => {
     throw new Error('Payslip not found');
   }
   await guardPayslipScope(req, res, payslip);
-  // Anything past Draft has been approved, and possibly paid and sent — deleting
-  // it destroys the record of a payment that really happened. Only the Backend
-  // may, and only ever as a correction; the audit line below is what makes that
-  // recoverable as knowledge even though the row is not.
-  if (payslip.status !== 'Draft') {
+  // A paid payslip records a payment that really happened — deleting it destroys
+  // that record. Only the Backend may, and only ever as a correction; the audit
+  // line below is what makes that recoverable as knowledge even though the row is not.
+  if (!DELETABLE_PAYSLIP_STATUSES.includes(payslip.status)) {
     // A PAID payslip is cancelled, not destroyed. The row is what every
     // "never overwrite a Paid payslip" guard in the run reads (buildRunRows,
     // runPayroll, runEmployeePayroll) and what the year's YTD, the Form 16 basis
@@ -2794,7 +2814,7 @@ const deletePayslip = asyncHandler(async (req, res) => {
     // the hand-entered TDS and bonus the engine cannot re-derive are gone.
     if (payslip.status !== 'Paid') {
       res.status(400);
-      throw new Error(`Only Draft payslips can be deleted. This one is ${payslip.status}.`);
+      throw new Error(`Only Draft or Approved payslips can be deleted. This one is ${payslip.status}.`);
     }
     if (!canOverridePaidLock(req.user)) {
       res.status(400);
@@ -2813,8 +2833,68 @@ const deletePayslip = asyncHandler(async (req, res) => {
     await auditLockOverride(payslip, req.user, before, 'voided');
     return res.json({ id: req.params.id, voided: true, payslip });
   }
-  await payslip.deleteOne();
+  await removeUnpaidPayslip(payslip, req.user);
   res.json({ id: req.params.id, deleted: true });
+});
+
+/**
+ * Delete many payslips at once — the ticked rows on the Payroll page.
+ *
+ * Every row goes through the same gates as a single delete (scope, then status),
+ * one at a time, so a row this person may not touch, or a Paid one, is SKIPPED
+ * with its reason rather than failing the whole batch. Paid payslips are never
+ * voided in bulk: that is a per-slip Backend correction with its own reason.
+ * @route POST /api/payroll/bulk-delete  (HR/Admin)
+ * @param {string[]} req.body.ids - payslip ids (max 500)
+ * @returns {{deleted: number, deletedIds: string[], skipped: Array<{id, name, reason}>}}
+ */
+// POST /api/payroll/bulk-delete  { ids }  (HR/Admin)
+const bulkDeletePayslips = asyncHandler(async (req, res) => {
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))]
+    .filter((id) => require('mongoose').isValidObjectId(id));
+  if (!ids.length) {
+    res.status(400);
+    throw new Error('Select at least one payslip to delete');
+  }
+  if (ids.length > 500) {
+    res.status(400);
+    throw new Error('Delete at most 500 payslips at a time');
+  }
+
+  const payslips = await Payroll.find({ _id: { $in: ids } })
+    .populate({ path: 'employee', select: 'employeeCode user', populate: { path: 'user', select: 'firstName lastName' } });
+  const byId = new Map(payslips.map((p) => [String(p._id), p]));
+  // guardPayslipScope reports a refusal by setting a status and throwing; a
+  // throwaway res keeps one refused row from touching the real response.
+  const quietRes = { status() { return this; } };
+
+  const deletedIds = [];
+  const skipped = [];
+  for (const id of ids) {
+    const p = byId.get(id);
+    if (!p) { skipped.push({ id, name: '', reason: 'Not found (already deleted?)' }); continue; }
+    const name = [p.employee?.user?.firstName, p.employee?.user?.lastName].filter(Boolean).join(' ')
+      || p.employee?.employeeCode || '';
+    try {
+      await guardPayslipScope(req, quietRes, p);
+    } catch (err) {
+      skipped.push({ id, name, reason: err.message });
+      continue;
+    }
+    if (!DELETABLE_PAYSLIP_STATUSES.includes(p.status)) {
+      skipped.push({
+        id,
+        name,
+        reason: p.status === 'Paid'
+          ? 'Paid — a paid payslip can only be voided, one at a time'
+          : `${p.status} payslips cannot be deleted`,
+      });
+      continue;
+    }
+    await removeUnpaidPayslip(p, req.user);
+    deletedIds.push(id);
+  }
+  res.json({ deleted: deletedIds.length, deletedIds, skipped });
 });
 
 /**
@@ -3067,6 +3147,7 @@ module.exports = {
   approvePayslip,
   markPayslipPaid,
   deletePayslip,
+  bulkDeletePayslips,
   downloadPayslipPdf,
   downloadMyPayslipPdf,
   sharePayslip,

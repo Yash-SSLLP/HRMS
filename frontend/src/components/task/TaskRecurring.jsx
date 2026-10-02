@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
-  FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiStopCircle, FiCheckCircle, FiTrash2,
+  FiRepeat, FiUser, FiArrowRight, FiCalendar, FiBell, FiEdit2, FiCheckCircle, FiTrash2,
 } from 'react-icons/fi';
 import ToggleSwitch from '../ToggleSwitch';
 import { confirmDialog } from '../dialogs';
@@ -73,26 +73,8 @@ export default function TaskRecurring({
     }
   };
 
-  const stop = async (row) => {
-    const ok = await confirmDialog({
-      title: 'Stop this recurring task?',
-      message: `"${row.title}" will not be raised again.`,
-      details: ['The ones already in people’s lists stay, and so does their history.'],
-      confirmText: 'Stop it',
-      tone: 'danger',
-    });
-    if (!ok) return;
-    try {
-      await T.deleteRecurring(row._id);
-      setRows((list) => (list || []).map((r) => (r._id === row._id ? { ...r, isActive: false, next: null } : r)));
-      toast.success('Stopped.');
-    } catch (err) {
-      toast.error(err?.response?.data?.message || 'Could not stop it.');
-    }
-  };
-
   // DELETE (2026-09-30, user: "in recurring task give an option to delete any
-  // task"): stopped AND gone from this list for good. Unlike Stop, it cannot be
+  // task"): stopped AND gone from this list for good. Unlike the pause switch, it cannot be
   // switched back on — hence the stronger confirm.
   const remove = async (row) => {
     const ok = await confirmDialog({
@@ -256,15 +238,8 @@ export default function TaskRecurring({
                       >
                         <FiEdit2 size={13} /> Edit
                       </button>
-                      {r.isActive && (
-                        <button
-                          type="button"
-                          onClick={() => stop(r)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 min-h-[36px]"
-                        >
-                          <FiStopCircle size={13} /> Stop
-                        </button>
-                      )}
+                      {/* No Stop button (2026-10-02, the user: "remove these button as it
+                          extra") — the switch pauses a schedule, Delete ends it. */}
                       <button
                         type="button"
                         onClick={() => remove(r)}

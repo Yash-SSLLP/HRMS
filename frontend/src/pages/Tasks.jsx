@@ -38,7 +38,7 @@ import { Navigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import {
   FiPlus, FiFilter, FiSearch, FiX, FiBookmark, FiBarChart2, FiChevronLeft, FiChevronRight,
-  FiArrowLeft, FiCheckCircle,
+  FiArrowLeft, FiCheckCircle, FiTrash2, FiCheckSquare, FiSquare,
 } from 'react-icons/fi';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
@@ -147,6 +147,10 @@ export default function Tasks({ base = '/employee/tasks' }) {
   const [extending, setExtending] = useState(null);
   /** The bell's gate per task, restarted by a press in THIS tab. */
   const [nudged, setNudged] = useState({});
+  /** MANY AT ONCE (2026-10-02) — a Super Admin ticks rows and deletes them. */
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Debounced, or every keystroke is a round trip.
   useEffect(() => {
@@ -224,6 +228,44 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
   const showTask = useCallback((task) => setOpenTask({ id: task._id }), []);
 
+  // ===== Many at once (2026-10-02) — first a Super Admin's, then EVERYBODY's
+  // ("give option to delete tasks in bulk by multi selecting them"). Only a row
+  // this person could delete on its own (`can.canDelete` — one they set; a
+  // Super Admin: any) gets a tick box; the server re-checks every one.
+  const canBulk = Boolean(meta?.canBulkDelete) && !viewOnly;
+  const deletableRows = useMemo(() => tasks.filter((t) => t.can?.canDelete), [tasks]);
+  const stopSelecting = useCallback(() => { setSelecting(false); setSelected(new Set()); }, []);
+  const toggleRow = useCallback((id) => setSelected((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  }), []);
+  const allOnPage = deletableRows.length > 0 && deletableRows.every((t) => selected.has(t._id));
+  const deleteSelected = useCallback(async () => {
+    const ids = [...selected];
+    if (!ids.length || bulkBusy) return;
+    const ok = await confirmDialog({
+      title: `Delete ${ids.length} task${ids.length === 1 ? '' : 's'}?`,
+      message: 'They are taken out of every list. Their history and any points already credited stay on file.',
+      confirmText: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    try {
+      const res = await T.bulkDeleteTasks(ids);
+      toast.success(res?.message || 'Removed.');
+      stopSelecting();
+      refresh();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Could not delete those tasks.');
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selected, bulkBusy, stopSelecting, refresh]);
+  // A different pile or page is a different set of rows — start again.
+  useEffect(() => { setSelected(new Set()); }, [pile, page]);
+
   /**
    * One pick from a row's dropdown. Two moves need nothing more than the
    * click — taking a job on, and picking up an open piece — and run at once.
@@ -261,6 +303,25 @@ export default function Tasks({ base = '/employee/tasks' }) {
       }
       return;
     }
+    // A task everybody rejected, back with whoever set it (2026-10-02).
+    if (key === 'resend') { setOpenTask({ id: task._id, edit: true }); return; }
+    if (key === 'deleteRejected') {
+      const ok = await confirmDialog({
+        title: 'Delete this task?',
+        message: `"${task.title}" is removed for everybody.`,
+        confirmText: 'Delete',
+        tone: 'danger',
+      });
+      if (!ok) return;
+      try {
+        await T.deleteTask(task._id);
+        toast.success('Task deleted.');
+        refresh();
+      } catch (err) {
+        toast.error(err?.response?.data?.message || 'Could not delete that task.');
+      }
+      return;
+    }
     if (key === 'delegate') { setDelegating(task); return; }
     if (key === 'transfer') { setTransferring(task); return; }
     // Straight into the task's editor (2026-09-28: "in any task give option to
@@ -279,6 +340,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
     else if (key === 'submit') res = await T.submitTask(task._id, { note });
     else if (key === 'complete' || key === 'done') res = await T.changeStatus(task._id, 'COMPLETED', { note });
     else if (key === 'accept') res = await T.acceptTask(task._id, note);
+    else if (key === 'keepRejected') res = await T.keepRejected(task._id, note);
 
     const said = {
       approve: 'Approved — it is completed.',
@@ -287,6 +349,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
       submit: 'Sent for review.',
       accept: 'Accepted — it is in progress now.',
       done: 'Done — nicely.',
+      keepRejected: 'Kept as rejected — it is closed.',
       // A doer's Complete on a reviewed task lands in review instead, and the
       // server says so (`coerced`) — the toast must not claim it is done.
       complete: res?.coerced ? 'Sent for review — it needs approving first.' : 'Marked completed.',
@@ -558,6 +621,50 @@ export default function Tasks({ base = '/employee/tasks' }) {
             </p>
           )}
 
+          {/* ── Many at once — a Super Admin's (2026-10-02) ─────── */}
+          {canBulk && !loading && deletableRows.length > 0 && (
+            selecting ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-red-200 bg-red-50/60 px-3 py-2">
+                <span className="text-sm font-semibold text-gray-800">{selected.size} selected</span>
+                <button
+                  type="button"
+                  onClick={() => setSelected(allOnPage ? new Set() : new Set(deletableRows.map((t) => t._id)))}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 min-h-[34px]"
+                >
+                  {allOnPage ? <FiCheckSquare size={14} /> : <FiSquare size={14} />}
+                  {allOnPage ? 'Clear page' : 'Select all on this page'}
+                </button>
+                <button
+                  type="button"
+                  disabled={!selected.size || bulkBusy}
+                  onClick={deleteSelected}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-3 text-xs font-semibold text-white transition hover:bg-red-700 disabled:opacity-50 min-h-[34px]"
+                >
+                  <FiTrash2 size={14} />
+                  {bulkBusy ? 'Deleting…' : 'Delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={stopSelecting}
+                  className="ml-auto px-2 text-xs font-medium text-gray-500 transition hover:text-blue-600 min-h-[34px]"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="-mt-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelecting(true)}
+                  className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-gray-500 transition hover:text-blue-600 min-h-[30px]"
+                >
+                  <FiCheckSquare size={13} />
+                  Select tasks to delete
+                </button>
+              </div>
+            )
+          )}
+
           {/* ── The rows ──────────────────────────────────────── */}
           {loading ? (
             <div className="space-y-2">
@@ -575,21 +682,47 @@ export default function Tasks({ base = '/employee/tasks' }) {
             />
           ) : (
             <div className={`space-y-2.5 transition-opacity ${refreshing ? 'opacity-60' : ''}`}>
-              {tasks.map((task) => (
-                <TaskRow
-                  key={task._id}
-                  task={task}
-                  base={base}
-                  scope={pile}
-                  meId={meId}
-                  viewOnly={viewOnly}
-                  onOpen={showTask}
-                  onAction={onAction}
-                  onSwipe={onSwipe}
-                  nudgedAt={nudged[task._id] || null}
-                  onNudged={onNudged}
-                />
-              ))}
+              {tasks.map((task) => {
+                const row = (
+                  <TaskRow
+                    key={task._id}
+                    task={task}
+                    base={base}
+                    scope={pile}
+                    meId={meId}
+                    viewOnly={viewOnly}
+                    onOpen={selecting && task.can?.canDelete ? (t) => toggleRow(t._id) : showTask}
+                    onAction={onAction}
+                    onSwipe={selecting ? undefined : onSwipe}
+                    nudgedAt={nudged[task._id] || null}
+                    onNudged={onNudged}
+                  />
+                );
+                if (!selecting) return row;
+                const on = selected.has(task._id);
+                // Somebody else's task: no tick box, just the room for one.
+                if (!task.can?.canDelete) {
+                  return (
+                    <div key={task._id} className="flex items-center gap-2 opacity-60">
+                      <span className="h-10 w-10 shrink-0" title="Only the person who set this task can delete it" />
+                      <div className="min-w-0 flex-1">{row}</div>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={task._id} className="flex items-center gap-2">
+                    <label className="grid h-10 w-10 shrink-0 cursor-pointer place-items-center" aria-label={`Select ${task.title}`}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => toggleRow(task._id)}
+                        className="h-4 w-4 accent-red-600"
+                      />
+                    </label>
+                    <div className={`min-w-0 flex-1 rounded-2xl ${on ? 'ring-2 ring-red-300' : ''}`}>{row}</div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

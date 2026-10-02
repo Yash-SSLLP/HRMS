@@ -457,7 +457,9 @@ const LIST_FIELDS = 'code kind title category priority status points dueDate sta
   + 'approver approverName transfers '
   // 2026-09-27: routine dailies, "Edited ×2", and the bell's 30-minute gate.
   + 'routine recurringTask occurrenceKey editCount lastEditedAt lastEditedByName '
-  + 'lastNudgeAt nudgeAt nudgeCount';
+  + 'lastNudgeAt nudgeAt nudgeCount '
+  // 2026-10-02: a rejected task kept that way reads "Rejected", not "Cancelled".
+  + 'rejectionKeptAt rejectionKeptByName';
 
 /**
  * Decorate a lean row with the derived bits every client would compute anyway.
@@ -510,6 +512,8 @@ function decorate(row) {
     // Everybody still on it has said no — the task is owed and nobody is doing
     // it, which is a different thing from any of the four statuses.
     declined: isDeclined(row),
+    // …and whoever set it chose to leave it that way (2026-10-02): closed.
+    rejectionKept: Boolean(row.rejectionKeptAt),
     // Somebody has not answered the handover yet.
     awaitingAcceptance: isAwaitingAcceptance(row),
     delegationCount: (row.delegations || []).length,
@@ -1449,7 +1453,10 @@ const createTask = asyncHandler(async (req, res) => {
   const startDate = recurring ? (dueDate || new Date()) : undefined;
 
   const settings = await points.taskSettings();
+  // Points are a grant since 2026-10-02 (User.taskPointsAccess): from anybody
+  // else they are ignored and the company default stands.
   let pts = body.points === undefined || body.points === null || body.points === ''
+    || !access.canSetPoints(req.user)
     ? settings.defaultPoints
     : Number(body.points);
   if (!Number.isFinite(pts) || pts < 0) bad(res, 'Points must be a number, 0 or more.');
@@ -1663,7 +1670,8 @@ const updateTask = asyncHandler(async (req, res) => {
     }
   }
 
-  if (body.points !== undefined && task.kind === KIND_TASK) {
+  // The points grant's alone (2026-10-02) — from anybody else, left as they are.
+  if (body.points !== undefined && task.kind === KIND_TASK && access.canSetPoints(req.user)) {
     const p = Number(body.points);
     if (!Number.isFinite(p) || p < 0) bad(res, 'Points must be a number, 0 or more.');
     const rounded = Math.min(MAX_TASK_POINTS, Math.round(p));
@@ -1774,6 +1782,11 @@ const updateTask = asyncHandler(async (req, res) => {
     task.loopUsers = next;
   }
 
+  // Everybody had said no before this edit (2026-10-02)? Then this edit IS the
+  // assigner's "edit then reassign" — see the re-offer below the assignees.
+  const wasDeclined = isDeclined(task);
+  const beforeIds = new Set((task.assignees || []).map((a) => String(a.user)));
+
   // Changing WHO is on it goes through the direction rule again — an edit must
   // not be a way around a check the create path makes.
   if (body.assignees !== undefined) {
@@ -1792,6 +1805,31 @@ const updateTask = asyncHandler(async (req, res) => {
       changed.push('who is on it');
     }
   }
+
+  /**
+   * EDIT AND SEND IT AGAIN (2026-10-02, the user: a rejected task goes back to
+   * whoever set it, who may "edit then reassign to anyone"). When everybody had
+   * refused it, an edit is the answer to those refusals: anybody who said no
+   * and is still on it after the edit is asked again — AWAITING, reason
+   * cleared — and it is back on their "Assigned to me". Somebody swapped in is
+   * fresh anyway (buildAssignees). Saving with nothing changed asks nobody.
+   */
+  const reoffered = [];
+  if (wasDeclined && changes.length) {
+    for (const a of task.assignees || []) {
+      if (a.acceptance !== ACCEPTANCE.REJECTED) continue;
+      a.acceptance = ACCEPTANCE.AWAITING;
+      a.declinedAt = undefined;
+      a.declineReason = undefined;
+      a.status = STATUS.PENDING;
+      reoffered.push(String(a.user));
+    }
+    if (reoffered.length) changed.push('sent it again');
+  }
+  // Who should hear "a task for you" rather than "an edit": the people added
+  // by this edit and the people asked again.
+  const freshTo = (task.assignees || []).map((a) => String(a.user))
+    .filter((id) => !beforeIds.has(id) || reoffered.includes(id));
 
   const uploaded = (req.files || []).filter((f) => f.fieldname !== 'voice');
   if (uploaded.length) {
@@ -1843,8 +1881,12 @@ const updateTask = asyncHandler(async (req, res) => {
     // The first two changes in full, so the notification alone says what moved.
     const said = changes.slice(0, 2).map((c) => `${c.label}: ${c.before || '—'} → ${c.after || '—'}`).join(' · ')
       + (changes.length > 2 ? ` · +${changes.length - 2} more` : '');
-    notify.edited(task, req.user, said || `Changed ${changed.join(', ')}`)
+    notify.edited(task, req.user, said || `Changed ${changed.join(', ')}`, { skip: freshTo })
       .catch((e) => console.error('task notify failed:', e.message));
+    if (freshTo.length) {
+      notify.sentAgain(task, req.user, freshTo, { again: reoffered })
+        .catch((e) => console.error('task notify failed:', e.message));
+    }
   }
 
   res.json({
@@ -2397,6 +2439,132 @@ const deleteTask = asyncHandler(async (req, res) => {
   res.json({ ok: true, purged: false, message: 'Removed.' });
 });
 
+/**
+ * POST /api/tasks/bulk-delete — body `{ ids: [...], purge? }` — MANY AT ONCE
+ * (2026-10-02: first a Super Admin's, then everybody's — "give option to
+ * delete tasks in bulk by multi selecting them").
+ *
+ * The one-row rules, row by row: a task is removed only if this caller could
+ * remove it alone (access.canDelete — whoever set it, or a Super Admin /
+ * tasks.manage); the others are SKIPPED and counted, never refused as a batch.
+ * Archived by default; `purge` (Super Admin only) really deletes and SKIPS any
+ * task that has credited points. Only tasks this caller can see are touched,
+ * so the company wall holds; an id outside it counts as not found.
+ */
+const MAX_BULK_DELETE = 200;
+const bulkDeleteTasks = asyncHandler(async (req, res) => {
+  if (!access.canBulkDelete(req.user)) bad(res, 'You cannot delete tasks.', 403);
+  const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(String))]
+    .filter(mongoose.Types.ObjectId.isValid);
+  if (!ids.length) bad(res, 'Pick at least one task.');
+  if (ids.length > MAX_BULK_DELETE) bad(res, `At most ${MAX_BULK_DELETE} tasks at a time.`);
+  const purge = req.body?.purge === true || req.body?.purge === '1' || req.body?.purge === 'true';
+  if (purge && !access.canPurge(req.user)) bad(res, 'Only a Super Admin can delete tasks for good.', 403);
+
+  const seen = await access.visibleFilter(req, 'all');
+  const tasks = await Task.find({ $and: [seen, { _id: { $in: ids } }] })
+    .select('_id code title createdBy assignees.pointsAwardedAt');
+
+  const kept = [];
+  const gone = [];
+  let notYours = 0;
+  for (const t of tasks) {
+    if (!access.canDelete(req.user, t)) { notYours += 1; continue; }
+    if (purge && (t.assignees || []).some((a) => a.pointsAwardedAt)) {
+      kept.push(t.code || t.title);
+      continue;
+    }
+    gone.push(t._id);
+  }
+
+  if (gone.length) {
+    if (purge) {
+      await TaskUpdate.deleteMany({ task: { $in: gone } });
+      await Task.deleteMany({ _id: { $in: gone } });
+    } else {
+      await Task.updateMany({ _id: { $in: gone } }, { $set: { archived: true } });
+      await TaskUpdate.insertMany(gone.map((id) => ({
+        task: id,
+        kind: 'EDITED',
+        by: req.user._id,
+        byName: personName(req.user),
+        note: 'Removed this task.',
+      })));
+    }
+  }
+
+  const n = gone.length;
+  const missing = ids.length - tasks.length;
+  res.json({
+    ok: true,
+    removed: n,
+    purged: purge,
+    skipped: kept,
+    notYours,
+    missing,
+    message: [
+      `${n} task${n === 1 ? '' : 's'} ${purge ? 'deleted for good' : 'removed'}.`,
+      kept.length ? `${kept.length} kept — points were credited on ${kept.slice(0, 3).join(', ')}${kept.length > 3 ? '…' : ''}.` : '',
+      notYours ? `${notYours} left alone — only the person who set ${notYours === 1 ? 'it' : 'them'} can remove ${notYours === 1 ? 'it' : 'them'}.` : '',
+      missing ? `${missing} no longer existed.` : '',
+    ].filter(Boolean).join(' '),
+  });
+});
+
+/**
+ * POST /api/tasks/:id/keep-rejected — body `{ note? }` — KEEP IT REJECTED
+ * (2026-10-02). Everybody on it refused; whoever set it decides to leave it
+ * that way instead of editing + sending it again or deleting it.
+ *
+ * The task CLOSES (status CANCELLED — out of every open figure and the
+ * reminders), but the assignee rows are left exactly as they are, so the
+ * refusals and their reasons stay readable on it and every client calls it
+ * "Rejected" (row.declined / row.rejectionKept). Found again under Filter →
+ * Completed tasks.
+ */
+const keepRejected = asyncHandler(async (req, res) => {
+  if (!engine.validId(req.params.id)) bad(res, 'That task no longer exists.', 404);
+  const task = await Task.findById(req.params.id);
+  if (!task || task.archived) bad(res, 'That task no longer exists.', 404);
+  if (!access.canSettleRejection(req.user, task)) {
+    if (!isDeclined(task) || isTerminal(task.status)) {
+      bad(res, 'This task is not waiting on a decision any more — open it again to see where it is.', 409);
+    }
+    bad(res, 'Only the person who set this task can decide what happens to it.', 403);
+  }
+
+  const from = task.status;
+  // The web dialog sends its default line when the box is left empty.
+  let said = String(req.body?.note || '').trim().slice(0, 1000);
+  if (/^kept as rejected\.?$/i.test(said)) said = '';
+  task.status = STATUS.CANCELLED;
+  task.rejectionKeptAt = new Date();
+  task.rejectionKeptBy = req.user._id;
+  task.rejectionKeptByName = personName(req.user);
+  task.stateNote = said || 'Kept as rejected.';
+  task.updateCount = (task.updateCount || 0) + 1;
+  await task.save();
+
+  if (task.parentTask) {
+    await engine.recomputeParent(task.parentTask)
+      .catch((e) => console.error('parent recompute failed:', e.message));
+  }
+
+  await TaskUpdate.create({
+    task: task._id,
+    kind: 'STATUS',
+    by: req.user._id,
+    byName: personName(req.user),
+    from,
+    to: STATUS.CANCELLED,
+    note: said ? `Kept as rejected — ${said}` : 'Kept as rejected.',
+  });
+
+  const out = decorate(task.toObject());
+  await localise(req, out);
+  res.json({ task: out, can: access.capabilitiesFor(req.user, task), message: 'Kept as rejected.' });
+});
+
 // ===== Files =====
 
 /** GET /api/tasks/:id/files/:fileId — stream one attachment or the voice note. */
@@ -2552,6 +2720,8 @@ const taskMeta = asyncHandler(async (req, res) => {
     // client draws — recurring routes refuse, reminders are ignored.
     canRecur: access.canManageRecurring(req.user),
     canSetReminders: access.canSetReminders(req.user),
+    // Draws the Points box on the assign forms (User.taskPointsAccess, 2026-10-02).
+    canSetPoints: access.canSetPoints(req.user),
     team,
     hasTeam,
     departments,
@@ -2598,6 +2768,10 @@ const taskMeta = asyncHandler(async (req, res) => {
     // everybody's. Sent so the form can offer the manage button rather than the
     // client guessing from a role string (see routes/taskRoutes).
     canManageCategories: req.user.role === 'SuperAdmin',
+    // Tick several tasks and delete them in one go (2026-10-02) — Super Admin.
+    canBulkDelete: access.canBulkDelete(req.user),
+    // "Delete for good" in the bulk bar — a Super Admin's (2026-10-02).
+    canPurge: access.canPurge(req.user),
   });
 });
 
@@ -2919,6 +3093,9 @@ module.exports = {
   setSubtask,
   removeSubtask,
   deleteTask,
+  // 2026-10-02
+  bulkDeleteTasks,
+  keepRejected,
   downloadFile,
   downloadUpdateVoice,
   taskMeta,

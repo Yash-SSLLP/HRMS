@@ -26,6 +26,7 @@ const {
   approvePayslip,
   markPayslipPaid,
   deletePayslip,
+  bulkDeletePayslips,
   downloadPayslipPdf,
   downloadMyPayslipPdf,
   sharePayslip,
@@ -142,6 +143,10 @@ router.put('/employees/:id/salary-setup', saveSalarySetup);
 // GET /salary-setup-status — active employees missing a salary structure and/or
 // CTC; requires 'payroll.manage'. Declared before '/:id' so it isn't read as an id.
 router.get('/salary-setup-status', salarySetupStatus);
+
+// POST /bulk-delete — delete many unpaid payslips at once (ticked rows); each row
+// passes the single-delete gates or is skipped with its reason. Requires 'payroll.manage'.
+router.post('/bulk-delete', bulkDeletePayslips);
 
 // GET /:id — fetch; PUT /:id — update; DELETE /:id — delete a payslip; protected, requires 'payroll.manage'.
 router.route('/:id')

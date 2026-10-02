@@ -507,7 +507,9 @@ const createRecurring = asyncHandler(async (req, res) => {
   assertShape(shape);
 
   const settings = await points.taskSettings();
+  // The points grant's alone (2026-10-02); otherwise the company default.
   let pts = body.points === undefined || body.points === null || body.points === ''
+    || !access.canSetPoints(req.user)
     ? settings.defaultPoints : Number(body.points);
   if (!Number.isFinite(pts) || pts < 0) bad(res, 'Points must be a number, 0 or more.');
   pts = Math.min(MAX_TASK_POINTS, Math.round(pts));
@@ -610,7 +612,7 @@ const updateRecurring = asyncHandler(async (req, res) => {
     const p = normalisePriority(b.priority);
     if (p) schedule.priority = p;
   }
-  if (b.points !== undefined) {
+  if (b.points !== undefined && access.canSetPoints(req.user)) {
     const p = Number(b.points);
     if (Number.isFinite(p) && p >= 0) schedule.points = Math.min(MAX_TASK_POINTS, Math.round(p));
   }

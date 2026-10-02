@@ -139,6 +139,18 @@ export const addUpdate = (id, { note, mentions, voice, files } = {}) => {
 export const deleteTask = (id, { purge } = {}) =>
   api.delete(`/tasks/${id}`, { params: purge ? { purge: 1 } : {} }).then((r) => r.data);
 
+/** Several at once — a Super Admin's (2026-10-02). Same archive / purge rules. */
+export const bulkDeleteTasks = (ids, { purge } = {}) =>
+  api.post('/tasks/bulk-delete', { ids, ...(purge ? { purge: true } : {}) }).then((r) => r.data);
+
+/**
+ * Everybody refused it: whoever set it leaves it REJECTED (2026-10-02) — the
+ * task closes with the refusals on it. The other two answers are the ordinary
+ * edit (which sends it again) and deleteTask.
+ */
+export const keepRejected = (id, note) =>
+  api.post(`/tasks/${id}/keep-rejected`, { note }).then((r) => r.data);
+
 // ===== The doer's three answers =====
 
 /** Take it on. An acknowledgement — the task stays Pending until somebody starts. */

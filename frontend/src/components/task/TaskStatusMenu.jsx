@@ -24,12 +24,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import {
   FiChevronDown, FiCheckCircle, FiThumbsUp, FiRotateCcw, FiThumbsDown, FiGitBranch,
-  FiRepeat, FiSend, FiCheck, FiUserPlus, FiExternalLink, FiEdit2,
+  FiRepeat, FiSend, FiCheck, FiUserPlus, FiExternalLink, FiEdit2, FiXCircle, FiTrash2,
 } from 'react-icons/fi';
 import { statusActions, statusBadge, statusStyle } from '../../utils/taskLifecycle';
 
 const ICONS = {
   FiCheckCircle, FiThumbsUp, FiRotateCcw, FiThumbsDown, FiGitBranch, FiRepeat, FiSend, FiCheck, FiUserPlus,
+  FiEdit2, FiXCircle, FiTrash2,
 };
 
 /**
@@ -70,7 +71,8 @@ export default function TaskStatusMenu({ task, onAction, onOpen, viewOnly = fals
   // Editing is not a status, so it sits with "Open task" below the moves — on
   // every row whose terms are still open to this reader (2026-09-28: "in any
   // task give option to edit that before accept"). The server's `can.canEdit`.
-  const canEdit = !viewOnly && Boolean(task?.can?.canEdit);
+  // A rejected task offers "Edit and send again" among the moves instead.
+  const canEdit = !viewOnly && Boolean(task?.can?.canEdit) && !task?.can?.canSettleRejection;
   // A declined task keeps the chip colours of the status it is stuck at, but a
   // red dot, so "Declined" and "Pending" are not the same amber at a glance.
   const chipClass = badge.key === 'DECLINED'

@@ -417,6 +417,16 @@ function canSetReminders(user) {
 }
 
 /**
+ * May this caller SET a task's points (2026-10-02)? Same shape again
+ * (User.taskPointsAccess): without it the points a form sends are IGNORED, not
+ * refused, and the task carries the company's default (Setting.tasks
+ * .defaultPoints). Splitting a task's own points among its pieces is untouched.
+ */
+function canSetPoints(user) {
+  return user?.role === 'SuperAdmin' || user?.taskPointsAccess === true;
+}
+
+/**
  * The Mongo filter for "tasks this caller may see", before any UI filter.
  *
  * @param {import('express').Request} req
@@ -432,7 +442,20 @@ async function visibleFilter(req, scope = 'all') {
     // work I may pick up, and a list that hid it would be a list nobody could
     // find the offer in — which is the whole of the brief's *"they can pick the
     // task"*. The row draws a Claim button instead of the usual ones.
-    base = { $or: [{ assignedTo: me }, { 'assignees.user': me }, { openTo: me }] };
+    //
+    // NOT a task I REJECTED (2026-10-02, the user: "if any user rejects any
+    // task then that task will go back to who assigned that task"). It leaves
+    // my pile the moment I say no and waits on the assigner's "Assigned by me"
+    // — to be edited and sent again, deleted, or kept as rejected. Sent again
+    // to me, my row is AWAITING once more and it is back here.
+    base = {
+      $or: [
+        { assignees: { $elemMatch: { user: me, acceptance: { $ne: 'REJECTED' } } } },
+        // A legacy row that names me only in `assignedTo`.
+        { assignedTo: me, 'assignees.user': { $ne: me } },
+        { openTo: me },
+      ],
+    };
   } else if (scope === 'delegated') {
     // What I handed out — as the assigner, AND anything I passed on by
     // delegating it. I am no longer doing it but I am still answerable for it.
@@ -677,6 +700,35 @@ function canPurge(user) {
 }
 
 /**
+ * May this caller settle a REJECTED task — edit it and send it again, delete
+ * it, or keep it as rejected? (2026-10-02, the user: "that task will go back
+ * to who assigned that task then they will have option to delete or edit then
+ * reassign to anyone or keep them rejected".)
+ *
+ * Only while EVERYBODY on it has said no (config/tasks.isDeclined) and it is
+ * still open, and only for whoever set its terms (or the wide view). A task
+ * one of three people refused is still being done by the other two — that is
+ * a Transfer, not this.
+ */
+function canSettleRejection(user, task) {
+  const { isDeclined, isTerminal: terminal } = require('../config/tasks');
+  if (!task || terminal(task.status) || !isDeclined(task)) return false;
+  return setsTerms(user, task) || seesEverything(user);
+}
+
+/**
+ * May this caller tick several tasks and remove them at once? EVERYBODY since
+ * 2026-10-02 (the user, after the Super Admin-only first cut: "give option to
+ * delete tasks in bulk by multi selecting them"). It grants nothing new: each
+ * ticked task is still checked with canDelete — the person who set it, or a
+ * Super Admin / tasks.manage — and the rest are skipped. Deleting FOR GOOD
+ * stays a Super Admin's (canPurge).
+ */
+function canBulkDelete(user) {
+  return Boolean(user);
+}
+
+/**
  * The buttons a client should draw, computed on the SERVER.
  *
  * Both clients used to work this out themselves from the status and the user's
@@ -739,6 +791,8 @@ function capabilitiesFor(user, task) {
     editLocked: editLockReason(user, task),
     canDelete: canDelete(user, task),
     canPurge: canPurge(user),
+    // Everybody refused it: edit + send again, delete, or keep it rejected.
+    canSettleRejection: canSettleRejection(user, task),
     transitions: moves,
     routine,
     // The one button a routine task's doer gets.
@@ -857,6 +911,7 @@ module.exports = {
   canAssignOnBehalf,
   canManageRecurring,
   canSetReminders,
+  canSetPoints,
   visibleFilter,
   canSee,
   canSeeThroughParent,
@@ -867,6 +922,8 @@ module.exports = {
   nudgeTargets,
   canDelete,
   canPurge,
+  canSettleRejection,
+  canBulkDelete,
   actorRoleOn,
   capabilitiesFor,
   assertCanSee,

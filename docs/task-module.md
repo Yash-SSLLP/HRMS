@@ -5,6 +5,19 @@ replaced the twelve-status workflow engine of 2026-09-17, and **simplified
 2026-09-25** (see the section right below). The through-line has not changed: a
 task app a business owner can work without being taught.
 
+### What the 2026-10-02 pass added
+
+| the brief | what it is |
+|---|---|
+| *"these 4 tabs should be in one horizontal row … 2 at the screen … scroll left and right"* (app) | `TasksScreen` `PileStrip`: every pile (`PILES`, All tasks only for `tasks.manage`) is one `PileCard`, half the width less the gap, in a snapping horizontal ScrollView with page dots. The slim "In the loop"/"All tasks" bars are gone. |
+| *"in blue area put Search button and Filter Button … after clicking keyboard should open"* (app) | `nav.setOptions` headerRight = `NavIcon`s (search with a dot while a query is set, filter with its count). Search swaps the title for `NavSearch` (own text state, focused on mount; × clears, then closes; Back closes). The in-list search row is gone. |
+| *"in filter add completed tasks option … remove the existing completed button"* (app) | `filters.closed`: `''` hide (Total = open) · `with` (Total = open + COMPLETED + CANCELLED, figure = `counters.total`) · `only` (COMPLETED + CANCELLED). `CompletedButton` removed. The web keeps its Completed button. |
+| *"in filter add option to see assign to whom"* (app) | "Assigned to" is offered — and sent — on every pile; on `mine` it finds tasks shared with those people. |
+| *"if any user rejects any task then that task will go back to who assigned … delete or edit then reassign … or keep them rejected"* | `visibleFilter('mine')` drops rows where MY assignee row is REJECTED. `can.canSettleRejection` (`isDeclined` + open + `setsTerms`/wide view). Three answers: **Edit and send again** = the ordinary edit — `updateTask` on a fully-declined task re-offers every remaining REJECTED row (AWAITING, reason cleared) and `notify.sentAgain` tells them (newcomers get "New task"); **Keep rejected** = `POST /:id/keep-rejected` → status CANCELLED + `rejectionKeptAt/By/ByName`, assignee rows untouched (still `declined`), row flag `rejectionKept`, found under Completed; **Delete** = `DELETE /:id`. Status badge says "Rejected" (was "Declined"). App: TaskStatusSheets panel + TaskDetail banner + AssignTask notice; web: statusActions `resend`/`keepRejected`/`deleteRejected` + TaskDetailBody banner. |
+| *"Give Super Admin to Delete multiple Task"* | `POST /tasks/bulk-delete {ids, purge?}` (`access.canBulkDelete` = SuperAdmin; ≤200; `visibleFilter('all')` so the company wall holds; purge skips point-credited tasks and names them). `meta.canBulkDelete`. App: long-press a card → tick mode, header "N selected" with Select all / Delete (Remove or Delete for good) / Cancel. Web: "Select tasks to delete" above the rows → checkboxes + Remove bar. |
+
+Verified: 39-check e2e on a private mongod (scratchpad `e2e.js` pattern), `test:tasks` 278/278, web `vite build`, app `expo export`. Not yet looked at on a device.
+
 ### What the 2026-09-28 pass added
 
 | the brief | what it is |

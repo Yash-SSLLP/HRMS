@@ -541,6 +541,25 @@ export default function TaskDetailBody({
     }
   }, [task]);
 
+  /** Everybody refused it: leave it that way — the task closes (2026-10-02). */
+  const keepRejected = useCallback(async () => {
+    const yes = await confirmDialog({
+      title: 'Keep it rejected?',
+      message: 'The task closes with the refusals on it. Find it again under Completed.',
+      confirmText: 'Keep rejected',
+      tone: 'danger',
+    });
+    if (!yes) return;
+    try {
+      await T.keepRejected(task._id);
+      toast.success('Kept as rejected — it is closed.');
+      changedRef.current?.(null);
+      await refresh();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'That did not go through.');
+    }
+  }, [task, refresh]);
+
   // ===== Editing in place =====
 
   const patch = useCallback(async (body, field) => {
@@ -600,7 +619,8 @@ export default function TaskDetailBody({
     // Points are money (they become an IncentiveCredit), so they are only ever
     // sent when they actually changed — a no-op PATCH of the same figure still
     // writes an EDITED row into everybody's feed.
-    if (!isRequest && Number(draft.points) !== Number(task.points)) body.points = Number(draft.points);
+    // Points only from the points grant (2026-10-02) — the server ignores the rest.
+    if (!isRequest && meta?.canSetPoints && Number(draft.points) !== Number(task.points)) body.points = Number(draft.points);
     const res = await patch(body, 'details');
     if (res) {
       setEditing(false);
@@ -1019,7 +1039,9 @@ export default function TaskDetailBody({
         {task.declined && (
           <section className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
             <p className="flex items-center gap-1.5 text-sm font-medium text-red-800">
-              <FiAlertTriangle size={14} /> Nobody has taken this on
+              <FiAlertTriangle size={14} />
+              {task.rejectionKept ? 'Rejected — kept that way'
+                : can.canSettleRejection ? 'Rejected — it is back with you' : 'Nobody has taken this on'}
             </p>
             <ul className="mt-1.5 space-y-1">
               {(task.assignees || []).filter((a) => a.acceptance === 'REJECTED').map((a) => (
@@ -1028,6 +1050,38 @@ export default function TaskDetailBody({
                 </li>
               ))}
             </ul>
+            {/* THE THREE ANSWERS (2026-10-02, the user: "they will have option to
+                delete or edit then reassign to anyone or keep them rejected").
+                Any edit sends it again; Transfer picks somebody else. */}
+            {!viewOnly && can.canSettleRejection && (
+              <div className="mt-2.5 flex flex-wrap gap-2">
+                {can.canEdit && (
+                  <button
+                    type="button"
+                    onClick={openEditor}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-gray-900 px-3 text-xs font-semibold text-white min-h-[34px]"
+                  >
+                    Edit and send again
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={keepRejected}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 min-h-[34px]"
+                >
+                  Keep rejected
+                </button>
+                {can.canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => remove(false)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 min-h-[34px]"
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -1220,7 +1274,7 @@ export default function TaskDetailBody({
 
             {!isRequest && (
               <Fact icon={FiAward} label="Worth">
-                {editing ? (
+                {editing && meta?.canSetPoints ? (
                   <input
                     type="number"
                     min={0}
