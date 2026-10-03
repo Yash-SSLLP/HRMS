@@ -98,14 +98,11 @@ export default function ChangePassword() {
         <h1 className="text-lg font-semibold text-gray-900 mt-3">
           {forced ? 'Choose your own password' : 'Change your password'}
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {forced ? (
-            <>
-              {user?.firstName ? `${user.firstName}, you have` : 'You have'} been asked to set a new password
-              before carrying on. Choose one only you know.
-            </>
-          ) : 'Choose a new password only you know.'}
-        </p>
+        {forced && (
+          <p className="text-sm text-gray-500 mt-1">
+            {user?.firstName ? `${user.firstName}, set` : 'Set'} a new password to continue.
+          </p>
+        )}
 
         <form onSubmit={submit} className="mt-5 space-y-3">
           <Field
@@ -133,9 +130,6 @@ export default function ChangePassword() {
             <p className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</p>
           )}
 
-          <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2.5">
-            You&apos;ll be signed out once it is saved — sign back in with your new password.
-          </p>
 
           <button
             type="submit"

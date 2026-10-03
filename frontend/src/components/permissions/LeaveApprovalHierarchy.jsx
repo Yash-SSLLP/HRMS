@@ -8,13 +8,15 @@
  * rather than a tour of the modules. Deciding leave stays on the Leave page;
  * only the setup moved.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { FiArrowRight, FiCheck, FiCornerDownRight, FiGitMerge, FiSearch, FiUsers } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import api from '../../api/client';
 import SearchableSelect from '../SearchableSelect';
 import { hasLeft } from '../../utils/peopleOptions';
 import { useAuthStore } from '../../store/authStore';
 import { hasExplicitPermission } from '../../config/permissions';
+import { PersonAvatar } from './permUi';
 
 /*
  * Who signs off each employee's LEAVE, in order: 1 step minimum, 4 maximum.
@@ -224,130 +226,162 @@ function LeaveApprovalHierarchy() {
   const setHr = (profile, ids) =>
     save(profile, { leaveFinalHrRecipients: ids }, `${nameOf(profile.user)} — HR recipients updated`);
 
-  const unsetCount = profiles.filter((p) => p.user && chainOf(p).length === 0).length;
+  const unsetCount = profiles.filter((p) => p.user && !hasLeft(p) && chainOf(p).length === 0).length;
+  const totalCount = profiles.filter((p) => p.user && !hasLeft(p)).length;
+  const pickerClass = 'block w-full rounded-lg px-2 py-1.5 text-sm';
 
   return (
     <div>
-      <p className="text-sm text-gray-500 max-w-4xl mb-4">
-        Choose who approves each employee&apos;s leave, in order — <strong>Step 1</strong> decides first and the
-        last step gives final approval (up to {MAX_STEPS} steps). The employee is notified at every step. Leave
-        Step 1 empty to keep the default, where the request climbs the employee&apos;s reporting manager chain.
-        Approvers need no special permission — the request lands in their Approvals inbox.
-      </p>
+      <div className="prm-flow" style={{ marginTop: 0 }} aria-label="How a leave request travels">
+        <span className="prm-flow-chip">Step 1 decides first</span>
+        <span className="prm-flow-arrow"><FiArrowRight size={13} /></span>
+        <span className="prm-flow-chip">up to {MAX_STEPS} steps, in order</span>
+        <span className="prm-flow-arrow"><FiArrowRight size={13} /></span>
+        <span className="prm-flow-chip is-final"><FiCheck size={12} /> HR gives final approval</span>
+      </div>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search name, code, department…"
-          className="border rounded-lg px-3 py-2 text-sm w-64"
-        />
-        <label className="flex items-center gap-2 text-sm text-gray-700 select-none cursor-pointer">
-          <input type="checkbox" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} />
-          Only employees with no hierarchy ({unsetCount})
-        </label>
-        {!canEdit && (
-          <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-            Read-only — needs the “Leave approval hierarchy” permission.
-          </span>
-        )}
+      <div className="trn-kpis mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))' }}>
+        <div className="trn-kpi">
+          <span className="trn-kpi-icon" aria-hidden="true"><FiUsers size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : totalCount}</div><div className="trn-kpi-label">Employees</div></div>
+        </div>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#16a34a' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiGitMerge size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : totalCount - unsetCount}</div><div className="trn-kpi-label">Own ladder</div></div>
+        </div>
+        <button type="button" className={`trn-kpi${onlyUnset ? ' is-on' : ''}`} style={{ '--kpi-hue': '#d97706' }}
+          onClick={() => setOnlyUnset((v) => !v)} aria-pressed={onlyUnset}
+          title={onlyUnset ? 'Show everyone again' : 'Show only the employees on the default chain'}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiCornerDownRight size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : unsetCount}</div><div className="trn-kpi-label">On the default chain</div></div>
+        </button>
+      </div>
+
+      <div className="prm-card mt-4" style={{ padding: '0.8rem' }}>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, code, department…" aria-label="Search employees" />
+          </label>
+          <div className="trn-seg" role="tablist" aria-label="Show">
+            <button type="button" role="tab" aria-selected={!onlyUnset} onClick={() => setOnlyUnset(false)}
+              className={`trn-seg-btn${!onlyUnset ? ' is-on' : ''}`}>Everyone</button>
+            <button type="button" role="tab" aria-selected={onlyUnset} onClick={() => setOnlyUnset(true)}
+              className={`trn-seg-btn${onlyUnset ? ' is-on' : ''}`}>Default chain <span className="trn-seg-count">{unsetCount}</span></button>
+          </div>
+          {!canEdit && (
+            <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              Read-only — needs the “Leave approval hierarchy” permission.
+            </span>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+        <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <div className="bg-white shadow rounded-lg overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Department</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Approval steps (in order)</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">HR notified on final approval</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No employees match.</td></tr>
-            ) : rows.map((p) => {
-              const chain = chainOf(p);
-              const hr = hrOf(p);
-              const busy = savingId === p._id;
-              // Show every filled step plus ONE empty slot to grow into, capped
-              // at MAX_STEPS. That is what keeps the ladder gap-free.
-              const visibleSteps = Math.min(chain.length + 1, MAX_STEPS);
-              return (
-                <tr key={p._id} className={busy ? 'opacity-60' : undefined}>
-                  <td className="px-4 py-3 align-top">
-                    <div className="font-medium">{nameOf(p.user)}</div>
-                    <div className="text-xs text-gray-500">{p.employeeCode || p.user?.email}</div>
-                  </td>
-                  <td className="px-4 py-3 align-top text-gray-600">{p.department || '-'}</td>
+      <div className="prm-ladders mt-4">
+        {loading ? (
+          [0, 1, 2].map((i) => <div key={i} className="skeleton h-24 rounded-2xl" />)
+        ) : rows.length === 0 ? (
+          <div className="prm-list">
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiUsers size={24} /></span>
+              <p className="text-sm font-semibold">No employees match</p>
+              <p className="text-xs opacity-60">Try a different search{onlyUnset ? ', or show everyone' : ''}.</p>
+            </div>
+          </div>
+        ) : rows.map((p) => {
+          const chain = chainOf(p);
+          const hr = hrOf(p);
+          const busy = savingId === p._id;
+          // Every filled step plus ONE empty slot to grow into, capped at
+          // MAX_STEPS — that is what keeps the ladder gap-free.
+          const visibleSteps = canEdit ? Math.min(chain.length + 1, MAX_STEPS) : chain.length;
+          const person = userById.get(String(p.user?._id || p.user)) || p.user;
+          return (
+            <div key={p._id} className={`prm-ladder${busy ? ' is-busy' : ''}`}>
+              <div className="prm-who">
+                <PersonAvatar user={person} />
+                <div className="prm-who-text">
+                  <div className="prm-who-name">{nameOf(p.user)}</div>
+                  <div className="prm-who-mail">{[p.employeeCode, p.department].filter(Boolean).join(' · ') || p.user?.email}</div>
+                  <div className="prm-ladder-meta">
+                    {chain.length
+                      ? <span className="prm-hold"><FiCheck size={11} />{chain.length} step{chain.length === 1 ? '' : 's'}</span>
+                      : <span className="prm-hold is-muted">Default chain</span>}
+                  </div>
+                </div>
+              </div>
 
-                  <td className="px-4 py-3 align-top min-w-[19rem]">
-                    {!canEdit ? (
-                      <span className="text-gray-700">
-                        {chain.length
-                          ? chain.map((id, i) => `${i + 1}. ${nameOf(userById.get(String(id))) || '—'}`).join('  ·  ')
-                          : 'Default — reporting manager chain'}
-                      </span>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {Array.from({ length: visibleSteps }, (_, idx) => {
-                          const o = optionsFor(p, chain, idx);
-                          const opt = (u) => (
-                            <option key={u._id} value={u._id}>
-                              {nameOf(u)} ({u.role}) · {u.email}
-                            </option>
-                          );
-                          return (
-                            <div key={idx} className="flex items-center gap-2">
-                              <span className="text-xs text-gray-400 w-4 shrink-0">{idx + 1}.</span>
-                              <SearchableSelect
-                                value={chain[idx] || ''}
-                                onChange={(e) => setStep(p, idx, e.target.value)}
-                                disabled={busy}
-                                className="block w-full border rounded-lg px-2 py-1.5 text-sm"
-                              >
-                                <option value="">
-                                  {idx === 0 ? 'None — use reporting manager chain' : 'None — end the chain here'}
-                                </option>
-                                {o.line.length > 0 && (
-                                  <optgroup label="Reporting line · nearest manager first">{o.line.map(opt)}</optgroup>
-                                )}
-                                {o.sameDept.length > 0 && (
-                                  <optgroup label={`${o.dept} · most senior first`}>{o.sameDept.map(opt)}</optgroup>
-                                )}
-                                {o.executives.length > 0 && (
-                                  <optgroup label="Executive">{o.executives.map(opt)}</optgroup>
-                                )}
-                                {/* Hidden until the operator types, so the default
-                                    list stays the likely approvers rather than
-                                    the whole company. */}
-                                {o.others.length > 0 && (
-                                  <optgroup label="Anyone else · search by name" searchOnly>
-                                    {o.others.map(opt)}
-                                  </optgroup>
-                                )}
-                                {o.current && <optgroup label="Currently assigned">{opt(o.current)}</optgroup>}
-                              </SearchableSelect>
-                            </div>
-                          );
-                        })}
-                        {chain.length >= MAX_STEPS && (
-                          <div className="text-xs text-gray-400 pl-6">Maximum {MAX_STEPS} steps reached.</div>
-                        )}
-                      </div>
-                    )}
-                  </td>
+              <div className="grid gap-2.5 min-w-0">
+                <div className="prm-chain">
+                  {visibleSteps === 0 && (
+                    <div className="prm-step">
+                      <span className="prm-step-no">1</span>
+                      <span className="prm-step-name opacity-70">Reporting manager chain (default)</span>
+                    </div>
+                  )}
+                  {Array.from({ length: visibleSteps }, (_, idx) => {
+                    const o = optionsFor(p, chain, idx);
+                    const opt = (u) => (
+                      <option key={u._id} value={u._id}>{nameOf(u)} ({u.role}) · {u.email}</option>
+                    );
+                    return (
+                      <Fragment key={idx}>
+                        {idx > 0 && <span className="prm-step-arrow" aria-hidden="true"><FiArrowRight size={14} /></span>}
+                        <div className={`prm-step${chain[idx] ? ' is-set' : ''}`}>
+                          <span className="prm-step-no">{idx + 1}</span>
+                          {!canEdit ? (
+                            <span className="prm-step-name">{nameOf(userById.get(String(chain[idx]))) || '—'}</span>
+                          ) : (
+                            <SearchableSelect
+                              value={chain[idx] || ''}
+                              onChange={(e) => setStep(p, idx, e.target.value)}
+                              disabled={busy}
+                              className={pickerClass}
+                            >
+                              <option value="">
+                                {idx === 0 ? 'Default — reporting manager chain' : 'Add a step…'}
+                              </option>
+                              {o.line.length > 0 && (
+                                <optgroup label="Reporting line · nearest manager first">{o.line.map(opt)}</optgroup>
+                              )}
+                              {o.sameDept.length > 0 && (
+                                <optgroup label={`${o.dept} · most senior first`}>{o.sameDept.map(opt)}</optgroup>
+                              )}
+                              {o.executives.length > 0 && (
+                                <optgroup label="Executive">{o.executives.map(opt)}</optgroup>
+                              )}
+                              {/* Hidden until the operator types, so the default list
+                                  stays the likely approvers rather than the company. */}
+                              {o.others.length > 0 && (
+                                <optgroup label="Anyone else · search by name" searchOnly>{o.others.map(opt)}</optgroup>
+                              )}
+                              {o.current && <optgroup label="Currently assigned">{opt(o.current)}</optgroup>}
+                            </SearchableSelect>
+                          )}
+                        </div>
+                      </Fragment>
+                    );
+                  })}
+                  <span className="prm-step-arrow" aria-hidden="true"><FiArrowRight size={14} /></span>
+                  {/* Appended by the server whatever is set above (buildLeaveRouting). */}
+                  <div className="prm-step is-final" title="Added by the system — leave is final only once HR has it.">
+                    <span className="prm-step-no"><FiCheck size={12} /></span>
+                    <span className="prm-step-name">HR · final</span>
+                  </div>
+                </div>
+                {chain.length >= MAX_STEPS && canEdit && (
+                  <div className="prm-step-note">Maximum {MAX_STEPS} steps reached.</div>
+                )}
 
-                  <td className="px-4 py-3 align-top min-w-[15rem]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="prm-label" style={{ marginBottom: 0 }}>Notify on final approval</span>
+                  <div className="min-w-0 flex-1" style={{ maxWidth: '26rem' }}>
                     {!canEdit ? (
-                      <span className="text-gray-700">
+                      <span className="text-sm">
                         {hr.length ? hr.map((id) => nameOf(userById.get(String(id))) || '—').join(', ') : 'All HR'}
                       </span>
                     ) : (
@@ -360,18 +394,16 @@ function LeaveApprovalHierarchy() {
                         className="block w-full border rounded-lg px-2 py-1.5 text-sm"
                       >
                         {hrCandidates.map((u) => (
-                          <option key={u._id} value={u._id}>
-                            {nameOf(u)} ({u.role}) · {u.email}
-                          </option>
+                          <option key={u._id} value={u._id}>{nameOf(u)} ({u.role}) · {u.email}</option>
                         ))}
                       </SearchableSelect>
                     )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

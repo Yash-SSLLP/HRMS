@@ -6,6 +6,8 @@
  */
 const asyncHandler = require('express-async-handler');
 const RnrAward = require('../models/RnrAward');
+const RnrCategory = require('../models/RnrCategory');
+const AuditLog = require('../models/AuditLog');
 const EmployeeProfile = require('../models/EmployeeProfile');
 const User = require('../models/User');
 const Holiday = require('../models/Holiday');
@@ -50,21 +52,56 @@ async function bannerExpiryFromNow(fromDate) {
   return startOfDayIST(new Date(day.getTime() + 24 * 60 * 60 * 1000));
 }
 
+// ===== Award categories (2026-10-03) =====
+// HR/Admin define the categories. "Best Employee" (key EmployeeOfMonth — the
+// original top award) always exists, is first, and cannot be deleted or renamed.
+// "Key Achiever" (one per department) is seeded once, on the very first run, and
+// is an ordinary category after that — deleting it sticks.
+const BUILT_IN = [
+  { key: 'EmployeeOfMonth', name: 'Best Employee', perDepartment: false, locked: true, order: 0 },
+  { key: 'KeyAchiever', name: 'Key Achiever', perDepartment: true, locked: false, order: 1 },
+];
+const FALLBACK_NAMES = { EmployeeOfMonth: 'Best Employee', KeyAchiever: 'Key Achiever' };
+
+async function ensureCategories() {
+  const count = await RnrCategory.estimatedDocumentCount();
+  const wanted = count === 0 ? BUILT_IN : BUILT_IN.filter((c) => c.locked);
+  for (const c of wanted) {
+    // $setOnInsert + upsert: two first visits at once cannot seed it twice.
+    await RnrCategory.updateOne({ key: c.key }, { $setOnInsert: c }, { upsert: true }).catch(() => {});
+  }
+  return RnrCategory.find().sort({ order: 1, createdAt: 1 }).lean();
+}
+const mapOf = (cats) => new Map(cats.map((c) => [c.key, c]));
+
+/** Winners as plain objects, each carrying its category's name (snapshot first). */
+const withNames = (winners, map) => (winners || []).map((w) => {
+  const o = w && typeof w.toObject === 'function' ? w.toObject() : { ...w };
+  return { ...o, categoryName: o.categoryName || map.get(o.category)?.name || FALLBACK_NAMES[o.category] || o.category };
+});
+
 // Snapshot each picked winner with their current name / designation / department
-// / photo so the banner is self-contained.
-async function enrichWinners(winners) {
+// / photo — and the category's name — so the banner is self-contained.
+// One winner per company-wide category, one per department for a per-department
+// category; somebody may win different categories in the same month.
+async function enrichWinners(winners, catMap) {
   const out = [];
-  const seen = new Set();
+  const slots = new Set();
   for (const w of winners || []) {
-    if (!w || !w.user || seen.has(String(w.user))) continue;
+    const cat = w && catMap.get(String(w.category || ''));
+    if (!cat || !w.user) continue;
     const user = await User.findById(w.user).select('firstName lastName photo isActive');
     if (!user || user.isActive === false) continue;
-    seen.add(String(w.user));
     const profile = await EmployeeProfile.findOne({ user: w.user }).select('designation department');
-    const category = w.category === 'EmployeeOfMonth' ? 'EmployeeOfMonth' : 'KeyAchiever';
+    const department = cat.perDepartment ? (w.department || profile?.department || '') : (profile?.department || '');
+    if (cat.perDepartment && !department) continue;
+    const slot = cat.perDepartment ? `${cat.key}|${department}` : cat.key;
+    if (slots.has(slot)) continue;
+    slots.add(slot);
     out.push({
-      category,
-      department: category === 'KeyAchiever' ? (w.department || profile?.department || '') : (profile?.department || ''),
+      category: cat.key,
+      categoryName: cat.name,
+      department,
       user: user._id,
       name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
       designation: profile?.designation || '',
@@ -72,9 +109,7 @@ async function enrichWinners(winners) {
       citation: String(w.citation || '').trim().slice(0, 500),
     });
   }
-  // At most one Employee of the Month.
-  const eomIndex = out.findIndex((w) => w.category === 'EmployeeOfMonth');
-  return out.filter((w, i) => w.category !== 'EmployeeOfMonth' || i === eomIndex);
+  return out;
 }
 
 // ===== Employee / self-service =====
@@ -96,7 +131,7 @@ const currentBanner = asyncHandler(async (req, res) => {
   if (!award) return res.json({ award: null });
   // Company wall: only show the winners of the viewer's own company; when none
   // of them are in scope there is nothing to celebrate on this side of the wall.
-  const winners = visibleWinners(award.winners, await allowedUserIds(req));
+  const winners = withNames(visibleWinners(award.winners, await allowedUserIds(req)), mapOf(await ensureCategories()));
   if (!winners.length) return res.json({ award: null });
   res.json({
     award: {
@@ -137,13 +172,14 @@ const listAwards = asyncHandler(async (req, res) => {
   // Company wall: strip winner snapshots of other companies' people for walled
   // admins (the award record itself is shared, its people-data is not).
   const ids = await allowedUserIds(req);
+  const map = mapOf(await ensureCategories());
   if (year && month) {
     const award = await RnrAward.findOne({ year: Number(year), month: Number(month) }).lean();
-    if (award) award.winners = visibleWinners(award.winners, ids);
+    if (award) award.winners = withNames(visibleWinners(award.winners, ids), map);
     return res.json({ award });
   }
   const awards = await RnrAward.find().sort({ year: -1, month: -1 }).limit(24).lean();
-  res.json({ awards: awards.map((a) => ({ ...a, winners: visibleWinners(a.winners, ids) })) });
+  res.json({ awards: awards.map((a) => ({ ...a, winners: withNames(visibleWinners(a.winners, ids), map) })) });
 });
 
 /**
@@ -195,18 +231,26 @@ const upsertAward = asyncHandler(async (req, res) => {
     res.status(400);
     throw new Error('This month is already announced and can no longer be edited.');
   }
-  let winners = await enrichWinners(req.body.winners);
+  const catMap = mapOf(await ensureCategories());
+  // Which categories this save speaks for. A client that predates custom
+  // categories (an older app build) sends none, so it manages only the two
+  // original ones — and the draft's winners in any OTHER category are kept, not
+  // wiped by a screen that never showed them.
+  const managed = new Set(Array.isArray(req.body.categories) && req.body.categories.length
+    ? req.body.categories.map(String)
+    : ['EmployeeOfMonth', 'KeyAchiever']);
+  let winners = await enrichWinners((req.body.winners || []).filter((w) => managed.has(String(w?.category))), catMap);
   // Company wall, write side: the month's draft is one shared record, and a
   // walled admin was only shown their own company's winners — their save must
   // replace that subset, never wipe the winners they could not see.
   const ids = await allowedUserIds(req);
-  if (ids) {
-    winners = winners.filter((w) => !w.user || ids.includes(String(w.user)));
-    if (award) {
-      const invisible = (award.winners || []).filter((w) => w.user && !ids.includes(String(w.user)));
-      winners = [...invisible, ...winners];
-    }
-  }
+  const visibleToCaller = (w) => !ids || ids.includes(String(w.user));
+  if (ids) winners = winners.filter(visibleToCaller);
+  const plain = (w) => (typeof w.toObject === 'function' ? w.toObject() : w);
+  const old = award ? (award.winners || []).map(plain) : [];
+  const invisible = ids ? old.filter((w) => w.user && !visibleToCaller(w)) : [];
+  const kept = old.filter((w) => visibleToCaller(w) && !managed.has(w.category) && catMap.has(w.category));
+  winners = [...invisible, ...kept, ...winners];
   if (award) {
     award.winners = winners;
     award.createdBy = req.user._id;
@@ -258,7 +302,7 @@ const announceAward = asyncHandler(async (req, res) => {
     audience: 'employee',
     title: `🏆 ${period} Rewards & Recognition`,
     body: eom
-      ? `Employee of the Month: ${eom.name}. Congratulations to all the winners!`
+      ? `${eom.categoryName || 'Best Employee'}: ${eom.name}. Congratulations to all the winners!`
       : 'Congratulations to all the winners!',
   });
 
@@ -286,7 +330,84 @@ const deleteAward = asyncHandler(async (req, res) => {
   res.json({ id: req.params.id, deleted: true });
 });
 
+// ===== Award categories — HR / Admin =====
+
+const auditCategory = (req, cat, toStatus) => AuditLog.create({
+  entity: 'RnrCategory',
+  entityId: cat._id,
+  entityLabel: cat.name,
+  field: 'status',
+  fromStatus: '',
+  toStatus,
+  by: req.user._id,
+  byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+  byRole: req.user.role,
+}).catch(() => {});
+
+/**
+ * The award categories, Best Employee first.
+ * @route GET /api/rnr/categories  (HR/Admin)
+ * @returns {{categories: Object[]}}
+ */
+const listCategories = asyncHandler(async (req, res) => {
+  res.json({ categories: await ensureCategories() });
+});
+
+/**
+ * Add an award category.
+ * @route POST /api/rnr/categories  (HR/Admin)
+ * @param {string} req.body.name - required, unique (case-insensitive), max 60
+ * @param {boolean} [req.body.perDepartment] - one winner per department
+ * @returns {{category: Object, categories: Object[]}} (201)
+ */
+const createCategory = asyncHandler(async (req, res) => {
+  const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!name) {
+    res.status(400);
+    throw new Error('A category name is required');
+  }
+  const cats = await ensureCategories();
+  if (cats.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    res.status(400);
+    throw new Error('A category with that name already exists');
+  }
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'award';
+  const key = `${base}-${Date.now().toString(36)}`;
+  const order = Math.max(1, ...cats.map((c) => c.order || 0)) + 1;
+  const category = await RnrCategory.create({
+    key, name, perDepartment: !!req.body.perDepartment, order, createdBy: req.user._id,
+  });
+  await auditCategory(req, category, 'Created');
+  res.status(201).json({ category, categories: await ensureCategories() });
+});
+
+/**
+ * Delete an award category. Best Employee cannot be deleted. Drafts lose that
+ * category's picks; announced awards keep them (with the name snapshot) as the
+ * record.
+ * @route DELETE /api/rnr/categories/:id  (HR/Admin)
+ * @returns {{id: string, deleted: boolean, categories: Object[]}}
+ */
+const deleteCategory = asyncHandler(async (req, res) => {
+  const category = await RnrCategory.findById(req.params.id);
+  if (!category) {
+    res.status(404);
+    throw new Error('Category not found');
+  }
+  if (category.locked) {
+    res.status(400);
+    throw new Error(`${category.name} is always offered and cannot be deleted.`);
+  }
+  await category.deleteOne();
+  await RnrAward.updateMany({ status: 'Draft' }, { $pull: { winners: { category: category.key } } });
+  await auditCategory(req, category, 'deleted');
+  res.json({ id: req.params.id, deleted: true, categories: await ensureCategories() });
+});
+
 module.exports = {
+  listCategories,
+  createCategory,
+  deleteCategory,
   currentBanner,
   dismissBanner,
   listAwards,

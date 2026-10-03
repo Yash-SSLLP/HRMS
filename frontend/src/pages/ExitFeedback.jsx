@@ -78,9 +78,6 @@ export default function ExitFeedback() {
           <h1 className="text-2xl font-semibold text-gray-900">
             {ctx?.orgName || 'Sequence Surface'} · Exit Feedback
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Your honest input helps us improve. This takes about 2 minutes.
-          </p>
         </header>
 
         {/* The relieving letter lives here too: by the time this page is opened
@@ -95,7 +92,7 @@ export default function ExitFeedback() {
           <div className="bg-white shadow-lg rounded-2xl p-6 text-center">
             <p className="text-red-700">{error}</p>
             <p className="text-sm text-gray-500 mt-2">
-              If you think this is a mistake, reply to the email you received from HR.
+              Think this is a mistake? Reply to the HR email.
             </p>
           </div>
         ) : (ctx?.alreadySubmitted && !submittedNow) ? (
@@ -242,9 +239,6 @@ function RelievingLetterCard({ token }) {
   return (
     <div className="bg-white shadow-lg rounded-2xl p-5 mb-5">
       <h2 className="text-sm font-semibold text-gray-900">Your relieving letter</h2>
-      <p className="text-sm text-gray-600 mt-1">
-        Keep a copy for your records — a future employer will usually ask for it.
-      </p>
       {err && <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg mt-3">{err}</p>}
       <button onClick={open} disabled={busy}
         className="mt-3 px-4 py-2 text-sm font-medium rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60">

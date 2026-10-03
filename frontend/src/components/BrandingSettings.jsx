@@ -31,8 +31,7 @@ function ImageDrop({ label, hint, url, version, onPick, onRemove, busy, hasImage
           an ~80px column, so it drops above the buttons instead. */}
       <div className="flex flex-wrap sm:flex-nowrap items-start justify-between gap-3 mb-3">
         <div>
-          <div className="text-sm font-semibold text-gray-800">{label}</div>
-          {hint && <div className="text-xs text-gray-500 mt-0.5">{hint}</div>}
+          <div className="text-sm font-semibold text-gray-800" title={hint || undefined}>{label}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
@@ -201,16 +200,10 @@ export default function BrandingSettings() {
         <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <p className="text-sm text-gray-500 max-w-4xl">
-        These images are stamped onto every document the system generates — offer, appointment and
-        relieving letters and payslips. A transparent PNG works best; anything you upload here replaces the
-        built-in default everywhere at once, with no redeploy.
-      </p>
-
       <div className="bg-white shadow rounded-lg p-4">
         <ImageDrop
           label="Letterhead"
-          hint="Printed full width at the top of every page of the appointment letter — logo, address and rule already composed. A wide banner (about 5:1) reproduces best."
+          hint="Full-width banner, about 5:1."
           url={IMAGE_SLOTS.letterhead.url}
           version={version}
           hasImage={!!branding?.hasLetterhead}
@@ -223,7 +216,7 @@ export default function BrandingSettings() {
       <div className="bg-white shadow rounded-lg p-4">
         <ImageDrop
           label="Company logo"
-          hint="Top-left of the offer and relieving letters and the payslip. Wide/landscape art reproduces best."
+          hint="Wide, landscape art works best."
           url={IMAGE_SLOTS.logo.url}
           version={version}
           hasImage={!!branding?.hasLogo}
@@ -234,11 +227,10 @@ export default function BrandingSettings() {
       </div>
 
       <div className="bg-white shadow rounded-lg p-4">
-        <div className="text-sm font-semibold text-gray-800 mb-1">Authorised signatures</div>
-        <p className="text-xs text-gray-500 mb-3">
-          Printed above the name on letters. Upload a signature scanned or drawn on a white/transparent
-          background — it is placed as-is, so crop out any surrounding whitespace.
-        </p>
+        <div
+          className="text-sm font-semibold text-gray-800 mb-3"
+          title="Placed as-is above the name on letters. Use a white or transparent background and crop out whitespace."
+        >Authorised signatures</div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           {(branding?.signatures || []).map((s) => (
             <div key={s.key} className="space-y-2">

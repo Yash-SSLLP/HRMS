@@ -20,7 +20,7 @@
  * KPI strip for the period (also the quick "show only…" filter), the period
  * picker with a Today shortcut, and a name/code search over what is loaded.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FiSettings, FiPlus, FiSearch, FiX, FiDownload, FiCalendar, FiCheckCircle, FiClock, FiXCircle,
   FiCoffee, FiAlertTriangle, FiEdit2, FiTrash2, FiUsers,
@@ -31,6 +31,7 @@ import api from '../api/client';
 import { downloadFile } from '../api/download';
 import AuthImage from '../components/AuthImage';
 import PageHeader from '../components/PageHeader';
+import { PersonAvatar } from '../components/permissions/permUi';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import { DecidedBy, DecisionHistory } from '../components/RestDayDecisionLog';
@@ -320,8 +321,9 @@ export default function AdminAttendance() {
   const [filter, setFilter] = useState({
     year: now.getFullYear(),
     month: now.getMonth() + 1,
-    // '' = the whole month, which is what this screen has always shown.
-    day: '',
+    // Opens on TODAY (user, 2026-10-03: "by default Today should be selected").
+    // '' = the whole month, one click away on "Whole month".
+    day: String(now.getDate()),
     employee: '',
   });
   const [records, setRecords] = useState([]);
@@ -692,7 +694,7 @@ export default function AdminAttendance() {
 
   return (
     <div>
-      <PageHeader title="Attendance" subtitle="Every punch, day by day — who came in, when, and from where">
+      <PageHeader title="Attendance">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {!viewOnly && (
           <button type="button" onClick={openSettings} className="trn-btn">
@@ -802,8 +804,7 @@ export default function AdminAttendance() {
           <div className="min-w-0">
             <div className="text-sm font-semibold text-gray-800">Export to Excel</div>
             <div className="text-xs text-gray-500">
-              {filter.employee ? 'The selected employee' : 'All employees'} · summary, every day, Sunday &amp; holiday work (2× status), WFH,
-              outside punches with distance, regularizations, leave and worked-on-leave — each on its own sheet.
+              {filter.employee ? 'The selected employee' : 'All employees'}
             </div>
           </div>
         </div>
@@ -885,98 +886,68 @@ export default function AdminAttendance() {
           </div>
 
           {dutyQueue.isOpen && (
-            <div className="border-t border-gray-100">
-              <p className="px-4 py-2 text-xs text-gray-500">
-                Days off that were worked. Approving one pays that day at <strong>2×</strong> (one extra day&apos;s
-                salary on top of the day already covered by the monthly pay). A day left pending or rejected pays normally.
-              </p>
-              <table className="min-w-full divide-y divide-gray-200 text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Date</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Employee</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Day</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Worked</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-700">Extra pay</th>
-                    <th className="px-4 py-2 text-right font-medium text-gray-700">Decision</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {dutyQueue.rows.map((c) => (
-                    <Fragment key={c._id}>
-                    <tr className={c.state === 'Pending' ? 'bg-amber-50/40' : ''}>
-                      <td className="px-4 py-2 whitespace-nowrap">{fmtDate(c.date)}</td>
-                      <td className="px-4 py-2">
-                        {c.employee?.name || '-'}
-                        <span className="text-xs text-gray-400"> · {c.employee?.employeeCode || ''}</span>
-                      </td>
-                      <td className="px-4 py-2">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                          c.dayType === 'Sunday' ? 'bg-rose-100 text-rose-800' : 'bg-violet-100 text-violet-800'}`}>
-                          {c.dayType}
-                        </span>
-                        {c.dayName && <span className="ml-1 text-xs text-gray-500">{c.dayName}</span>}
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap text-gray-600">
-                        {fmtTime(c.checkIn)} – {c.checkOut ? fmtTime(c.checkOut) : '—'}
-                        <span className="text-xs text-gray-400"> ({formatHours(c.hoursWorked)})</span>
-                      </td>
-                      <td className="px-4 py-2 whitespace-nowrap">{c.extraDays} day</td>
-                      <td className="px-4 py-2 text-right whitespace-nowrap">
-                        {c.state === 'Pending' ? (
-                          <span className="space-x-2">
-                            {!viewOnly && (
-                              <>
-                            <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Approved')}
-                              className="text-green-700 hover:underline disabled:opacity-50">Approve 2×</button>
-                            <button disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Rejected')}
-                              className="text-red-600 hover:underline disabled:opacity-50">Reject</button>
-                              </>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="inline-flex flex-col items-end gap-1">
-                            <span className="inline-flex items-center gap-2">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                c.state === 'Approved' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
-                                {c.state === 'Approved' ? 'Paid 2×' : 'Rejected'}
-                              </span>
-                              {!viewOnly && (
-                                <button disabled={dutyBusy === c._id}
-                                  onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')}
-                                  className="text-blue-600 hover:underline disabled:opacity-50 text-xs">Change</button>
-                              )}
-                            </span>
-                            {/* Who decided it — and the whole trail, every approve / reject /
-                                change, since a Change overwrites the decision on the record. */}
-                            <span className="inline-flex items-center gap-2">
-                              <DecidedBy decision={c.decision} />
-                              {c.history?.length > 0 && (
-                                <button type="button" onClick={() => toggleDutyLog(String(c._id))}
-                                  aria-expanded={dutyLogOpen.has(String(c._id))}
-                                  className="text-[11px] leading-4 font-medium text-indigo-600 hover:text-indigo-800">
-                                  History ({c.history.length}) {dutyLogOpen.has(String(c._id)) ? '▴' : '▾'}
-                                </button>
-                              )}
-                            </span>
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                    {dutyLogOpen.has(String(c._id)) && c.history?.length > 0 && (
-                      <tr className="bg-gray-50/70">
-                        <td colSpan={6} className="px-4 pt-1 pb-3">
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                            Decision history · {c.employee?.name || 'Employee'} · {fmtDate(c.date)}
-                          </div>
-                          <DecisionHistory history={c.history} />
-                        </td>
-                      </tr>
-                    )}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
+            // 2026-10-03: one card per claim (the Regularization page's .rg-*
+            // cards), replacing a narrow six-column table.
+            <div className="border-t border-gray-100 p-3 rg-list">
+              {dutyQueue.rows.map((c) => {
+                const [first, ...rest] = String(c.employee?.name || '').split(' ');
+                const tone = c.state === 'Approved' ? 'approved' : c.state === 'Pending' ? 'pending' : 'rejected';
+                const logOpen = dutyLogOpen.has(String(c._id));
+                return (
+                  <article key={c._id} className={`rg-card att-duty-card is-${tone}${dutyBusy === c._id ? ' is-busy' : ''}`}>
+                    <div className="rg-who">
+                      <PersonAvatar user={{ firstName: first, lastName: rest.join(' ') }} />
+                      <div className="min-w-0">
+                        <div className="rg-name">{c.employee?.name || '-'}</div>
+                        <div className="rg-sub">{c.employee?.employeeCode || ''}</div>
+                      </div>
+                    </div>
+                    <div className="rg-what">
+                      <div className="rg-what-top">
+                        <span className={`att-duty-day ${c.dayType === 'Sunday' ? 'is-sunday' : ''}`}>{c.dayType}</span>
+                        <span className="rg-for">{fmtDate(c.date)}{c.dayName ? ` · ${c.dayName}` : ''}</span>
+                      </div>
+                      <div className="rg-punch">
+                        <span className="rg-punch-label">Worked</span>
+                        <span className="rg-punch-to">{fmtTime(c.checkIn)} – {c.checkOut ? fmtTime(c.checkOut) : '—'}</span>
+                        <span />
+                        <span className="rg-punch-from">{formatHours(c.hoursWorked)}</span>
+                      </div>
+                    </div>
+                    <div className="rg-why">
+                      <div className="rg-reason"><strong>{c.extraDays} day</strong> extra pay at 2×</div>
+                      {logOpen && c.history?.length > 0 && (
+                        <div className="mt-2"><DecisionHistory history={c.history} /></div>
+                      )}
+                    </div>
+                    <div className="rg-side">
+                      <span className={`rg-status is-${tone}`}>{c.state === 'Approved' ? 'Paid 2×' : c.state}</span>
+                      {c.state !== 'Pending' && <DecidedBy decision={c.decision} />}
+                      {c.history?.length > 0 && (
+                        <button type="button" onClick={() => toggleDutyLog(String(c._id))} aria-expanded={logOpen}
+                          className="text-[11px] leading-4 font-semibold accent-text">
+                          History ({c.history.length}) {logOpen ? '▴' : '▾'}
+                        </button>
+                      )}
+                      {!viewOnly && (c.state === 'Pending' ? (
+                        <div className="rg-actions">
+                          <button type="button" disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Approved')} className="trn-btn rg-approve">
+                            Approve 2×
+                          </button>
+                          <button type="button" disabled={dutyBusy === c._id} onClick={() => decideDuty(c, 'Rejected')} className="trn-btn is-danger">
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" disabled={dutyBusy === c._id}
+                          onClick={() => decideDuty(c, c.state === 'Approved' ? 'Rejected' : 'Approved')} className="trn-btn att-act">
+                          Change
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
@@ -998,7 +969,7 @@ export default function AdminAttendance() {
           </p>
           <p className="text-sm text-gray-500 max-w-sm">
             {records.length === 0
-              ? 'Pick another month or day above — punches appear here as people check in.'
+              ? 'Pick another month or day.'
               : 'Try another “show” option or clear the search.'}
           </p>
           {narrowed && (
@@ -1153,11 +1124,7 @@ export default function AdminAttendance() {
       {settingsForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="card-title mb-1">Attendance Settings</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              Punch distances are measured from this office location. Punches farther than the
-              threshold are flagged for review.
-            </p>
+            <h2 className="card-title mb-4">Attendance Settings</h2>
             <form onSubmit={saveSettings} className="space-y-3">
               <div>
                 <label className="block text-sm text-gray-700">Office name / label</label>
@@ -1205,7 +1172,7 @@ export default function AdminAttendance() {
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 ) : (
                   <p className="mt-1 text-sm text-gray-500">
-                    {settingsForm.geofenceThresholdM} m — ask a Super Admin to change the range.
+                    {settingsForm.geofenceThresholdM} m
                   </p>
                 )}
               </div>
@@ -1216,11 +1183,6 @@ export default function AdminAttendance() {
                   <h3 className="text-sm font-semibold text-gray-800">Late marking</h3>
                   {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  When a punch-in starts counting as late. The grace window is forgiveness, not a
-                  later start: arriving inside it is on time, and past it the day is late measured
-                  from the start time.
-                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                   <div>
                     <label className="block text-sm text-gray-700">Workday starts (IST)</label>
@@ -1251,9 +1213,6 @@ export default function AdminAttendance() {
                 <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
                   A check-in after <b>{graceEnds12(settingsForm.latePolicy)}</b> is marked late
                   {settingsForm.graceOverrides.length > 0 ? ', except on the days listed below' : ''}.
-                  {' '}Payroll allows {settingsForm.lateAllowance} late day
-                  {Number(settingsForm.lateAllowance) === 1 ? '' : 's'} a month (set below); each one
-                  beyond that costs ₹200 or ₹400.
                 </p>
 
                 {/* ---- Days with their own window ----
@@ -1269,11 +1228,6 @@ export default function AdminAttendance() {
                         className="text-sm text-blue-600 hover:underline">+ Add a day</button>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    A date here uses its own window instead of the {settingsForm.latePolicy.graceMinutes || 0}-minute
-                    one above — for everyone, on that day alone. The workday still starts at the same
-                    time, so a late arrival is still counted from there.
-                  </p>
 
                   {settingsForm.graceOverrides.length === 0 ? (
                     <p className="text-xs text-gray-500 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
@@ -1311,7 +1265,7 @@ export default function AdminAttendance() {
                           {row.date && row.graceMinutes !== '' ? (
                             <>On this day, late starts at <b>{dayEnds12(settingsForm.latePolicy, row.graceMinutes)}</b>.</>
                           ) : (
-                            <>Pick a date and a window — a half-filled row is not saved.</>
+                            <>Pick a date and a window.</>
                           )}
                           {row.setByName && (
                             <> · Set by {row.setByName}{row.setAt ? ` on ${fmtDate(row.setAt)}` : ''}</>
@@ -1326,7 +1280,7 @@ export default function AdminAttendance() {
                   {settingsForm.graceOverrides.filter((r) => r.date).length
                     !== new Set(settingsForm.graceOverrides.filter((r) => r.date).map((r) => r.date)).size && (
                     <p className="text-xs text-amber-700 mt-2">
-                      The same date is listed more than once — only the last window for it will be kept.
+                      Duplicate dates — only the last window is kept.
                     </p>
                   )}
                 </div>
@@ -1339,8 +1293,7 @@ export default function AdminAttendance() {
                   {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  A day whose logged time falls under this is marked <b>Absent</b> rather than a short
-                  day. Payroll charges an absence as loss of pay, so this is a deduction, not a label.
+                  Days below this are <b>Absent</b>, which payroll charges as loss of pay.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                   <div>
@@ -1355,15 +1308,9 @@ export default function AdminAttendance() {
                 {/* Stated because each one is a day of pay somebody would otherwise lose. */}
                 <p className="text-xs text-gray-600 mt-2 bg-gray-50 border rounded-lg px-3 py-2">
                   {Number(settingsForm.minPresentHours) > 0 ? (
-                    <>
-                      A day under <b>{settingsForm.minPresentHours}h</b> is marked absent. Never applied to:
-                      a day with no punch-out (the hours are only assumed), a day whose only punch is after
-                      5 PM (a stray end-of-day punch, not a short day), a declared half day, a Sunday, or a
-                      leave day being worked. Existing records are not changed — the rule applies from the
-                      next time a day is settled.
-                    </>
+                    <>A day under <b>{settingsForm.minPresentHours}h</b> is marked absent.</>
                   ) : (
-                    <>The rule is off: short days stay half days, however brief.</>
+                    <>The rule is off: short days stay half days.</>
                   )}
                 </p>
               </div>
@@ -1374,11 +1321,6 @@ export default function AdminAttendance() {
                   <h3 className="text-sm font-semibold text-gray-800">Free late arrivals a month</h3>
                   {!isSuperAdmin && <span className="text-[11px] text-amber-700">Super Admin only</span>}
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  How many times somebody may arrive after the cut-off above before payroll starts
-                  charging for it. Applies to everyone, and it comes off a salary — so, like the two
-                  rules above, it is a Super Admin decision.
-                </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                   <div>
                     <label className="block text-sm text-gray-700">Free late days</label>
@@ -1395,16 +1337,12 @@ export default function AdminAttendance() {
                   {Number(settingsForm.lateAllowance) > 0 ? (
                     <>
                       The first <b>{settingsForm.lateAllowance}</b> late arrival
-                      {Number(settingsForm.lateAllowance) === 1 ? ' is' : 's are'} free each month; every
-                      late day beyond that costs ₹200, or ₹400 once monthly Basic reaches ₹25,000.
-                      Everyone gets the whole allowance every month, including the month they join —
-                      it is not prorated. Payslips already generated keep the figures they were
-                      computed with; this applies from the next payroll run.
+                      {Number(settingsForm.lateAllowance) === 1 ? ' is' : 's are'} free each month;
+                      later ones cost ₹200–₹400.
                     </>
                   ) : (
                     <>
-                      Every late arrival is charged, from the first one. Lowering this takes money off
-                      people who were inside the old allowance, so check it before you save.
+                      Every late arrival is charged. Lowering this costs people money.
                     </>
                   )}
                 </p>
@@ -1464,8 +1402,7 @@ export default function AdminAttendance() {
                 <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
                   <p className="text-sm font-medium text-gray-800">Punch times</p>
                   <p className="text-xs text-gray-500 mt-0.5 mb-3">
-                    Changing these changes the day&apos;s hours, its half-day check and any late-arrival
-                    penalty. Every change is recorded in the audit log. Leave one blank to clear it.
+                    Changes recalculate the day&apos;s hours and late penalty.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>

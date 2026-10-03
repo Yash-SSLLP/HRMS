@@ -1,0 +1,394 @@
+/* ==========================================================================
+   Org Chart, App Versions and Help — page styles (2026-10-03 premium pass).
+   Prefixes: .oc- (pages/AdminOrgChart.jsx), .av- (pages/AdminAppVersions.jsx),
+   .help- (pages/HowToUse.jsx). Shared primitives (.trn-*, .pb-*, .prm-*) come
+   from index.css and are reused, not redefined. Every tint mixes a hue into
+   --surface, so the rules hold in dark mode and in every portal accent.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   ORG CHART
+   -------------------------------------------------------------------------- */
+
+/* The bar: company identity + size on the left, filter and zoom on the right. */
+.oc-bar { align-items: center; }
+.oc-co { display: flex; align-items: center; gap: 0.75rem; min-width: 0; flex: 1 1 16rem; padding: 0.1rem 0.25rem; }
+.oc-co-icon {
+  flex-shrink: 0; width: 2.6rem; height: 2.6rem; border-radius: 0.8rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 13%, var(--surface));
+}
+.oc-co-title { font-size: 1rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25; overflow-wrap: anywhere; }
+.oc-co-stats { display: flex; flex-wrap: wrap; gap: 0.3rem 0.4rem; margin-top: 0.3rem; }
+.oc-stat {
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.08rem 0.5rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.oc-stat svg { opacity: 0.6; flex-shrink: 0; }
+.oc-skel-title { display: inline-block; width: 11rem; max-width: 100%; height: 1.1rem; border-radius: 0.4rem; vertical-align: middle; }
+.oc-select { min-height: 2.5rem; max-width: 16rem; }
+
+/* Segmented − 100% + group (also the ◀ n of N ▶ position control). */
+.oc-zoom {
+  display: inline-flex; align-items: stretch; flex-shrink: 0; overflow: hidden;
+  border-radius: 0.75rem; border: 1px solid var(--border); background-color: var(--surface);
+}
+.oc-zoom-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.5rem; min-height: 2.5rem; color: inherit; transition: background-color 0.15s, color 0.15s;
+}
+.oc-zoom-btn:hover:not(:disabled) { background-color: var(--surface-2); color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.oc-zoom-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.oc-zoom-val {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 3.6rem; padding: 0 0.6rem;
+  font-size: 0.78rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: inherit;
+  border-left: 1px solid var(--border); border-right: 1px solid var(--border);
+  transition: background-color 0.15s;
+}
+button.oc-zoom-val:hover { background-color: var(--surface-2); }
+.oc-zoom-val.is-static { min-width: 4.6rem; font-weight: 600; }
+
+/* The SuperAdmin's editor for the selected card. */
+.oc-edit {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.85rem 1.25rem;
+  margin-bottom: 1rem; padding: 0.85rem 1rem; border-radius: 1rem;
+  background-color: color-mix(in srgb, var(--accent) 4%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent), 0 14px 30px -24px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.oc-edit-who { display: flex; align-items: center; gap: 0.7rem; min-width: 0; flex: 1 1 12rem; }
+.oc-edit-av {
+  flex-shrink: 0; width: 2.6rem; height: 2.6rem; border-radius: 999px; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.78rem; font-weight: 800; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.oc-edit-name { font-size: 0.92rem; font-weight: 800; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-edit-sub { font-size: 0.74rem; opacity: 0.65; margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-edit-fields { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.75rem; min-width: 0; }
+.oc-field { display: flex; flex-direction: column; min-width: 0; }
+.oc-pick { min-width: 12rem; max-width: 16rem; min-height: 2.5rem; }
+.oc-note { margin-top: 0.3rem; font-size: 0.7rem; opacity: 0.6; }
+.oc-done { min-height: 2.5rem; }
+
+/* The board: a framed canvas inside one card, legend beneath. */
+.oc-card {
+  padding: 0.5rem; border-radius: 1.1rem;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 12px 32px -24px rgba(16, 24, 40, 0.28);
+}
+.oc-board.org-tree-wrap {
+  border-radius: 0.8rem;
+  padding: 1.5rem 1rem 2rem;
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--accent) 15%, transparent) 1px, transparent 0) 0 0 / 20px 20px,
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, var(--bg)), var(--bg) 60%);
+}
+/* Softer, cleaner connectors. */
+.oc-board .org-tree { --org-link: color-mix(in srgb, var(--accent) 28%, var(--border)); }
+
+/* Person cards: a department-hued head band and top edge, the avatar ringed in
+   its level colour (--oc-ring, set inline), role line, department chip. The
+   card keeps index.css's geometry (width, top margin, avatar size) so the
+   leaf-column elbows still land on each card. */
+.oc-board .org-node {
+  gap: 0.28rem;
+  padding: 1.9rem 0.65rem 0.75rem;
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 24px -16px rgba(15, 23, 42, 0.3);
+}
+.oc-board .org-node::before {
+  height: 2.75rem; border-radius: 1rem 1rem 0 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--oc-hue, var(--accent)) 16%, transparent), transparent);
+}
+.oc-board .org-node::after {
+  content: ''; position: absolute; top: -1px; left: 1.1rem; right: 1.1rem; height: 3px;
+  border-radius: 0 0 3px 3px; background-color: var(--oc-hue, var(--accent)); opacity: 0.8; pointer-events: none;
+}
+.oc-board .org-dot {
+  z-index: 1;
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 2px var(--oc-ring, transparent), 0 6px 14px -6px rgba(15, 23, 42, 0.5);
+  font-size: 0.78rem; letter-spacing: 0.02em;
+}
+.oc-board .org-dot--ceo { border-color: #fde68a; }
+.oc-board .org-name { font-size: 0.82rem; font-weight: 700; }
+.oc-role { display: block; max-width: 100%; font-size: 0.68rem; line-height: 1.3; opacity: 0.68; overflow-wrap: anywhere; }
+.oc-dept {
+  display: block; max-width: 100%; margin-top: 0.1rem; padding: 0.06rem 0.5rem; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.02em; line-height: 1.45;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--oc-hue, #64748b) 82%, currentColor);
+  background-color: color-mix(in srgb, var(--oc-hue, #64748b) 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--oc-hue, #64748b) 26%, var(--border));
+}
+.oc-company {
+  display: inline-flex; align-items: center; gap: 0.25rem; max-width: 100%;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; opacity: 0.55;
+}
+.oc-company svg { flex-shrink: 0; }
+.oc-you {
+  display: inline-block; margin-left: 0.3rem; padding: 0.05rem 0.4rem; border-radius: 999px; vertical-align: middle;
+  font-size: 0.58rem; font-weight: 800; letter-spacing: 0.03em;
+  color: color-mix(in srgb, #10b981 80%, currentColor);
+  background-color: color-mix(in srgb, #10b981 14%, var(--surface));
+}
+.oc-board .org-node.is-me {
+  box-shadow: 0 0 0 1px #10b981, 0 12px 26px -16px rgba(16, 185, 129, 0.55);
+}
+.oc-board .org-node.is-selected,
+.oc-board .org-node.is-selected.is-editable:hover {
+  box-shadow: 0 0 0 2px var(--accent), 0 16px 32px -16px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* The company root: the logo alone, no empty card under it. The card ends
+   where the logo does, so the drop line leaves straight from the mark. */
+.oc-board .org-node.org-node--company {
+  padding: 2.4rem 0 0; background: transparent; box-shadow: none;
+}
+.oc-board .org-node.org-node--company::before,
+.oc-board .org-node.org-node--company::after { display: none; }
+.oc-board .org-dot--company {
+  border-width: 3px;
+  box-shadow: 0 0 0 1px var(--border), 0 10px 24px -10px rgba(15, 23, 42, 0.5);
+}
+
+.oc-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.4rem 0.5rem; padding: 0.75rem 0.5rem 0.35rem; }
+.oc-legend-item {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.65rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 600; background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.oc-legend-dot { width: 0.6rem; height: 0.6rem; border-radius: 999px; flex-shrink: 0; }
+
+/* Loading: the shape of a tree. */
+.oc-skel { display: flex; flex-direction: column; align-items: center; gap: 2.25rem; padding: 2.5rem 1rem 3rem; }
+.oc-skel-root { width: 4.5rem; height: 4.5rem; border-radius: 999px; }
+.oc-skel-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; }
+.oc-skel-node { width: 8.75rem; height: 6.5rem; border-radius: 1rem; }
+
+@media (max-width: 640px) {
+  .oc-bar .pb-toolbar-end { justify-content: space-between; }
+  .oc-bar .oc-select { flex: 1 1 10rem; max-width: none; }
+  .oc-edit { padding: 0.8rem; }
+  .oc-edit-fields { width: 100%; }
+  .oc-field { flex: 1 1 100%; }
+  .oc-pick { width: 100%; max-width: none; min-width: 0; }
+  .oc-field .oc-select { width: 100%; max-width: none; }
+  .oc-done { width: 100%; }
+  .oc-board.org-tree-wrap { padding: 1.25rem 0.5rem 1.5rem; }
+}
+
+/* --------------------------------------------------------------------------
+   APP VERSIONS
+   -------------------------------------------------------------------------- */
+.av-toolbar { margin-top: 1rem; }
+.av-table td { vertical-align: middle; }
+.av-who { display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.av-name { font-size: 0.86rem; font-weight: 700; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-mail { font-size: 0.72rem; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.av-code {
+  display: inline-block; padding: 0.1rem 0.45rem; border-radius: 0.45rem; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.74rem; font-weight: 600;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.av-none { font-size: 0.8rem; opacity: 0.4; }
+
+/* Version chip: green current, amber behind, sky web-only, slate unknown,
+   neutral when no build has been published to compare against. */
+.av-ver-wrap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.45rem; }
+.av-ver {
+  --h: #64748b;
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.16rem 0.55rem; border-radius: 999px;
+  font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.av-ver.is-ok { --h: #16a34a; }
+.av-ver.is-behind { --h: #d97706; }
+.av-ver.is-web { --h: #0ea5e9; }
+.av-ver.is-unknown { --h: #64748b; }
+.av-ver.is-ok, .av-ver.is-behind, .av-ver.is-web, .av-ver.is-unknown {
+  color: color-mix(in srgb, var(--h) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--h) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--h) 28%, var(--border));
+}
+.av-ver-code { font-weight: 500; opacity: 0.65; }
+.av-ver-note {
+  font-size: 0.64rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+  color: color-mix(in srgb, #d97706 90%, currentColor);
+}
+.av-dev { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.av-more {
+  display: inline-block; margin-left: 0.4rem; padding: 0 0.45rem; border-radius: 999px; white-space: nowrap;
+  font-size: 0.66rem; font-weight: 700; background-color: var(--surface-3);
+}
+.av-seen { display: inline-flex; align-items: center; gap: 0.45rem; white-space: nowrap; }
+.av-seen::before { content: ''; flex-shrink: 0; width: 0.45rem; height: 0.45rem; border-radius: 999px; background-color: #94a3b8; }
+.av-seen.is-fresh::before { background-color: #16a34a; box-shadow: 0 0 0 3px color-mix(in srgb, #16a34a 18%, transparent); }
+.av-seen.is-old::before { background-color: #d97706; }
+
+/* --------------------------------------------------------------------------
+   HELP
+   -------------------------------------------------------------------------- */
+.help-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; max-width: 72rem; margin: 0 auto 1rem; }
+
+/* Two columns from lg: sticky contents | the reading card. Capped and centred
+   so a line of prose stays a comfortable length on a wide screen. */
+.help-layout { display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 1fr); align-items: start; max-width: 72rem; margin: 0 auto; }
+@media (min-width: 1024px) { .help-layout { grid-template-columns: 15.5rem minmax(0, 1fr); gap: 1.5rem; } }
+
+.help-aside { display: none; }
+@media (min-width: 1024px) {
+  .help-aside {
+    display: block; position: sticky; top: 5.5rem; max-height: calc(100vh - 7rem); overflow-y: auto;
+    overscroll-behavior: contain; scrollbar-width: thin;
+    padding: 0.85rem 0.55rem; border-radius: 1rem;
+    background-color: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 26px -22px rgba(16, 24, 40, 0.22);
+  }
+}
+.help-aside-head {
+  display: flex; align-items: center; gap: 0.45rem; padding: 0.1rem 0.55rem 0.65rem;
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.6;
+}
+
+/* Contents list. Active is paint only: same weight, same 1px border. */
+.help-toc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.help-toc-link {
+  display: flex; align-items: flex-start; gap: 0.55rem; padding: 0.42rem 0.55rem; border-radius: 0.6rem;
+  border: 1px solid transparent; color: inherit; text-decoration: none; opacity: 0.75;
+  font-size: 0.8rem; font-weight: 600; line-height: 1.35;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+.help-toc-link:hover { opacity: 1; background-color: var(--surface-2); }
+.help-toc-link.is-on {
+  opacity: 1; color: color-mix(in srgb, var(--accent) 88%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.help-toc-link:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 1px; }
+.help-toc-num {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.35rem; height: 1.35rem; padding: 0 0.25rem; margin-top: -0.05rem; border-radius: 0.45rem;
+  font-size: 0.66rem; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.help-toc-num:not(.accent-bg) { background-color: var(--surface-3); }
+.help-toc-link.is-h3 { font-size: 0.76rem; font-weight: 500; padding: 0.3rem 0.55rem; }
+.help-toc-sub {
+  list-style: none; display: grid; gap: 1px;
+  margin: 0.15rem 0 0.4rem 1.2rem; padding: 0 0 0 0.5rem; border-left: 1px solid var(--border);
+}
+
+/* Contents on a phone / tablet: a disclosure at the top of the card. */
+.help-toc-mobile { margin-bottom: 1.5rem; border-radius: 0.9rem; border: 1px solid var(--border); background-color: var(--surface-2); }
+@media (min-width: 1024px) { .help-toc-mobile { display: none; } }
+.help-toc-mobile > summary {
+  display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; padding: 0.55rem 0.9rem;
+  cursor: pointer; user-select: none; list-style: none; font-size: 0.82rem; font-weight: 700;
+}
+.help-toc-mobile > summary::-webkit-details-marker { display: none; }
+.help-toc-mobile > summary::after {
+  content: ''; margin-left: auto; width: 0.45rem; height: 0.45rem;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg); opacity: 0.5; transition: transform 0.15s;
+}
+.help-toc-mobile[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
+.help-toc-mobile-body { padding: 0 0.45rem 0.6rem; }
+
+/* The reading card. */
+.help-article {
+  min-width: 0; padding: 1.4rem 1.15rem 1.6rem; border-radius: 1.1rem;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 14px 36px -26px rgba(16, 24, 40, 0.22);
+}
+.help-article.is-wide { grid-column: 1 / -1; }
+@media (min-width: 640px) { .help-article { padding: 2.25rem 2.5rem 2.5rem; } }
+@media (min-width: 1280px) { .help-article { padding: 2.75rem 3.5rem 3rem; } }
+.help-edited {
+  display: flex; align-items: center; gap: 0.4rem; margin-top: 2.5rem; padding-top: 1rem;
+  border-top: 1px solid var(--border); font-size: 0.72rem; opacity: 0.6;
+}
+
+/* Prose. Colours stay on the remapped gray utilities in the markup. */
+.help-prose { font-size: 0.95rem; line-height: 1.75; overflow-wrap: break-word; }
+.help-h1 { font-size: 1.65rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; margin: 0 0 0.75rem; }
+@media (min-width: 640px) { .help-h1 { font-size: 2.05rem; } }
+.help-h1 + .help-p { font-size: 1.04rem; line-height: 1.7; opacity: 0.85; }
+.help-h2 {
+  position: relative; margin: 2.5rem 0 1rem; padding-left: 0.95rem; scroll-margin-top: 6rem;
+  font-size: 1.3rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.3;
+}
+.help-h2::before {
+  content: ''; position: absolute; left: 0; top: 0.2em; bottom: 0.2em; width: 4px; border-radius: 4px;
+  background-color: var(--accent);
+}
+.help-hr + .help-h2 { margin-top: 0; }
+.help-h3 { margin: 2rem 0 0.6rem; scroll-margin-top: 6rem; font-size: 1.04rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.4; }
+.help-h4 { margin: 1.5rem 0 0.5rem; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.help-p { margin: 0 0 1rem; }
+.help-list { margin: 0 0 1.15rem; padding-left: 1.35rem; }
+.help-list > li { margin-bottom: 0.45rem; padding-left: 0.3rem; }
+.help-list > li::marker { color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
+ol.help-list > li::marker { font-weight: 700; font-size: 0.9em; }
+.help-hr { height: 1px; margin: 2.75rem 0 2.25rem; border: 0; background-color: var(--border); }
+.help-code {
+  padding: 0.08rem 0.4rem; border-radius: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.84em;
+  background-color: var(--surface-2); border: 1px solid var(--border); overflow-wrap: anywhere;
+}
+
+/* Callouts: hue (set inline) mixed into the surface. */
+.help-callout {
+  --hue: #0ea5e9;
+  display: flex; gap: 0.75rem; margin: 1.35rem 0; padding: 0.9rem 1rem; border-radius: 0.9rem;
+  background-color: color-mix(in srgb, var(--hue) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--hue) 24%, var(--border));
+}
+.help-callout-icon {
+  flex-shrink: 0; width: 1.9rem; height: 1.9rem; border-radius: 0.6rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 15%, var(--surface));
+}
+.help-callout-label {
+  margin-bottom: 0.15rem; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+}
+.help-callout-body { margin: 0; font-size: 0.9rem; line-height: 1.65; }
+
+/* Editor: Markdown | live preview. */
+.help-editor { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .help-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.help-pane {
+  min-width: 0; padding: 1rem; border-radius: 1rem;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.help-pane-preview { max-height: 75vh; overflow-y: auto; padding: 1.25rem 1.5rem; }
+.help-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.65rem; }
+.help-pane-title { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.help-pane-hint {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem;
+  border-radius: 0.5rem; opacity: 0.55; cursor: help;
+}
+.help-pane-hint:hover { opacity: 1; background-color: var(--surface-2); }
+.help-textarea {
+  flex: 1; width: 100%; min-height: 60vh; padding: 0.85rem; border-radius: 0.75rem; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.65;
+  border: 1px solid var(--border); background-color: var(--surface);
+}
+.help-textarea:focus {
+  outline: none; border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+@media (max-width: 640px) {
+  .help-bar .trn-seg { width: 100%; }
+  .help-bar .trn-seg-btn { flex: 1 1 auto; justify-content: center; }
+  .help-prose { font-size: 0.93rem; }
+  .help-h2 { font-size: 1.15rem; }
+  .help-pane-preview { padding: 1rem; }
+}

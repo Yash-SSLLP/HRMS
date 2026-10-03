@@ -280,7 +280,7 @@ export default function AdminPunchMap() {
           .punch-dot.out > div::after { animation: none; opacity: .55; }
         }
       `}</style>
-      <PageHeader title="Punch Location Map" subtitle="Where every check-in / check-out happened · pick a day, search a name, hover a dot for its exact time" />
+      <PageHeader title="Punch Location Map" />
 
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-2 mb-3">

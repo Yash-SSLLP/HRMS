@@ -16,6 +16,7 @@
  * capability check before the action is offered at all.
  */
 import { useEffect, useRef, useState } from 'react';
+import { FiRefreshCw } from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import PresenceBoardView from '../components/PresenceBoardView';
@@ -99,7 +100,6 @@ export default function AdminPresence() {
         title="Who's In & On Leave"
         subtitle={board ? `${dayLabel} · ${counts.present} present of ${counts.total}` : 'Live attendance snapshot'}
       >
-        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <input
           type="date"
           value={date}
@@ -109,25 +109,23 @@ export default function AdminPresence() {
           // Clearing the picker falls back to today rather than asking the server
           // for "no day" and quietly getting today anyway.
           onChange={(e) => setDate(e.target.value || toYMD(new Date()))}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+          className="trn-select"
         />
         <SearchableSelect
           value={dept}
           onChange={(e) => setDept(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white"
+          className="trn-select"
         >
           <option value="all">All departments</option>
           {departments.map((d) => <option key={d} value={d}>{d}</option>)}
         </SearchableSelect>
-        <button
-          onClick={load}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white hover:bg-gray-50"
-        >
-          Refresh
+        {/* The spin is the "updating" signal — no extra line of text. */}
+        <button type="button" onClick={load} disabled={refreshing} className="trn-btn" title="Refresh">
+          <FiRefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
         </button>
       </PageHeader>
 
-      {error && <div className="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-2 text-sm">{error}</div>}
+      {error && <div className="mb-4 rounded-xl bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 text-sm">{error}</div>}
 
       {/* Nobody is chased before the cut-off; after it, an unexplained absence is
           worth HR's attention the moment they open the page. Org-wide the list
@@ -135,7 +133,10 @@ export default function AdminPresence() {
       <AbsentAlert board={board} date={date} storageKey={ALERT_NS} maxNames={3} onSeeWho={jumpToAbsent} />
 
       {loading ? (
-        <div className="text-gray-400 text-sm py-10 text-center">Loading…</div>
+        <div>
+          <div className="pb-kpis">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-[5.25rem] rounded-2xl" />)}</div>
+          <div className="pb-grid mt-6">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="skeleton h-[4.6rem] rounded-2xl" />)}</div>
+        </div>
       ) : (
         <div ref={boardRef} className="scroll-mt-4">
           <PresenceBoardView

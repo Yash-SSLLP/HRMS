@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
-  FiX, FiCalendar, FiClock, FiVideo, FiLink, FiMapPin, FiUser, FiTag, FiInfo, FiCopy, FiExternalLink, FiEdit3,
+  FiX, FiCalendar, FiClock, FiVideo, FiLink, FiMapPin, FiUser, FiTag, FiCopy, FiExternalLink, FiEdit3,
 } from 'react-icons/fi';
 import api from '../../api/client';
 import Combobox from './Combobox';
@@ -252,9 +252,6 @@ export default function TrainingForm({
           <span className="trn-kpi-icon" style={{ '--kpi-hue': 'var(--accent)' }}><FiCalendar size={18} /></span>
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-gray-900">{editing ? 'Edit training' : 'New training'}</div>
-            <div className="text-xs text-gray-600">
-              {editing ? 'Changes to the time, people or link are sent to everyone on it.' : 'Everyone you add is told in the app, with the details and the join link.'}
-            </div>
           </div>
           <button type="button" className="trn-icon-btn text-gray-500" onClick={onClose} aria-label="Close" data-modal-close><FiX size={18} /></button>
         </div>
@@ -306,7 +303,7 @@ export default function TrainingForm({
             </div>
           </Section>
 
-          <Section n={2} title="Schedule" hint="Shown to everyone in their own time — 12-hour clock.">
+          <Section n={2} title="Schedule">
             <div className="trn-grid is-3">
               <div>
                 <label className="trn-field-label text-gray-700" htmlFor="trn-date"><FiCalendar size={11} className="inline mr-1" />{form.multiDay ? 'Starts on *' : 'Date *'}</label>
@@ -347,7 +344,7 @@ export default function TrainingForm({
             </div>
           </Section>
 
-          <Section n={3} title="Meeting" hint="Participants join from their own My Trainings page, like an interview.">
+          <Section n={3} title="Meeting">
             {form.meetingMode === 'keep' ? (
               <div className="space-y-2">
                 <div className="trn-link-box">
@@ -356,11 +353,6 @@ export default function TrainingForm({
                   <button type="button" className="trn-btn" onClick={() => copyLink(form.meetingLink)}><FiCopy size={13} /> Copy</button>
                   <a className="trn-btn" href={form.meetingLink} target="_blank" rel="noopener noreferrer"><FiExternalLink size={13} /> Open</a>
                 </div>
-                {training?.meetAuto && (
-                  <div className="trn-note text-gray-600"><FiInfo size={14} className="shrink-0 mt-0.5" />
-                    Made with Google Meet — the calendar invite moves on its own when you change the time or the people.
-                  </div>
-                )}
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className="trn-btn" onClick={() => set({ meetingMode: 'link', meetingLink: '' })}><FiEdit3 size={13} /> Use a different link</button>
                   {meetAvailable && <button type="button" className="trn-btn" onClick={() => set({ meetingMode: 'auto' })}><FiVideo size={13} /> New Google Meet</button>}
@@ -397,16 +389,11 @@ export default function TrainingForm({
                   <input className="trn-input text-gray-900 mt-3" value={form.meetingLink} onChange={(e) => set({ meetingLink: e.target.value })}
                     placeholder="https://meet.google.com/abc-defg-hij" inputMode="url" />
                 )}
-                {form.meetingMode === 'auto' && (
-                  <div className="trn-note text-gray-600 mt-3"><FiInfo size={14} className="shrink-0 mt-0.5" />
-                    A Google Meet link is created when you save, and Google emails the calendar invite to everyone on the training.
-                  </div>
-                )}
               </>
             )}
           </Section>
 
-          <Section n={4} title="About & files" hint="Everyone on the training can read this and download the files.">
+          <Section n={4} title="About & files">
             <textarea className="trn-input text-gray-900" rows={4} value={form.description} maxLength={5000}
               onChange={(e) => set({ description: e.target.value })}
               placeholder="What it covers, what to prepare, anything to bring…" />
@@ -421,7 +408,7 @@ export default function TrainingForm({
             </div>
           </Section>
 
-          <Section n={5} title="Participants" hint={peopleCount ? `${peopleCount} selected — each of them is told in the app.` : 'Nobody yet — you can add people later too.'}>
+          <Section n={5} title="Participants" hint={peopleCount ? `${peopleCount} selected` : 'Nobody yet'}>
             <ParticipantPicker
               people={people}
               value={form.participants}

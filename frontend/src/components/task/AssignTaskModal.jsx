@@ -65,7 +65,7 @@ import Stepper from './Stepper';
 import ReminderPattern, { repeatingRule } from './ReminderPattern';
 import {
   TASK_PRIORITY, FREQUENCY_LABELS, WEEKDAYS, WEEKDAY_NAMES,
-  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel, time12,
+  RECUR_FREQUENCIES, NTH_WEEKS, MONTH_NAMES, DEFAULT_LEAD_DAYS, patternLabel,
   reminderLabel, reminderPattern,
 } from '../../utils/taskLifecycle';
 
@@ -602,15 +602,6 @@ export default function AssignTaskModal({
         </div>
 
         <div className={`max-h-[calc(100vh-13rem)] space-y-4 overflow-y-auto px-5 py-4 transition-opacity ${loadingSchedule ? 'opacity-50' : ''}`}>
-          {recurringMode && (
-            <p className="flex items-start gap-2 rounded-xl border px-3 py-2 text-xs accent-border" style={{ background: 'color-mix(in srgb, var(--accent) 7%, transparent)' }}>
-              <FiRepeat size={14} className="mt-0.5 shrink-0 accent-text" />
-              <span className="text-gray-700">
-                Set it up once. Each time it comes round it lands in their Tasks on its own
-                {leadDays ? ` — ${leadDays} days before it is due` : ''}. Nothing is sent today unless one is due today.
-              </span>
-            </p>
-          )}
           {/* ── Title & details ──────────────────────────────────── */}
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="task-title">
@@ -652,9 +643,6 @@ export default function AssignTaskModal({
               allowSelf
               selfId={myId}
               placeholder="Myself — or search anyone"
-              hint={form.assignees.length ? null
-                : onBehalf ? `Nobody chosen: it will be assigned to ${onBehalfName}.`
-                  : 'Nobody chosen: it will be assigned to you.'}
             />
           </div>
 
@@ -670,15 +658,12 @@ export default function AssignTaskModal({
               onChange={(id) => set({ onBehalfOf: (Array.isArray(id) ? id[0] : id) || '' })}
               max={1}
               placeholder="Yourself — or search whose task this is"
-              hint={onBehalf
-                ? `It goes out in ${onBehalfName}'s name and becomes theirs: they approve it, and it will not stay on your list.`
-                : 'Leave empty to set it yourself.'}
+              hint={onBehalf ? `Becomes ${onBehalfName}'s task, not yours.` : null}
             />
           )}
 
           <PeoplePicker
             label="Keep in the loop"
-            hint="They see it and hear about every move, without being answerable for it."
             icon={FiEye}
             people={people}
             value={form.loopUsers}
@@ -725,17 +710,9 @@ export default function AssignTaskModal({
           {/* ── Your own task: what does not apply, said once ────── */}
           {selfOnly && (
             <p className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-              {onBehalf ? (
-                <>
-                  This goes on <strong>{onBehalfName}&apos;s own list</strong>. They mark it done
-                  themselves — there is no review step, and a task set for yourself earns no points.
-                </>
-              ) : (
-                <>
-                  This goes on <strong>your own list</strong>. You mark it done yourself — there is no
-                  review step, and a task you set yourself earns no points.
-                </>
-              )}
+              {onBehalf
+                ? <>On <strong>{onBehalfName}&apos;s own list</strong> — no review, no points.</>
+                : <>On <strong>your own list</strong> — no review, no points.</>}
             </p>
           )}
 
@@ -774,14 +751,7 @@ export default function AssignTaskModal({
                 className="mt-0.5 rounded border-gray-300"
                 style={{ accentColor: 'var(--accent)' }}
               />
-              <span>
-                I want to review this before it is marked done
-                <span className="block text-[11px] text-gray-400">
-                  {form.requiresApproval !== false
-                    ? 'They hand it in, it waits in your review queue, and you approve it or send it back.'
-                    : 'Their Complete finishes it outright — nothing comes back to you.'}
-                </span>
-              </span>
+              <span>I want to review this before it is marked done</span>
             </label>
           )}
 
@@ -822,11 +792,6 @@ export default function AssignTaskModal({
 
               {showPieces && (
                 <div className="mt-3 space-y-3">
-                  <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
-                    The pieces are cut as soon as the task is assigned, and
-                    <strong> you approve each one</strong> when it is handed in. What is not
-                    shared out stays with the people you assigned the task to.
-                  </p>
                   <PieceEditor
                     rows={pieces}
                     onRows={setPieces}
@@ -1025,12 +990,6 @@ export default function AssignTaskModal({
                 </span>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-gray-900">{patternLabel(pattern)}</p>
-                  <p className="text-xs text-gray-500">
-                    {leadDays
-                      ? `Appears in their Tasks ${leadDays} days before it is due, at 9:00 AM.`
-                      : `Appears in their Tasks at 9:00 AM on the day${recur.time && recur.time < '10:00' ? ' (an hour before, when due earlier)' : ''}.`}
-                    {routine ? ' A daily task is only marked done — nothing to accept, no review.' : ''}
-                  </p>
                 </div>
               </div>
             </div>
@@ -1082,16 +1041,11 @@ export default function AssignTaskModal({
                     );
                   })}
                 </div>
-                <p className="text-[11px] text-gray-400">
-                  {recur.before.length
-                    ? `Once each, counted back from ${time12(recur.time || '18:00')}.`
-                    : 'None — only the reminder above, if it is on.'}
-                  {recur.before.some((m) => m > lifetimeMin) && (
-                    <span className="font-medium text-red-600">
-                      {' '}The one in red falls before it appears in their Tasks, so it would never be sent — take it off.
-                    </span>
-                  )}
-                </p>
+                {recur.before.some((m) => m > lifetimeMin) && (
+                  <p className="text-[11px] font-medium text-red-600">
+                    The one in red would never be sent — take it off.
+                  </p>
+                )}
                 {recur.otherReminders.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {recur.otherReminders.map((r, i) => (

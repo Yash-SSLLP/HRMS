@@ -152,9 +152,7 @@ function Field({ label, value, mono, field, meta, onFilled, display }) {
               </button>
             </div>
           </div>
-          {error
-            ? <p className="text-xs text-red-600 mt-1">{error}</p>
-            : <p className="text-[11px] text-gray-400 mt-1">Saved straight away. After that, changes go to HR as a request.</p>}
+          {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
         </dd>
       ) : (
         <dd className={`text-sm text-gray-900 ${mono ? 'font-mono' : ''} flex flex-wrap items-center gap-2`}>
@@ -248,7 +246,7 @@ export default function EmployeeProfile() {
 
   return (
     <div>
-      <PageHeader title="My Profile" subtitle="Fill in anything that is missing yourself · to change a filled detail, raise a change request.">
+      <PageHeader title="My Profile">
         <Link
           to="/employee/account"
           className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-700"
@@ -266,19 +264,13 @@ export default function EmployeeProfile() {
             <div className="text-sm font-semibold text-gray-900">
               {missing} detail{missing === 1 ? ' is' : 's are'} missing from your profile
             </div>
-            <div className="text-xs text-gray-600 mt-0.5">
-              Look for <span className="font-semibold">+ Add</span> below — it saves straight away, no approval needed.
-            </div>
           </div>
         </div>
       )}
 
       {/* Birthday — self-service (no approval needed) */}
       <div className="bg-white shadow rounded-lg p-5 mb-4">
-        <h2 className="card-title mb-1">🎂 Birthday</h2>
-        <p className="text-sm text-gray-500 mb-3">
-          Add your date of birth so the team can celebrate with you. You can set this yourself — once a day; after that your HR applies the correction.
-        </p>
+        <h2 className="card-title mb-3">🎂 Birthday</h2>
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-xs uppercase tracking-wide text-gray-500 mb-1">Date of Birth</label>
@@ -338,7 +330,6 @@ export default function EmployeeProfile() {
               mono: true, display: <span className="text-gray-500 font-sans">On file (hidden)</span>,
             })}
           </dl>
-          <p className="text-xs text-gray-400 mt-2 italic">Aadhaar is never shown here. Contact HR if you need to verify it.</p>
         </section>
 
         <section>

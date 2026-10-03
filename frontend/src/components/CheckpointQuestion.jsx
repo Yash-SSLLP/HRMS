@@ -76,7 +76,6 @@ export default function CheckpointQuestion({
         <h3 className="text-base sm:text-lg font-semibold text-gray-900 whitespace-pre-wrap">{checkpoint.question}</h3>
         <p className="text-xs text-gray-500 mt-1">
           {free ? 'Type your answer to carry on.' : multi ? 'Choose all that apply.' : 'Choose one answer.'}
-          {' '}The video stays paused until you answer.
         </p>
 
         {free ? (

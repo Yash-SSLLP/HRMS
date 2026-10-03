@@ -98,7 +98,7 @@ export default function ExitApprovalsInbox({ onCount }) {
       {tab === 'pending' && (
         <div>
           {pending.length === 0 ? (
-            <ApprovalsEmpty message="No resignations are waiting on you." hint="An exit request lands here once it reaches your step of the approval chain." />
+            <ApprovalsEmpty message="No resignations are waiting on you." />
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (

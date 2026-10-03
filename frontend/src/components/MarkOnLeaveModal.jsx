@@ -109,11 +109,8 @@ export default function MarkOnLeaveModal({ person, date, endpoint, onClose, onDo
             placeholder="What they told you — a call, a message, a family emergency."
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2" />
 
-          <p className="text-xs text-gray-500 mb-4">
-            Paid Leave draws their paid quota of 2 days a month; anything past it becomes loss of pay.
-            Unpaid Leave is loss of pay outright. Emergency Leave is granted without anyone&apos;s approval.
-            They are told either way.
-          </p>
+          {/* Kept, but one line: it is a pay consequence. */}
+          <p className="text-xs text-gray-500 mb-4">Paid uses the 2-day monthly quota · Unpaid is loss of pay.</p>
 
           <div className="flex justify-end gap-2">
             <button type="button" onClick={onClose} disabled={saving}

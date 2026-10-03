@@ -120,7 +120,10 @@ export const adminNav = [
       keywords: ['access', 'grants', 'capabilities', 'manager grant', 'hierarchy',
         'approval hierarchy', 'approval setup', 'who approves', 'ladder', 'chain',
         'category', 'categories', 'cash out', 'expense category', 'cashbook category'],
-      tabs: [{ id: 'access', label: 'Module access', roles: ['SuperAdmin'] },
+      tabs: [{ id: 'access', label: 'People & access', roles: ['SuperAdmin'] },
+        // The company-wide switches got their own tab in the 2026-10-03 redesign.
+        { id: 'org', label: 'Organisation settings', roles: ['SuperAdmin'],
+          keywords: ['chat', 'translation', 'translate', 'claude', 'advance approval', 'statement footer', 'helpline', 'cashbook pdf'] },
         { id: 'leave', label: 'Leave approvals', anyExplicitPerm: ['leaveHierarchy.manage'] },
         { id: 'regularization', label: 'Regularization approvals', anyExplicitPerm: ['regularizationHierarchy.manage', 'hierarchy.manage'] },
         { id: 'cashout', label: 'Cash Out categories', access: canManageCashOutCategories }] },

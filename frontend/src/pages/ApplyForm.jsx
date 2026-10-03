@@ -151,7 +151,6 @@ export default function ApplyForm() {
                 </label>
               ))}
             </div>
-            <p className="text-xs text-gray-500 mt-1">This opening is hiring in {locations.length} locations — pick the one you want to be considered for.</p>
           </div>
         ) : locations.length === 1 ? (
           <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">

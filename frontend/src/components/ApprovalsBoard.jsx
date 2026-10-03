@@ -54,7 +54,6 @@ const SECTIONS = [
   {
     key: 'leave',
     title: 'Leave',
-    blurb: 'Time-off requests climbing your reporting line.',
     icon: FiCalendar,
     tone: 'indigo',
     Inbox: LeaveApprovalsInbox,
@@ -62,7 +61,6 @@ const SECTIONS = [
   {
     key: 'work-on-leave',
     title: 'Worked on a leave day',
-    blurb: 'Someone punched in on a day they were approved to be away.',
     icon: FiAlertCircle,
     tone: 'amber',
     Inbox: WorkOnLeaveApprovalsInbox,
@@ -70,7 +68,6 @@ const SECTIONS = [
   {
     key: 'regularizations',
     title: 'Attendance regularizations',
-    blurb: 'Corrections to a missed or mistaken punch.',
     icon: FiClock,
     tone: 'sky',
     Inbox: RegularizationApprovalsInbox,
@@ -78,7 +75,6 @@ const SECTIONS = [
   {
     key: 'resignations',
     title: 'Resignations',
-    blurb: 'Exit requests waiting on your decision.',
     icon: FiLogOut,
     tone: 'rose',
     Inbox: ExitApprovalsInbox,
@@ -86,7 +82,6 @@ const SECTIONS = [
   {
     key: 'clearance',
     title: 'No-dues clearance',
-    blurb: 'Department sign-off before a leaver’s account is released.',
     icon: FiCheckSquare,
     tone: 'emerald',
     Inbox: ExitClearanceInbox,
@@ -98,7 +93,6 @@ const SECTIONS = [
   {
     key: 'salary',
     title: 'Salary changes',
-    blurb: 'Revisions and salary changes HR has asked for. Nothing reaches payroll until you approve it.',
     icon: TbCurrencyRupee,
     tone: 'teal',
     Inbox: SalaryChangeInbox,
@@ -237,7 +231,6 @@ export default function ApprovalsBoard() {
         <header className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-gray-100">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold tracking-tight text-gray-900">{open.title}</h2>
-            <p className="text-sm text-gray-500 mt-0.5 leading-relaxed">{open.blurb}</p>
           </div>
           {allReported && (
             <span className="text-xs text-gray-400 shrink-0">

@@ -61,7 +61,7 @@ import TaskDashboard from '../components/task/TaskDashboard';
 import ExtensionModal from '../components/task/ExtensionModal';
 import * as T from '../api/tasks';
 import {
-  RANGES, STAT_BAR, TASK_PRIORITY, swipeActionsFor, statQueryFor, statValue,
+  RANGES, STAT_BAR, TASK_PRIORITY, statQueryFor, statValue,
 } from '../utils/taskLifecycle';
 
 /**
@@ -379,10 +379,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
     setAction({ key, task, swipe: true });
   }, [onAction]);
   const requireSwipeRemark = meta?.swipeRemarkRequired !== false;
-  const anySwipe = useMemo(
-    () => !viewOnly && tasks.some((t) => { const a = swipeActionsFor(t); return a.left || a.right; }),
-    [tasks, viewOnly]
-  );
   const onNudged = useCallback((id, at) => setNudged((m) => ({ ...m, [id]: at })), []);
 
   // ===== Filters, as chips under the toolbar =====
@@ -470,7 +466,7 @@ export default function Tasks({ base = '/employee/tasks' }) {
         </button>,
         document.body,
       )}
-      <PageHeader title="Tasks" subtitle="Hand work over, and know where it has got to.">
+      <PageHeader title="Tasks">
         <button
           type="button"
           onClick={() => setTab(view === 'report' ? backTo : 'report')}
@@ -625,11 +621,6 @@ export default function Tasks({ base = '/employee/tasks' }) {
 
           {/* The swipe, said once — touch screens only (a mouse keeps the
               dropdown), and only while some row on screen actually swipes. */}
-          {anySwipe && (
-            <p className="swipe-hint -mt-1 hidden text-[11px] text-gray-400 [@media(pointer:coarse)]:block">
-              Swipe a task right to accept, complete or edit it, left to reject, send back or ask for more time.
-            </p>
-          )}
 
           {/* ── Many at once — a Super Admin's, or the "Bulk delete" grant (2026-10-02) ── */}
           {canBulk && !loading && deletableRows.length > 0 && (

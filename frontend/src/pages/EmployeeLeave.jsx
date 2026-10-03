@@ -18,12 +18,6 @@ import { confirmDialog } from '../components/dialogs';
 //   Emergency Leave granted immediately, no approval — the hierarchy is informed
 //   Maternity Leave statutory 26 weeks, always paid, outside the quota
 const LEAVE_TYPES = ['Paid Leave', 'Unpaid Leave', 'Emergency Leave', 'Maternity Leave'];
-const TYPE_HELP = {
-  'Paid Leave': 'Uses your monthly paid days first. Anything beyond the quota is automatically unpaid.',
-  'Unpaid Leave': 'Deliberately unpaid — your paid days stay untouched for later in the month.',
-  'Emergency Leave': 'Granted the moment you apply — nobody has to approve it. Your managers and HR are informed automatically.',
-  'Maternity Leave': 'Statutory 26-week entitlement. Always paid and does not count against the monthly quota.',
-};
 const EMERGENCY = 'Emergency Leave';
 
 const STATUS_COLORS = {
@@ -179,10 +173,7 @@ export default function EmployeeLeave() {
       </div>
 
       <div className="mb-6 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
-        ℹ️ Company policy: <strong>{monthly.fullQuota ?? 2} paid leave days per calendar month</strong>. Any
-        leave beyond that in a month is <strong>Loss of Pay (LOP)</strong>. The quota
-        resets each month and is not carried forward. Maternity leave is a separate
-        entitlement and is not counted against this quota.
+        ℹ️ <strong>{monthly.fullQuota ?? 2} paid leave days per month</strong>; anything beyond that is <strong>Loss of Pay</strong>.
         {monthly.prorated && (
           <> You were on the payroll for <strong>{monthly.eligibleDays} of {monthLabel}'s {monthly.daysInMonth} days</strong>,
           so this month your quota is prorated to <strong>{monthly.quota}</strong>.</>
@@ -204,17 +195,13 @@ export default function EmployeeLeave() {
                 className="mt-1 block w-full border rounded-lg px-3 py-2">
                 {LEAVE_TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
-              <p className="mt-1 text-[11px] text-gray-500">{TYPE_HELP[form.leaveType]}</p>
             </div>
 
             {form.leaveType === EMERGENCY && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <span className="font-semibold">No approval needed.</span> This is granted as soon as
-                you submit it, and everyone up your reporting line plus HR is informed automatically.
-                It still uses your paid days first, like Paid Leave.
+                <span className="font-semibold">No approval needed.</span> Your reporting line and HR are informed.
                 <span className="block mt-0.5">
-                  Taking emergency leave more than once in the same month is flagged to your managers
-                  and HR, who can then charge that day at double pay.
+                  A second one in a month may be charged at double pay.
                 </span>
               </div>
             )}

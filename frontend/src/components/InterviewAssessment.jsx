@@ -115,7 +115,7 @@ const toLocalInput = (d) => {
  * @param {{round: Object, title: string, subtitle?: string, onClose: Function,
  *   onSubmit: Function, children?: React.ReactNode, note?: string}} props
  */
-export function RescheduleDialog({ round, title, subtitle, onClose, onSubmit, children, note }) {
+export function RescheduleDialog({ round, title, subtitle, onClose, onSubmit, children }) {
   // A no-show starts empty (the old slot is the one that was missed); a moved
   // slot starts from the time it had, to be nudged.
   const [when, setWhen] = useState(round?.status === 'NoShow' ? '' : toLocalInput(round?.scheduledAt));
@@ -165,9 +165,6 @@ export function RescheduleDialog({ round, title, subtitle, onClose, onSubmit, ch
           />
         </div>
         {children}
-        <p className="text-[11px] text-gray-500">
-          {note || 'The round goes back to Scheduled at the new time. The old date and the reason stay in its history.'}
-        </p>
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Cancel</button>
           <button type="submit" disabled={saving || !when}
@@ -323,9 +320,6 @@ export function AssessmentForm({ value, onChange, disabled = false, suggestChars
             </div>
           ))}
         </div>
-        <p className="text-[11px] text-gray-400 mt-1.5">
-          Leave an area unrated if it did not come up — it is recorded as &ldquo;not assessed&rdquo;, not as a low score.
-        </p>
       </div>
 
       <div className={compact ? 'space-y-3' : 'grid grid-cols-1 sm:grid-cols-2 gap-3'}>
@@ -365,11 +359,7 @@ export function AssessmentForm({ value, onChange, disabled = false, suggestChars
         />
         <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
           {/* A nudge, not a rule — the save never waits on it. */}
-          <p className={`text-[11px] ${short ? 'text-amber-600' : 'text-gray-400'}`}>
-            {short
-              ? 'A couple of sentences is worth more here than a line — this is the record the next round, HR and the CEO/MD read.'
-              : 'Written up. This is what the next round, HR and the CEO/MD will read.'}
-          </p>
+          {short ? <p className="text-[11px] text-amber-600">A couple of sentences works best.</p> : <span />}
           <span className="text-[11px] text-gray-400">{remark.trim().length} chars</span>
         </div>
       </div>
@@ -548,8 +538,8 @@ export function PriorRejections({ flag, defaultOpen = false, className = '' }) {
           </span>
           <span className="block text-[11px] text-gray-600 mt-0.5">
             {flag.withinHold
-              ? `Still inside the ${flag.holdMonths}-month hold — they may reapply from ${shortDate(flag.reapplyOn)}. Read why it went the way it did before deciding.`
-              : `The ${flag.holdMonths}-month hold has lapsed, so they are free to apply. The earlier feedback is below.`}
+              ? `Inside the ${flag.holdMonths}-month hold — may reapply from ${shortDate(flag.reapplyOn)}.`
+              : `The ${flag.holdMonths}-month hold has lapsed.`}
             {flag.sameJob ? ' Rejected for this same opening.' : ''}
           </span>
         </span>

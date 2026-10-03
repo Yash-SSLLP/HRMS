@@ -316,21 +316,13 @@ export default function AdminHolidays() {
 
       {onHolidays ? (
         <div className="mb-4 rounded-xl border border-violet-100 bg-violet-50 px-4 py-3 text-sm">
-          <span className="font-medium text-gray-800">Comp Off days are the company-wide days off.</span>
-          <span className="text-gray-600">
-            {' '}They are non-working like any holiday — and an employee who actually works one (or a Sunday)
-            is paid double for that day once it is approved under Attendance → Sunday &amp; comp-off duty.
-          </span>
+          <span className="font-medium text-gray-800">Company-wide days off.</span>
+          <span className="text-gray-600"> Working one is paid double once approved.</span>
         </div>
       ) : (
         <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm">
           <span className="font-medium text-gray-800">Festivals are reminders only.</span>
-          <span className="text-gray-600">
-            {' '}They show on everyone&apos;s calendar and send a heads-up the day before and a greeting
-            on the day itself. The day stays a <strong>normal working day</strong> — no comp off, and no
-            effect on attendance, leave or pay. To actually close the office, add a Holiday instead.
-            A festival that falls on a holiday is hidden automatically, so nobody gets it twice.
-          </span>
+          <span className="text-gray-600"> The day stays a <strong>normal working day</strong>.</span>
         </div>
       )}
 
@@ -390,7 +382,6 @@ export default function AdminHolidays() {
               ) : festivals.length === 0 ? (
                 <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">
                   No festivals for {year}.
-                  {seedableYears.includes(year) && ' Use "Add standard list" to load the usual Indian festivals.'}
                 </td></tr>
               ) : festivals.map((f) => (
                 <tr key={f._id}>
@@ -449,11 +440,6 @@ export default function AdminHolidays() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   {TYPES.map((t) => <option key={t}>{t}</option>)}
                 </select>
-                {form.type === COMP_OFF && (
-                  <p className="mt-1 text-xs text-violet-700">
-                    Working this day is eligible for double pay, once approved.
-                  </p>
-                )}
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Description</label>
@@ -480,10 +466,7 @@ export default function AdminHolidays() {
       {festivalForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-1">{editingFestivalId ? 'Edit Festival' : 'Add Festival'}</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              A reminder only — the day stays a normal working day.
-            </p>
+            <h2 className="card-title mb-4">{editingFestivalId ? 'Edit Festival' : 'Add Festival'}</h2>
             <form onSubmit={saveFestival} className="space-y-3">
               <div className="flex gap-3">
                 <div className="w-20">
@@ -510,9 +493,6 @@ export default function AdminHolidays() {
                 <input value={festivalForm.greeting} placeholder={`Wishing you a happy ${festivalForm.name || 'festival'}.`}
                   onChange={(e) => setFestivalForm({ ...festivalForm, greeting: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                <p className="mt-1 text-xs text-gray-500">
-                  Sent the day before and again on the day itself. Left blank, a simple greeting is used.
-                </p>
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Description</label>
@@ -545,12 +525,7 @@ export default function AdminHolidays() {
       {showImport && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-xl p-6">
-            <h2 className="card-title mb-1">Import calendar from Excel</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              One workbook, three sheets — <strong>Holidays</strong>, <strong>Comp Offs</strong> and{' '}
-              <strong>Celebrations</strong>. Fill in only the sheets you need; the example row in each is ignored.
-              Entries already on the calendar (same name, same day) are skipped, so a corrected file can be re-uploaded.
-            </p>
+            <h2 className="card-title mb-4">Import calendar from Excel</h2>
 
             <form onSubmit={runImport} className="space-y-3">
               <input ref={importFileRef} type="file" accept=".xlsx"

@@ -224,7 +224,7 @@ export default function AdminPayrollRun() {
 
   return (
     <div>
-      <PageHeader title="Hikes" subtitle="Set an employee's salary structure & annual CTC, give increments, and review the CTC revision history" />
+      <PageHeader title="Hikes" />
 
       {/* Filters + OK */}
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
@@ -308,7 +308,7 @@ export default function AdminPayrollRun() {
                     propose changing, and a CEO/MD's to change. */}
                 {approvalRequired && canRevise && salarySaved && !pendingChange && (
                   <p className="-mt-2 mb-4 text-[11px] text-gray-500">
-                    This salary is saved. A change to it, or a revision, goes to a CEO/MD for approval and reaches payroll only once approved.
+                    A change goes to a CEO/MD for approval first.
                   </p>
                 )}
 
@@ -357,20 +357,6 @@ export default function AdminPayrollRun() {
                         <Stat label="Duty awaiting approval" value={c.policy.pendingDoublePayDays} warn />
                       )}
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-2">
-                      {c.policy.paidLeaveQuota} paid leaves/month - unused convert to pay ({inr(c.policy.leaveIncentive)}), extras become LOP.
-                      {' '}First {c.policy.lateAllowance} lates free; each extra costs {inr(c.policy.lateRate)}/day (monthly Basic {c.policy.monthlyBasic < 25000 ? '<' : '≥'} ₹25,000).
-                      {' '}Working days with no punch-in/out are LOP ({c.policy.noPunchDays ?? 0} this month) unless regularised.
-                      {' '}Sundays &amp; comp-off days that were worked pay 2× once approved
-                      ({c.policy.doublePayDays ?? 0} approved{(c.policy.pendingDoublePayDays ?? 0) > 0
-                        ? `, ${c.policy.pendingDoublePayDays} still awaiting a decision` : ''}
-                      {(c.policy.doubleDayPay ?? 0) > 0 ? ` — ${inr(c.policy.doubleDayPay)} extra` : ''}).
-                      {' '}Basic and every other earning are always paid in full — LOP and late coming come off as deductions.
-                      {' '}Salary is spread over all {c.daysInMonth} days of the month (Sundays &amp; holidays are paid)
-                      {c.ctc > 0 ? `, so one day costs ${inr(Math.round(c.ctc / 12 / (c.daysInMonth || 1)))}` : ''}.
-                      {c.notEmployedDays > 0 && ` This employee was on the payroll for ${c.eligibleDays} of those days (joined/exited mid-month), so pay is ${c.paidDays}/${c.daysInMonth}`
-                        + ` and the monthly allowances are prorated to ${c.policy.paidLeaveQuota} paid leave (of ${c.policy.fullPaidLeaveQuota}) and ${c.policy.lateAllowance} free lates (of ${c.policy.fullLateAllowance}).`}
-                    </p>
                   </>
                 )}
                 {c.hours && (
@@ -381,9 +367,6 @@ export default function AdminPayrollRun() {
                       <Stat label="Avg working hours" value={`${c.hours.avgHours} hrs`} />
                       <Stat label="Comp-off earned" value={c.hours.compOff} warn={c.hours.compOff > 0} />
                     </div>
-                    <p className="text-[11px] text-gray-400 mt-2">
-                      Average is over days actually worked. Sundays &amp; holidays are excluded unless worked · those count as comp-offs.
-                    </p>
                   </>
                 )}
               </div>
@@ -401,7 +384,7 @@ export default function AdminPayrollRun() {
             <p className="text-xs text-gray-500 mb-4">Current CTC: {inr(setup.annualCtc)}/yr</p>
             {approvalRequired && (
               <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
-                This goes to a CEO/MD for approval. Nothing changes — and payroll keeps paying the current CTC — until they approve it.
+                Needs CEO/MD approval; payroll keeps the current CTC until then.
               </p>
             )}
             <form onSubmit={submitHike} className="space-y-3">

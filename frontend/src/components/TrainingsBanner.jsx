@@ -75,7 +75,6 @@ export default function TrainingsBanner({ base = '/employee/my-trainings' }) {
             <span className="block trn-title text-gray-900 truncate">
               {review.length === 1 ? `How clear was “${review[0].title}”?` : `${review.length} trainings are waiting for your review`}
             </span>
-            <span className="block text-xs text-gray-600 mt-0.5">Rate it in half a minute — it shapes the next session.</span>
           </span>
           <FiChevronRight size={18} className="text-gray-400" />
         </Link>

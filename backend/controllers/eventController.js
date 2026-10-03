@@ -5,6 +5,7 @@
 const asyncHandler = require('express-async-handler');
 const Event = require('../models/Event');
 const User = require('../models/User');
+const AuditLog = require('../models/AuditLog');
 const { notifyMany } = require('../services/notify');
 
 // Format a date as e.g. "5 Jan 2026" for notification bodies
@@ -12,11 +13,36 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// "2026-10-03" — a calendar day for the audit trail (auditDescribe words it as "3 Oct 2026").
+function isoDay(d) {
+  if (!d) return '';
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? '' : t.toISOString().slice(0, 10);
+}
+
+// Events carry no status, so the auditStatus plugin never sees them — the trail
+// is written here. Best-effort: a failed audit write must never fail the save.
+function auditEvent(req, event, field, fromStatus, toStatus) {
+  const clip = (v) => (String(v ?? '').length > 200 ? `${String(v).slice(0, 199)}…` : String(v ?? ''));
+  return AuditLog.create({
+    entity: 'Event',
+    entityId: event._id,
+    entityLabel: event.title,
+    field,
+    fromStatus: clip(fromStatus),
+    toStatus: clip(toStatus),
+    by: req.user._id,
+    byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
+    byRole: req.user.role,
+  }).catch(() => {});
+}
+
 /**
  * List events, optionally scoped to a calendar year, sorted by date.
  * @route GET /api/events?year=YYYY   (any authenticated user)
  * @param {string} [req.query.year]
- * @returns {{count: number, events: Object[]}} with populated createdBy
+ * @returns {{count: number, events: Object[]}} — createdBy/updatedBy (populated)
+ *   only for a Super Admin; everyone else gets the events without them.
  */
 const listEvents = asyncHandler(async (req, res) => {
   const filter = {};
@@ -24,9 +50,16 @@ const listEvents = asyncHandler(async (req, res) => {
     const year = Number(req.query.year);
     filter.date = { $gte: new Date(year, 0, 1), $lt: new Date(year + 1, 0, 1) };
   }
-  const events = await Event.find(filter)
-    .populate('createdBy', 'firstName lastName role')
-    .sort({ date: 1 });
+  // Who added / last edited an event is Super Admin-only — the list is read by
+  // every employee (calendar), so the names are left out of the query itself.
+  const superAdmin = req.user?.role === 'SuperAdmin';
+  const query = Event.find(filter).sort({ date: 1 });
+  if (superAdmin) {
+    query.populate('createdBy', 'firstName lastName role').populate('updatedBy', 'firstName lastName role');
+  } else {
+    query.select('-createdBy -updatedBy');
+  }
+  const events = await query;
   res.json({ count: events.length, events });
 });
 
@@ -57,6 +90,7 @@ const createEvent = asyncHandler(async (req, res) => {
     description,
     createdBy: req.user._id,
   });
+  await auditEvent(req, event, 'status', '', 'Created');
 
   // Notify (in-app + push) all active users except the creator.
   const recipients = await User.find({ isActive: true, _id: { $ne: req.user._id } }).select('_id');
@@ -93,6 +127,8 @@ const updateEvent = asyncHandler(async (req, res) => {
     time: event.time || '',
     location: event.location || '',
   };
+  const beforeDay = isoDay(event.date);
+  const beforeDescription = event.description || '';
 
   const { title, date, time, location, description } = req.body;
   if (title !== undefined) event.title = title;
@@ -100,7 +136,19 @@ const updateEvent = asyncHandler(async (req, res) => {
   if (time !== undefined) event.time = time;
   if (location !== undefined) event.location = location;
   if (description !== undefined) event.description = description;
+  event.updatedBy = req.user._id;
   await event.save();
+
+  // One audit line per field that actually changed (description included —
+  // it does not notify anyone, but the record of who rewrote it still counts).
+  const edits = [
+    ['Title', before.title, event.title],
+    ['Date', beforeDay, isoDay(event.date)],
+    ['Time', before.time, event.time || ''],
+    ['Location', before.location, event.location || ''],
+    ['Description', beforeDescription, event.description || ''],
+  ].filter(([, from, to]) => from !== to);
+  await Promise.all(edits.map(([field, from, to]) => auditEvent(req, event, field, from || '—', to || '—')));
 
   // A rescheduled or moved event is exactly the thing attendees must be told
   // about, and until now only creation notified — someone who saw "Friday, 4pm"
@@ -141,6 +189,7 @@ const deleteEvent = asyncHandler(async (req, res) => {
   }
   const { title, date } = event;
   await event.deleteOne();
+  await auditEvent(req, event, 'status', '', 'deleted');
 
   // A cancellation matters more than the original invitation — without this an
   // attendee only finds out by noticing the entry has vanished from the calendar.

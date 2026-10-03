@@ -120,7 +120,7 @@ export default function AdminAnnouncements() {
 
   return (
     <div>
-      <PageHeader title="Announcements" subtitle="Posting an announcement notifies every employee.">
+      <PageHeader title="Announcements">
         <button onClick={openCreate}
           className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
           + New Announcement
@@ -205,14 +205,12 @@ export default function AdminAnnouncements() {
                   <input type="date" value={form.startDate}
                     onChange={(e) => setForm({ ...form, startDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="mt-1 text-xs text-gray-400">Blank = show immediately</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Hide after</label>
                   <input type="date" value={form.endDate} min={form.startDate || undefined}
                     onChange={(e) => setForm({ ...form, endDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="mt-1 text-xs text-gray-400">Blank = never expires</p>
                 </div>
               </div>
               <div>
@@ -222,7 +220,7 @@ export default function AdminAnnouncements() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
               </div>
               {!editingId && (
-                <p className="text-xs text-gray-500">All employees will be notified when you post this announcement.</p>
+                <p className="text-xs text-gray-500">All employees will be notified when you post.</p>
               )}
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

@@ -461,9 +461,8 @@ export default function EmployeeAttendance() {
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <div className="font-medium">You are on approved {todayLeave.leaveType} today.</div>
             <p className="mt-1 text-amber-800">
-              You can still punch in, but today stays recorded as leave until
-              {' '}<strong>{todayLeave.approverName || 'your leave approver'}</strong> approves it. Once approved,
-              the leave day is returned to you and the day counts as worked.
+              Punching in counts as worked once
+              {' '}<strong>{todayLeave.approverName || 'your leave approver'}</strong> approves.
             </p>
           </div>
         )}
@@ -487,9 +486,8 @@ export default function EmployeeAttendance() {
         {/* Already claimed: where the decision stands. */}
         {today?.workOnLeave?.status === 'Pending' && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            You worked today while on approved {today.workOnLeave.leaveType}. It is awaiting
-            {' '}<strong>{today.workOnLeave.approverName || 'your leave approver'}</strong>&apos;s approval — until
-            then the day counts as leave.
+            You worked while on approved {today.workOnLeave.leaveType} — awaiting
+            {' '}<strong>{today.workOnLeave.approverName || 'your leave approver'}</strong>&apos;s approval.
           </div>
         )}
         {today?.workOnLeave?.status === 'Approved' && (
@@ -500,8 +498,8 @@ export default function EmployeeAttendance() {
         )}
         {today?.workOnLeave?.status === 'Rejected' && (
           <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-            Your work on today&apos;s leave day was not approved, so today stays recorded as
-            {' '}{today.workOnLeave.leaveType}. Your punches are kept on the record.
+            Your work on today&apos;s leave day was not approved — today stays recorded as
+            {' '}{today.workOnLeave.leaveType}.
             {today.workOnLeave.note ? ` Note: ${today.workOnLeave.note}` : ''}
           </div>
         )}
@@ -588,9 +586,8 @@ export default function EmployeeAttendance() {
                 one tap away and the employee may not have read the card behind. */}
             {capture === 'checkin' && todayLeave && (
               <div className="mb-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg">
-                ⚠️ You are on approved <strong>{todayLeave.leaveType}</strong> today. This punch will be
-                recorded, but the day stays as leave until{' '}
-                <strong>{todayLeave.approverName || 'your leave approver'}</strong> approves it.
+                ⚠️ You are on approved <strong>{todayLeave.leaveType}</strong> today — the day stays leave until{' '}
+                <strong>{todayLeave.approverName || 'your leave approver'}</strong> approves.
               </div>
             )}
 
@@ -638,15 +635,14 @@ export default function EmployeeAttendance() {
                 nobody needs to read to punch out. */}
             {capture === 'checkin' && (
               <p className="text-[11px] text-gray-500 mb-3">
-                Declaring it now records today as a half day and keeps it that way, however long you stay.
+                Records today as a half day, however long you stay.
               </p>
             )}
             {/* Starting a half day after the cut-off is the afternoon half — it
                 is a normal half day, and not a late arrival. */}
             {halfDay && pastHalfDayCutoff && (
               <p className="text-[11px] text-green-800 bg-green-50 border border-green-200 rounded-lg px-2 py-1.5 -mt-1 mb-3">
-                Starting after {HALF_DAY_CUTOFF_LABEL}, so this is an <strong>afternoon half day</strong>
-                {' '}— it will <strong>not</strong> count as a late arrival.
+                Starting after {HALF_DAY_CUTOFF_LABEL} — an <strong>afternoon half day</strong>, not a late arrival.
               </p>
             )}
 

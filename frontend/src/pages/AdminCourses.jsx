@@ -459,19 +459,15 @@ export default function AdminCourses() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Course type</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
-                    ['internal', '🏢 Internal', 'Only your employees - shows in their catalog, assignable.'],
-                    ['external', '🌐 External', 'Public no-login link - anyone can watch after a short form.'],
-                  ].map(([val, label, hint]) => (
+                    ['internal', '🏢 Internal'],
+                    ['external', '🌐 External'],
+                  ].map(([val, label]) => (
                     <button type="button" key={val} onClick={() => setForm({ ...form, courseType: val })}
                       className={`text-left border rounded-lg px-3 py-2 ${form.courseType === val ? 'border-gray-900 ring-1 ring-gray-900 bg-gray-50' : 'hover:bg-gray-50'}`}>
                       <div className="text-sm font-medium text-gray-800">{label}</div>
-                      <div className="text-[11px] text-gray-500 mt-0.5">{hint}</div>
                     </button>
                   ))}
                 </div>
-                {editingId && form.courseType === 'external' && (
-                  <div className="text-[11px] text-gray-400 mt-1">Save, then use “Public link” on the card to copy the shareable URL.</div>
-                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
@@ -563,7 +559,7 @@ export default function AdminCourses() {
                                   )}
                                   {m._uploadError && <div className="text-xs text-red-600">✗ {m._uploadError}</div>}
                                   {!m.cloudinaryPublicId && !uploading && !m._uploadError && (
-                                    <div className="text-xs text-gray-400">MP4/MOV/WebM, any size. Uploads straight to Cloudinary (private); anything large goes up in chunks.</div>
+                                    <div className="text-xs text-gray-400">MP4 / MOV / WebM</div>
                                   )}
                                 </div>
                               ) : (
@@ -698,8 +694,8 @@ function QuestionTimeline({ durationSec, checkpoints, focusIdx, onPick }) {
         <span>0:00</span>
         <span>
           {known
-            ? `${fmtClock(span)} · tap a marker to jump to its question`
-            : 'Video length not recorded — scaled to the last question. Open Preview to measure it.'}
+            ? `${fmtClock(span)}`
+            : 'Video length not recorded.'}
         </span>
       </div>
     </div>
@@ -744,7 +740,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
 
       {checkpoints.length === 0 ? (
         <p className="text-[11px] text-gray-400 mt-1">
-          None yet. A question pauses the video at its timestamp — the learner can’t carry on until they answer it.
+          None yet.
         </p>
       ) : (
         <div className="mt-3 space-y-3">
@@ -791,7 +787,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                 {c.type === 'text' ? (
                   <div className="space-y-1.5">
                     <div className="text-[11px] text-gray-500">
-                      Accepted answers (case and spacing are ignored). Leave empty to accept anything.
+                      Accepted answers
                     </div>
                     {(c.options || []).map((o, oi) => (
                       <div key={oi} className="flex items-center gap-2">
@@ -807,7 +803,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                 ) : (
                   <div className="space-y-1.5">
                     <div className="text-[11px] text-gray-500">
-                      Tick the right answer{c.type === 'multiple' ? 's' : ''}. Tick none and it becomes a poll — still compulsory, but any answer gets them through.
+                      Tick the right answer{c.type === 'multiple' ? 's' : ''}.
                     </div>
                     {(c.options || []).map((o, oi) => (
                       <div key={oi} className="flex items-center gap-2">
@@ -841,7 +837,7 @@ function CheckpointEditor({ checkpoints, durationSec = 0, onChange }) {
                   <label className="flex items-center gap-2 text-xs text-gray-600">
                     <input type="checkbox" checked={c.requireCorrect !== false}
                       onChange={(e) => patch(i, { requireCorrect: e.target.checked })} />
-                    They must answer it correctly to carry on (otherwise a wrong answer is just recorded)
+                    They must answer it correctly to carry on
                   </label>
                 )}
               </div>
@@ -1070,7 +1066,7 @@ function AnswersModal({ course, onClose }) {
           <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
         ) : tab === 'questions' ? (
           (data.questions || []).length === 0 ? (
-            <p className="text-sm text-gray-500">This course has no in-video questions yet. Add them while editing a video lesson.</p>
+            <p className="text-sm text-gray-500">No in-video questions yet.</p>
           ) : (
             <div className="max-h-96 overflow-y-auto divide-y">
               {(data.questions || [])
@@ -1304,7 +1300,6 @@ function ShareModal({ course, onClose }) {
           <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
 
-        <div className="text-xs text-gray-500 mb-2">Anyone with this link can watch after a short form (name, phone, location) - no login.</div>
         <div className="flex gap-2 mb-4">
           <input readOnly value={publicUrl} className="flex-1 border rounded-lg px-3 py-2 text-sm bg-gray-50" onFocus={(e) => e.target.select()} />
           <button onClick={copy} className="px-3 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">{copied ? 'Copied ✓' : 'Copy'}</button>

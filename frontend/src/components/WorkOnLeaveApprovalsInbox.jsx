@@ -101,7 +101,7 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
       />
 
       {tab === 'pending' && (rows.length === 0 ? (
-        <ApprovalsEmpty message="No punch-ins on a leave day to review." hint="One appears here when somebody clocks in on a day they were approved to be away." />
+        <ApprovalsEmpty message="No punch-ins on a leave day to review." />
       ) : (
         <div className="space-y-3">
           {rows.map((r) => (
@@ -128,8 +128,6 @@ export default function WorkOnLeaveApprovalsInbox({ onCount }) {
                   </div>
                   <p className="text-xs text-gray-500 mt-2 max-w-prose">
                     Punched in while on approved <strong>{r.workOnLeave?.leaveType || 'leave'}</strong>.
-                    Approving returns the leave day and records the day as worked; rejecting keeps the
-                    punches on the record but the day stays as leave.
                   </p>
                 </div>
                 <span className="text-xs px-2 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 shrink-0">

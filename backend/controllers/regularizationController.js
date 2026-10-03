@@ -22,8 +22,9 @@ const { resolveShiftForDay } = require('../services/shiftResolver');
 const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
 
 // `role` rides along so the review screen can tell an HR's own request apart
-// from an ordinary employee's (see HR_REVIEW_ROLES below).
-const EMPLOYEE_FIELDS = 'firstName lastName email role';
+// from an ordinary employee's (see HR_REVIEW_ROLES below). `photo` (a stored
+// path, the avatar cache key) lets the review rows show the person's face.
+const EMPLOYEE_FIELDS = 'firstName lastName email role photo';
 
 // The day and the punches, written the way the employee reads them everywhere
 // else in the portal: "14 Aug 2026", and 12-hour times with a meridiem. Node's

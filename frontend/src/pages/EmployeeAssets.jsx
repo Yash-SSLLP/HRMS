@@ -170,7 +170,6 @@ export default function EmployeeAssets() {
     <div>
       <PageHeader
         title="My Assets"
-        subtitle={viewOnly ? undefined : 'Done with something? Press Return — HR takes it off your list once they have it back.'}
       />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
@@ -227,7 +226,7 @@ export default function EmployeeAssets() {
               </p>
             )}
             <p className="text-sm text-gray-600 mb-4">
-              HR will be asked to take it back. It stays on your list until they confirm they have it — so hand it over, or tell them where it is.
+              HR will be asked to take it back. It stays on your list until they confirm.
             </p>
             <form onSubmit={sendReturn} className="space-y-3">
               <div>

@@ -163,11 +163,6 @@ export default function ExtensionModal({
               <FiClock size={16} className="shrink-0 text-amber-500" />
               {deciding ? 'More time?' : 'Ask for more time'}
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {deciding
-                ? 'Nothing else moves either way — the task stays exactly where it is.'
-                : 'The task does not stop while you wait for an answer.'}
-            </p>
           </div>
           <button
             type="button"
@@ -216,11 +211,6 @@ export default function ExtensionModal({
                 />
               </div>
 
-              <p className="mt-2 text-[11px] text-gray-400">
-                Giving the time moves the deadline and re-arms the reminders. It does not
-                undo anybody's late delivery already on file.
-              </p>
-
               <div className="mt-4 flex flex-wrap justify-end gap-2">
                 <button type="button" onClick={onClose} className={`${BTN} ${GHOST}`}>Cancel</button>
                 <button
@@ -258,9 +248,6 @@ export default function ExtensionModal({
                 onChange={(e) => setToDate(e.target.value)}
                 className="min-h-[40px] w-full rounded-xl border border-gray-200 px-3 text-sm"
               />
-              <p className="mt-1 text-[11px] text-gray-400">
-                It has to be later than the deadline you have now.
-              </p>
             </div>
 
             <div className="mt-3">
@@ -278,11 +265,6 @@ export default function ExtensionModal({
                 className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-sm"
               />
             </div>
-
-            <p className="mt-2 text-[11px] text-gray-400">
-              {task.approverName || task.createdByName || 'Whoever set this'} answers it. You can only
-              have one request outstanding at a time.
-            </p>
 
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={onClose} className={`${BTN} ${GHOST}`}>Cancel</button>

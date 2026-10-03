@@ -216,7 +216,7 @@ export default function EmployeeReviews() {
 
   return (
     <div>
-      <PageHeader title="Performance Reviews" subtitle="Reviews assigned to you and feedback shared about you." />
+      <PageHeader title="Performance Reviews" />
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
@@ -266,7 +266,7 @@ export default function EmployeeReviews() {
       {/* Feedback about me */}
       <section>
         <h2 className="card-title mb-3">Feedback about me</h2>
-        <p className="text-xs text-gray-500 mb-3">Submitted feedback is shown anonymously · reviewer identities are hidden.</p>
+        <p className="text-xs text-gray-500 mb-3">Feedback is anonymous.</p>
         {loading ? (
           <div className="text-sm text-gray-500">Loading…</div>
         ) : about.length === 0 ? (
@@ -382,7 +382,6 @@ export default function EmployeeReviews() {
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                       <div className="text-sm font-semibold text-gray-900">Overall rating</div>
-                      <p className="text-xs text-gray-500 mt-0.5">Your single summary judgement for this cycle.</p>
                     </div>
                     <StarRating
                       size="lg"

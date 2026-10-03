@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import AuthImage from './AuthImage';
 
 // SmartHR-style dashboard greeting banner: avatar, "Welcome Back, <name>" with an
 // edit-profile pencil, a subtitle of highlighted stat links, and action buttons.
@@ -15,17 +16,30 @@ function initials(user) {
   return (a + b).toUpperCase() || 'U';
 }
 
+const AVATAR_SIZE = { width: '3.25rem', height: '3.25rem', fontSize: '1.05rem' };
+
 export default function WelcomeBanner({ stats = [], actions = [], editTo = '/employee/profile' }) {
   const user = useAuthStore((s) => s.user);
+  const fallbackAvatar = (
+    <span className="avatar-circle accent-bg text-white shrink-0" style={AVATAR_SIZE}>
+      {initials(user)}
+    </span>
+  );
 
   return (
     <div className="bg-white shadow rounded-lg p-4 sm:p-5 mb-4 flex flex-col sm:flex-row sm:items-center gap-4">
-      <span
-        className="avatar-circle accent-bg text-white shrink-0"
-        style={{ width: '3.25rem', height: '3.25rem', fontSize: '1.05rem' }}
-      >
-        {initials(user)}
-      </span>
+      {/* The uploaded profile photo, as in the top bar (Layout's UserAvatar —
+          same URL, so it is one cached fetch); initials until it loads or when
+          there is none. `?p=` is the stored path, so a new upload busts the cache. */}
+      {user?.photo ? (
+        <AuthImage
+          url={`/auth/users/${user._id}/avatar?p=${encodeURIComponent(user.photo)}`}
+          alt={initials(user)}
+          className="avatar-circle object-cover shrink-0"
+          style={AVATAR_SIZE}
+          fallback={fallbackAvatar}
+        />
+      ) : fallbackAvatar}
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

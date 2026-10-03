@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.54",
-  "versionCode": 135,
-  "notes": "Tasks: accepting a task no longer asks for a reason — swipe right and it is accepted. On a task you assigned that nobody has accepted yet, swipe right to edit it. When you ask for more time, \"Why do you need longer?\" is now marked as required.\n\nDeleting many tasks at once is now for a Super Admin, and for anyone the Super Admin gives the new \"Bulk delete\" permission (a CEO or MD too) — they can tick and delete any task they can see.\n\nTraining: a new My Trainings page shows the sessions you are booked on, with a Join button for the meeting and a short review afterwards. Organisers can add a meeting link, files and categories, and download a monthly report.\n\nAdmins: a new Attendance Records page lists punches by day and person, where they can be corrected, deleted or exported.\n\nAudit log: each entry now reads as a sentence, with a Details view."
+  "versionName": "2.8.55",
+  "versionCode": 136,
+  "notes": "A new look for the whole app: every screen has been redesigned to match the new web portal — figure cards at the top of lists (tap one to filter), one search-and-filter bar, cleaner cards with status colours, lists grouped by day, and icon buttons for quick actions. Long explanation text has been removed so screens show only what matters.\n\nRewards & Recognition: award categories are now set by HR and Admin, with Best Employee always at the top.\n\nEvents: a Super Admin can see who added each event, on the Events page and in the Calendar."
 }

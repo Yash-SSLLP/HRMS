@@ -1,0 +1,103 @@
+/* Rewards & Recognition (2026-10-03 redesign) — pages/AdminRnr.jsx.
+   The month's status strip, the gold Best Employee hero, a card per award
+   category (a department grid for per-department ones) and the add-award card.
+   Gold mixes into --surface so it reads in light and dark. */
+
+.rnr-p-status {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; padding: 0.8rem 1rem; border-radius: 1rem;
+  background-color: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: opacity 0.15s;
+}
+.rnr-p-status.is-stale { opacity: 0.7; }
+.rnr-p-status.is-live { border-color: color-mix(in srgb, #16a34a 35%, var(--border)); background: linear-gradient(160deg, color-mix(in srgb, #16a34a 8%, var(--surface)) 0%, var(--surface) 70%); }
+.rnr-p-status-icon {
+  flex-shrink: 0; width: 2.4rem; height: 2.4rem; border-radius: 0.8rem; display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--gold-700) 90%, currentColor); background-color: color-mix(in srgb, var(--gold-500) 16%, var(--surface));
+}
+.rnr-p-status.is-live .rnr-p-status-icon { color: color-mix(in srgb, #16a34a 85%, currentColor); background-color: color-mix(in srgb, #16a34a 13%, var(--surface)); }
+.rnr-p-status-title { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.01em; }
+.rnr-p-status-sub { font-size: 0.76rem; opacity: 0.65; margin-top: 0.1rem; }
+.rnr-p-meter { flex: 0 1 12rem; height: 0.5rem; border-radius: 999px; background-color: var(--surface-3); overflow: hidden; }
+.rnr-p-meter span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--gold-700), var(--gold-300)); transition: width 0.3s ease; }
+
+/* Best Employee hero */
+.rnr-p-hero {
+  position: relative; overflow: hidden; display: grid; gap: 1.25rem; align-items: center;
+  grid-template-columns: minmax(0, 1fr) 15rem; margin-top: 1rem; padding: 1.4rem 1.5rem; border-radius: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--gold-500) 45%, var(--border));
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--gold-300) 30%, transparent) 0%, transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--gold-100) 40%, var(--surface)) 0%, var(--surface) 70%);
+  box-shadow: 0 20px 44px -30px color-mix(in srgb, var(--gold-700) 80%, transparent);
+}
+html.dark .rnr-p-hero {
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--gold-500) 18%, transparent) 0%, transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--gold-700) 14%, var(--surface)) 0%, var(--surface) 70%);
+}
+.rnr-p-hero-label {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.7rem; border-radius: 999px; margin-bottom: 0.8rem;
+  font-size: 0.74rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--gold-900) 90%, currentColor); background-color: color-mix(in srgb, var(--gold-500) 20%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--gold-500) 45%, var(--border));
+}
+html.dark .rnr-p-hero-label { color: var(--gold-300); }
+.rnr-p-hero-pick { max-width: 30rem; }
+.rnr-p-hero-main .prm-input { max-width: 30rem; }
+.rnr-p-hero-winner { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0.35rem; min-width: 0; }
+.rnr-p-hero-ring { padding: 4px; border-radius: 999px; background: conic-gradient(from 200deg, var(--gold-700), var(--gold-100), var(--gold-500), var(--gold-700)); box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--gold-700) 90%, transparent); }
+.rnr-p-hero-ring .prm-avatar { width: 5.5rem; height: 5.5rem; font-size: 1.5rem; border: 3px solid var(--surface); }
+.rnr-p-hero-name { font-size: 1.05rem; font-weight: 800; margin-top: 0.35rem; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rnr-p-hero-role { font-size: 0.74rem; opacity: 0.65; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rnr-p-hero-empty {
+  width: 6rem; height: 6rem; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--gold-500) 70%, currentColor); border: 2px dashed color-mix(in srgb, var(--gold-500) 50%, var(--border));
+  background-color: color-mix(in srgb, var(--gold-100) 25%, var(--surface));
+}
+
+/* Award categories */
+.rnr-p-grid { display: grid; gap: 0.85rem; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .rnr-p-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.rnr-p-cat {
+  display: grid; gap: 0.8rem; align-content: start; min-width: 0; padding: 1rem 1.05rem; border-radius: 1.05rem;
+  background-color: var(--surface); border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.rnr-p-cat.is-wide { grid-column: 1 / -1; }
+.rnr-p-cat-head { display: flex; align-items: center; gap: 0.7rem; }
+.rnr-p-cat-icon {
+  flex-shrink: 0; width: 2.3rem; height: 2.3rem; border-radius: 0.75rem; display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--gold-700) 90%, currentColor); background-color: color-mix(in srgb, var(--gold-500) 15%, var(--surface));
+}
+.rnr-p-cat-icon.is-add { color: color-mix(in srgb, var(--accent) 85%, currentColor); background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.rnr-p-cat-name { font-size: 0.95rem; font-weight: 800; letter-spacing: -0.01em; }
+.rnr-p-cat-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.2rem; }
+.rnr-p-scope { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.68rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 999px; background-color: var(--surface-2); border: 1px solid var(--border); }
+.rnr-p-count { font-size: 0.68rem; font-weight: 800; padding: 0.1rem 0.45rem; border-radius: 999px; color: color-mix(in srgb, var(--gold-700) 90%, currentColor); background-color: color-mix(in srgb, var(--gold-500) 14%, var(--surface)); }
+html.dark .rnr-p-count { color: var(--gold-300); }
+.rnr-p-del:hover { color: #dc2626; }
+html.dark .rnr-p-del:hover { color: #f87171; }
+.rnr-p-depts { display: grid; gap: 0.6rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+.rnr-p-dept { display: grid; gap: 0.4rem; padding: 0.6rem 0.7rem; border-radius: 0.85rem; background-color: var(--surface-2); border: 1px solid var(--border); transition: border-color 0.15s, background-color 0.15s; }
+.rnr-p-dept.is-set { border-color: color-mix(in srgb, var(--gold-500) 40%, var(--border)); background-color: color-mix(in srgb, var(--gold-100) 22%, var(--surface)); }
+html.dark .rnr-p-dept.is-set { background-color: color-mix(in srgb, var(--gold-700) 12%, var(--surface)); }
+.rnr-p-dept-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem; min-height: 1.75rem; }
+.rnr-p-dept-name { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; }
+.rnr-p-single { display: flex; align-items: center; gap: 0.7rem; }
+.rnr-p-add { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
+/* Save / announce */
+.rnr-p-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.6rem; margin-top: 1.1rem; }
+.rnr-p-announce {
+  color: var(--onyx); border-color: transparent;
+  background: linear-gradient(135deg, var(--gold-300), var(--gold-500));
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--gold-700) 90%, transparent);
+}
+.rnr-p-announce:hover:not(:disabled) { filter: brightness(1.05); }
+.rnr-p-locked { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.8rem; border-radius: 0.75rem; font-size: 0.82rem; font-weight: 700; color: color-mix(in srgb, #16a34a 85%, currentColor); background-color: color-mix(in srgb, #16a34a 10%, var(--surface)); border: 1px solid color-mix(in srgb, #16a34a 30%, var(--border)); }
+
+@media (max-width: 640px) {
+  .rnr-p-hero { grid-template-columns: minmax(0, 1fr); padding: 1.1rem; }
+  .rnr-p-hero-winner { order: -1; }
+  .rnr-p-meter { flex-basis: 100%; }
+  .rnr-p-actions .trn-btn { flex: 1 1 auto; }
+}

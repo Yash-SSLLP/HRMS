@@ -86,10 +86,6 @@ export default function EmployeeCashbook() {
         </button>
       </PageHeader>
 
-      <p className="text-sm text-gray-500 mb-4">
-        Submit a petty-cash voucher with a receipt. It stays pending until the Account Manager approves and pays it from the cashbook.
-      </p>
-
       {error && !showModal && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}

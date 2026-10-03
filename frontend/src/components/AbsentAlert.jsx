@@ -11,6 +11,7 @@
  * not also silence "nobody in the company has".
  */
 import { useEffect, useState } from 'react';
+import { FiAlertTriangle } from 'react-icons/fi';
 import { formatTime12 } from '../utils/time';
 
 // Remembered per reader per day, so it does not reappear on every visit — but a
@@ -46,29 +47,25 @@ export default function AbsentAlert({ board, date, storageKey, maxNames = 4, onS
   const named = absent.slice(0, maxNames).map((p) => p.name).join(', ');
   const more = absent.length - maxNames;
 
+  // Styling: `.pb-alert` in index.css (2026-10-03 redesign).
   return (
-    <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex flex-wrap items-start gap-3">
-      <span className="text-lg leading-none text-amber-600" aria-hidden="true">⚠</span>
-      <div className="min-w-0 flex-1 text-sm text-amber-900">
-        <div className="font-semibold">
+    <div className="pb-alert" role="status">
+      <span className="pb-alert-icon" aria-hidden="true"><FiAlertTriangle size={18} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="pb-alert-title">
           {absent.length === 1 ? '1 person has' : `${absent.length} people have`} not checked in
+          {cutoff.at && <span className="pb-alert-cut">since the {formatTime12(cutoff.at)} cut-off</span>}
         </div>
-        <div className="mt-0.5">
-          {named}{more > 0 ? ` +${more} more` : ''}
-          {cutoff.at && ` · nothing since the ${formatTime12(cutoff.at)} cut-off`}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {onSeeWho && (
-            <button type="button" onClick={onSeeWho}
-              className="px-3 py-1.5 text-sm font-medium border border-amber-400 rounded-lg bg-white text-amber-900 hover:bg-amber-100">
-              See who
-            </button>
-          )}
-          <button type="button" onClick={() => { write(key); setDismissed(true); }}
-            className="px-3 py-1.5 text-sm font-medium border border-transparent rounded-lg text-amber-800 hover:bg-amber-100">
-            Dismiss for today
-          </button>
-        </div>
+        <div className="pb-alert-names">{named}{more > 0 ? ` +${more} more` : ''}</div>
+      </div>
+      <div className="pb-alert-actions">
+        {onSeeWho && (
+          <button type="button" onClick={onSeeWho} className="trn-btn">See who</button>
+        )}
+        <button type="button" onClick={() => { write(key); setDismissed(true); }}
+          className="trn-btn pb-alert-dismiss">
+          Dismiss for today
+        </button>
       </div>
     </div>
   );

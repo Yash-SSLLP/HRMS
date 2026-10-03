@@ -29,7 +29,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiX, FiChevronDown, FiSearch } from 'react-icons/fi';
+import { FiX, FiChevronDown } from 'react-icons/fi';
 
 /** Per heading. Beyond this the answer is "keep typing", not a longer list. */
 const PER_GROUP = 20;
@@ -353,7 +353,7 @@ export default function PeoplePicker({
           <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1">
             {!flat.length && (
               <p className="px-3 py-3 text-xs text-gray-400">
-                {query ? 'Nobody matches that — try a code, a designation or a department.' : 'Nobody to choose from.'}
+                {query ? 'Nobody matches that.' : 'Nobody to choose from.'}
               </p>
             )}
 
@@ -397,7 +397,7 @@ export default function PeoplePicker({
                 })}
                 {extra > 0 && (
                   <p className="px-3 pb-1 text-[11px] text-gray-400">
-                    +{extra} more — keep typing to narrow it down
+                    +{extra} more
                   </p>
                 )}
               </div>
@@ -406,12 +406,11 @@ export default function PeoplePicker({
 
           {/* Always said, even mid-search: the first screen is a shortlist, and
               nothing else on it tells you the rest of the company is reachable. */}
-          <p className="flex shrink-0 items-center gap-1.5 border-t border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
-            <FiSearch size={11} className="shrink-0" />
-            {full && !single
-              ? `That is all ${max} — remove somebody to change it.`
-              : 'Search anyone by name, employee code, designation or department.'}
-          </p>
+          {full && !single && (
+            <p className="flex shrink-0 items-center gap-1.5 border-t border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
+              {`That is all ${max} — remove somebody to change it.`}
+            </p>
+          )}
         </div>,
         document.body
       )}

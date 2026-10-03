@@ -169,7 +169,7 @@ export default function AdminAttendanceMonth() {
 
   return (
     <div>
-      <PageHeader title="Monthly Attendance" subtitle="Whole-month view per employee · logins, logouts, late & distant punches; edit or regularize any day" />
+      <PageHeader title="Monthly Attendance" />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-4">
@@ -336,7 +336,7 @@ export default function AdminAttendanceMonth() {
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
             <h2 className="card-title mb-1">Regularize attendance</h2>
             <p className="text-sm text-gray-500 mb-4">
-              {fullName(data.employee.user)} · applied to the day's record immediately (recorded as HR-approved).
+              {fullName(data.employee.user)} · applies immediately
             </p>
             <form onSubmit={saveReg} className="space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

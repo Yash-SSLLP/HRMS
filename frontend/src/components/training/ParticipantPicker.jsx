@@ -135,7 +135,7 @@ export default function ParticipantPicker({ people = [], value = [], onChange, i
           );
         })}
         {shown.length > MAX_ROWS && (
-          <div className="px-4 py-3 text-center text-xs text-gray-500">{shown.length - MAX_ROWS} more — type a name to narrow it down.</div>
+          <div className="px-4 py-3 text-center text-xs text-gray-500">{shown.length - MAX_ROWS} more</div>
         )}
       </div>
 

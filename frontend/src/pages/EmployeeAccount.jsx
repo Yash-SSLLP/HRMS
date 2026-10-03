@@ -140,7 +140,7 @@ export default function EmployeeAccount() {
 
   return (
     <div>
-      <PageHeader title="Account & Change Requests" subtitle="Update your login or request changes to your details" />
+      <PageHeader title="Account & Change Requests" />
 
       <ProfilePhotoCard />
 
@@ -201,24 +201,13 @@ export default function EmployeeAccount() {
               <button type="submit" disabled={credBusy} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700 disabled:opacity-60">
                 {credBusy ? 'Saving…' : isSuperAdmin ? 'Update credentials' : 'Change password'}
               </button>
-              {!isSuperAdmin && (
-                <p className="text-[11px] text-gray-400">
-                  Your login email is changed by HR — ask for it under Your details.
-                </p>
-              )}
             </form>
         </div>
 
         {/* --- Request a change (not for SuperAdmin, who edits directly) --- */}
         {!isSuperAdmin && (
         <div className="bg-white shadow rounded-lg p-5">
-          <h2 className="card-title mb-1">Your details</h2>
-          <p className="text-xs text-gray-500 mb-3">
-            Fill in anything that is missing — it saves straight away.{' '}
-            {fields.some((f) => f.direct || f.spentToday)
-              ? 'Your contact and personal details save straight away too — once a day each. Change one twice in a day, or change any other filled detail, and it goes to your HR to approve.'
-              : 'Once a detail is filled, changing it needs a request your HR approves.'}
-          </p>
+          <h2 className="card-title mb-3">Your details</h2>
           <form onSubmit={submitRequest} className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Which detail?</label>
@@ -238,7 +227,7 @@ export default function EmployeeAccount() {
 
             {selected?.pending && (
               <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-                A request for this field is already pending. You can submit another once it is decided.
+                A request for this field is already pending.
               </div>
             )}
 
@@ -248,12 +237,9 @@ export default function EmployeeAccount() {
                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 min-h-[2.4rem]">
                   {selected.currentValue || <span className="italic text-gray-400">empty — you can fill this in</span>}
                 </div>
-                {!selected.isEmpty && selected.direct && (
-                  <p className="text-[11px] text-gray-500 mt-1">Changing this saves it straight away.</p>
-                )}
                 {selected.spentToday && (
                   <p className="text-[11px] text-amber-700 mt-1">
-                    You already changed this today — another change now goes to your HR to approve.
+                    Changed today — the next change needs HR approval.
                   </p>
                 )}
               </div>

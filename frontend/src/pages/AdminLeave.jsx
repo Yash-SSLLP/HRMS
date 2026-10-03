@@ -402,7 +402,6 @@ function BalancesTab({ onRefreshing }) {
             onChange={(e) => setYear(Number(e.target.value))}
             className="border rounded-lg px-2 py-1 w-24 text-sm" />
         </div>
-        <p className="text-xs text-gray-500">Balance shown as <strong>remaining</strong> / total granted. Hover for breakdown.</p>
       </div>
 
       {error && (
@@ -484,10 +483,6 @@ function BalancesTab({ onRefreshing }) {
                     className="mt-1 block w-full border rounded px-2 py-1" />
                 </div>
               </div>
-
-              <p className="text-xs text-gray-500">
-                Used days from approved requests are preserved. New balance = opening + granted − used.
-              </p>
 
               {error && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

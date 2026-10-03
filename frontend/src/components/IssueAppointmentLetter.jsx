@@ -145,9 +145,6 @@ export default function IssueAppointmentLetter({ profile, onClose, onIssued }) {
               {/* Derived from the record — shown so HR can check it BEFORE the
                   letter exists, which is the point at which a wrong designation
                   is cheap to fix. */}
-              <p className="text-[11px] text-gray-500 mb-3">
-                Taken from the employee record. To change any of it, edit the employee and issue the letter after.
-              </p>
               <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100">
                 <Fact label="Name" value={fields.name} />
                 <Fact label="Employee code" value={fields.employeeCode} />
@@ -159,11 +156,6 @@ export default function IssueAppointmentLetter({ profile, onClose, onIssued }) {
                 <Fact label="Reporting to" value={fields.reportingManager || 'Department Head / CEO'} />
                 <Fact label="Annual CTC" value={money(fields.ctcAnnual)} />
               </dl>
-              {fields.structureName && (
-                <p className="text-[11px] text-gray-500 -mt-2 mb-4">
-                  Annexure I is derived from the “{fields.structureName}” salary structure, the same split payroll uses.
-                </p>
-              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="sm:col-span-3">

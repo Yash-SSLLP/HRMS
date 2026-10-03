@@ -79,7 +79,7 @@ export default function ProfilePhotoCard() {
         </div>
         <div className="min-w-0">
           <p className="text-sm text-gray-500 mb-3">
-            Shown across the app and in chat. JPG, PNG or WebP up to 5&nbsp;MB.
+            JPG, PNG or WebP up to 5&nbsp;MB.
           </p>
           <div className="flex flex-wrap gap-2">
             <button

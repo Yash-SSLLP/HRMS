@@ -308,7 +308,6 @@ export default function AdminBillingIncentive() {
     <div>
       <PageHeader
         title="Billing Incentive"
-        subtitle="What the billing team invoiced, and the points it earned them. Read live from the billing system — nothing here is entered in the portal."
       >
         {monthOptions.length > 0 && (
           <select
@@ -351,9 +350,7 @@ export default function AdminBillingIncentive() {
         // empty month — say which, and say plainly that nobody's points are
         // lost while it is like this.
         <div className="bg-white shadow rounded-xl p-6 text-sm text-gray-500">
-          The billing feed is not set up yet, so there is nothing to read. Once the key to the
-          billing system is in place on the server this tab fills in by itself — the figures live
-          there, and no points are affected in the meantime.
+          The billing feed is not set up yet.
         </div>
       ) : (
         <>
@@ -373,9 +370,6 @@ export default function AdminBillingIncentive() {
           <p className="mb-4 text-xs text-gray-500 flex items-start gap-1.5">
             <FiInfo size={13} className="mt-0.5 shrink-0" />
             <span>
-              Nothing on this page is entered in the portal — every figure is read from the billing
-              system, which counts the units and works out the points. A figure that is wrong is
-              corrected there, and shows here on the next read.
               {data.source ? <> Source: <span className="text-gray-600">{data.source}</span>.</> : null}
               {data.generatedAt ? <> Read {fmtWhen(data.generatedAt)}.</> : null}
             </span>
@@ -394,11 +388,9 @@ export default function AdminBillingIncentive() {
               {data.range?.daysWithData
                 ? <> — {count(data.range.daysWithData)} day{data.range.daysWithData === 1 ? '' : 's'} of
                   invoices inside it</>
-                : null}. Anything invoiced earlier is not counted anywhere in the portal.
+                : null}.
               <div className="mt-1.5 text-xs text-blue-800">
-                The billing system measures a part month against a whole month&rsquo;s target, so
-                somebody who would have cleared a higher rate band over the full month may be paid
-                at the base band here. Later months are counted whole.
+                A part month may land in a lower rate band.
               </div>
             </div>
           )}
@@ -413,9 +405,7 @@ export default function AdminBillingIncentive() {
                     {failed.length} month{failed.length === 1 ? '' : 's'} could not be read from the
                     billing system.
                   </strong>{' '}
-                  Every total on this page is short by whatever those months hold, and there is no
-                  way to tell from here how much that is. Try Refresh; if it keeps failing it is the
-                  billing end that needs looking at.
+                  Totals here are short by whatever those months hold.
                   <ul className="mt-1 space-y-0.5 text-xs text-red-900">
                     {failed.map((f, i) => (
                       <li key={`${f.month}-${i}`}>{monthLabel(f.month) || f.month} — {f.error}</li>
@@ -445,7 +435,7 @@ export default function AdminBillingIncentive() {
               <strong>
                 They disagree by {points(Math.abs(recon.diff))} points — the portal is
                 {recon.diff > 0 ? ' counting more than' : ' missing'} what the billing system
-                reports, which is a fault in the join rather than anything a user did.
+                reports.
               </strong>
             )}
             {/* Said only while a search is narrowing the table, because that is
@@ -541,22 +531,13 @@ export default function AdminBillingIncentive() {
               <div className="flex items-start gap-2 mb-3">
                 <FiAlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
                 <div className="text-sm text-amber-900">
-                  <strong>
+                  <strong title="Fix it by putting the right SSL code against the name in the billing system.">
                     {shownFlagged.length > 0
                       ? `${shownFlagged.length} billing row${shownFlagged.length === 1 ? '' : 's'} ${
                         flaggedTab === 'month' ? 'this month' : 'over all time'
                       } could not be matched to anybody in the portal — worth ${points(flaggedPoints)} points.`
                       : `Nothing is unplaced ${flaggedTab === 'month' ? 'this month' : 'over all time'}.`}
                   </strong>
-                  <p className="mt-1">
-                    The two systems are joined by the SSL code the billing team types against each
-                    person. Where that code is missing, or belongs to nobody on the roster, these
-                    points are credited to <strong>nobody at all</strong> — they are not on anyone&rsquo;s
-                    leaderboard and nobody can be paid for them. The fix is to put the right SSL code
-                    against the name <strong>in the billing system</strong>, not here; there is
-                    nothing on this page that can adopt them. They appear against their person on the
-                    next read.
-                  </p>
                 </div>
               </div>
 

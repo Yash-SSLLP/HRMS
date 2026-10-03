@@ -47,7 +47,7 @@ export default function EmployeeAnnouncements() {
 
   return (
     <div>
-      <PageHeader title="Announcements" subtitle="Latest company news and updates." />
+      <PageHeader title="Announcements" />
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>

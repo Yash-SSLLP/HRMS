@@ -148,12 +148,11 @@ export default function Login() {
         <div className="flex flex-col items-center text-center mb-6">
           <BrandLockup variant="stacked" />
           <h1 className="text-2xl font-bold text-gray-900 mt-4">HRMS Portal</h1>
-          <p className="text-sm text-gray-500 mt-1">Sign in to your account</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Employee Code</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Employee Code or Email</label>
             <input
               type="text"
               required
@@ -165,9 +164,6 @@ export default function Login() {
               spellCheck={false}
               placeholder="SSL 120"
             />
-            <p className="mt-1 text-xs text-gray-500">
-              Your employee code, or your email address. An HR consultancy signs in with its name. Not case-sensitive.
-            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
@@ -238,13 +234,10 @@ export default function Login() {
       {showReset && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-2xl shadow-lg w-full max-w-lg p-6">
-            <div className="flex items-start justify-between mb-1">
+            <div className="flex items-start justify-between mb-4">
               <h2 className="text-lg font-bold text-gray-900">Password reset request</h2>
               <button type="button" aria-label="Close" title="Close" onClick={() => setShowReset(false)} className="topbar-icon-btn shrink-0">×</button>
             </div>
-            <p className="text-xs text-gray-500 mb-4">
-              Fill in your details and HR will reset your password for you.
-            </p>
 
             {resetMsg ? (
               <div className="space-y-4">

@@ -366,14 +366,14 @@ export default function ConsultancyJobs() {
       {/* …and what has happened to that job since. */}
       {r.status === 'Approved' && r.jobState === 'Deleted' && (
         <p className="mt-1 text-xs text-red-700">
-          The job was later deleted{r.jobDeletedByName ? ` by ${r.jobDeletedByName}` : ''}{r.jobDeletedAt ? ` on ${fmtDate(r.jobDeletedAt)}` : ''}, so it no longer takes candidates.
+          The job was later deleted{r.jobDeletedByName ? ` by ${r.jobDeletedByName}` : ''}{r.jobDeletedAt ? ` on ${fmtDate(r.jobDeletedAt)}` : ''}.
         </p>
       )}
       {r.status === 'Approved' && r.jobState === 'Closed' && (
-        <p className="mt-1 text-xs text-gray-500">The job has since been closed, so it no longer takes candidates.</p>
+        <p className="mt-1 text-xs text-gray-500">The job has since been closed.</p>
       )}
       {r.status === 'Approved' && r.jobState === 'OnHold' && (
-        <p className="mt-1 text-xs text-amber-700">The job is on hold for now — candidates can be added once it reopens.</p>
+        <p className="mt-1 text-xs text-amber-700">The job is on hold.</p>
       )}
       {r.status === 'Rejected' && (
         <p className="mt-3 text-xs text-red-700">
@@ -422,7 +422,7 @@ export default function ConsultancyJobs() {
   const list = external && tab === 'open' ? shownJobs : shownRequests;
   const emptyText = external
     ? (tab === 'open'
-      ? 'There are no open jobs right now. If you have a requirement, request a new opening.'
+      ? 'There are no open jobs right now.'
       : 'You have not requested any openings yet.')
     : ({
       Pending: 'No job-opening requests are waiting for a decision.',
@@ -433,12 +433,7 @@ export default function ConsultancyJobs() {
 
   return (
     <div>
-      <PageHeader
-        title={external ? 'Job Openings' : 'Consultancy Job Requests'}
-        subtitle={external
-          ? 'The company’s open jobs you can add candidates to · request a new opening when you have a requirement that is not listed'
-          : 'Openings HR consultancies have asked for · approve one to open it as a job, or reject it with a note for the consultancy'}
-      >
+      <PageHeader title={external ? 'Job Openings' : 'Consultancy Job Requests'}>
         {external && (
           <button type="button" onClick={() => { setForm(blankRequest); setAsking(true); }}
             className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
@@ -502,11 +497,10 @@ export default function ConsultancyJobs() {
       {asking && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <div className="flex items-start justify-between gap-3 mb-1">
+            <div className="flex items-start justify-between gap-3 mb-4">
               <h2 className="card-title">Request a new opening</h2>
               <button type="button" aria-label="Close" onClick={() => setAsking(false)} className="topbar-icon-btn shrink-0">×</button>
             </div>
-            <p className="text-xs text-gray-500 mb-4">HR, the CEO/MD or an administrator approves it — you can add candidates as soon as it opens.</p>
             <form onSubmit={submitRequest} className="space-y-3">
               <input required placeholder="Job title *" value={form.title} maxLength={120}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -535,8 +529,7 @@ export default function ConsultancyJobs() {
                     </select>
                   </label>
                 )}
-                <LocationsField value={form.locations} onChange={(v) => setForm({ ...form, locations: v })}
-                  hint="Where the role is based. The company confirms the places when it opens the job." />
+                <LocationsField value={form.locations} onChange={(v) => setForm({ ...form, locations: v })} />
               </div>
               <textarea rows={4} placeholder="Job description — responsibilities, skills, experience" value={form.description} maxLength={4000}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -565,7 +558,7 @@ export default function ConsultancyJobs() {
               <button type="button" aria-label="Close" onClick={() => setApproving(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
             <p className="text-xs text-gray-500 mb-4">
-              Requested by {approving.requestedByName || 'a consultancy'}. Check the details — the job opens exactly as saved here, and they are told it is open.
+              Requested by {approving.requestedByName || 'a consultancy'}.
             </p>
             <form onSubmit={approve} className="space-y-3">
               <input required placeholder="Title *" value={jobForm.title} maxLength={120}

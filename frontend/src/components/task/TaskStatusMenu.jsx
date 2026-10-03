@@ -196,7 +196,7 @@ export default function TaskStatusMenu({ task, onAction, onOpen, viewOnly = fals
 
           {actions.length === 0 && (
             <p className="px-3 pb-2 text-xs text-gray-500">
-              Nothing for you to change on this one right now.
+              Nothing to change right now.
             </p>
           )}
 
@@ -215,7 +215,6 @@ export default function TaskStatusMenu({ task, onAction, onOpen, viewOnly = fals
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-gray-900">{a.label}</span>
-                  <span className="block text-xs leading-snug text-gray-500">{a.hint}</span>
                 </span>
               </button>
             );

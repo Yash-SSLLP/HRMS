@@ -242,15 +242,10 @@ export default function EmployeeDocuments() {
         const missingSelf = missing.filter((c) => categories.includes(c));
         // Which of the outstanding ones can be ANSWERED rather than uploaded — the
         // panel points at the tick boxes only when one of them would actually help.
-        const waivableMissing = missing.filter((c) => Object.keys(waivable).includes(c));
         const missingHr = missing.filter((c) => hrOnly.includes(c));
         return (
           <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
             <div className="text-sm font-semibold text-amber-900">Documents to submit ({missing.length})</div>
-            <p className="text-xs text-amber-800 mt-0.5">
-              Please upload the required documents below{missingHr.length ? ' - items marked “HR” are added for you by HR' : ''}.
-              {waivableMissing.length ? ' If one of these does not exist for you, say so below instead of uploading it.' : ''}
-            </p>
             <div className="flex flex-wrap gap-2 mt-2.5">
               {missingSelf.map((c) => (
                 <button key={c} type="button"
@@ -272,11 +267,7 @@ export default function EmployeeDocuments() {
           disappears once nothing is outstanding — and un-ticking a box you ticked
           by mistake has to stay possible. */}
       <div className="bg-white shadow rounded-lg p-5 mb-6">
-        <h2 className="card-title mb-1">Nothing to submit for these?</h2>
-        <p className="text-xs text-gray-500 mb-3">
-          Tick a box and that document stops being asked of you. HR can see what you
-          said and when. Un-tick it any time.
-        </p>
+        <h2 className="card-title mb-3">Nothing to submit for these?</h2>
         <label className="flex items-start gap-2 text-sm text-gray-800 mb-2 cursor-pointer">
           <input type="checkbox" className="mt-0.5" disabled={savingDecl}
             checked={!!declarations.firstJob}
@@ -326,15 +317,12 @@ export default function EmployeeDocuments() {
               goes rather than letting the old one vanish unannounced. */}
           {!multi.includes(category) && docs.some((d) => d.category === category && d.status !== 'Verified') && (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              You already have a {humanize(category)} awaiting verification — uploading here replaces it.
+              Uploading here replaces your pending {humanize(category)}.
             </p>
           )}
           {/* Stacked on a phone: beside the button the note ran as a narrow
               column right up against it (the row has no gap). */}
-          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-0">
-            <p className="text-xs text-gray-500">
-              Documents like Offer Letter, Appraisal etc. ({hrOnly.join(', ')}) are uploaded by HR.
-            </p>
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-0">
             <button type="submit" disabled={uploading}
               className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60 text-sm">
               {uploading ? 'Uploading…' : 'Upload'}

@@ -280,7 +280,7 @@ export default function EmployeeTrainings() {
 
   return (
     <div>
-      <PageHeader title="My Trainings" subtitle="Your sessions — join from here, get the files, and say how clear each one was." />
+      <PageHeader title="My Trainings" />
       {error && <div className="trn-note is-warn text-gray-700 mb-4">{error}</div>}
 
       {loading ? (
@@ -288,7 +288,6 @@ export default function EmployeeTrainings() {
       ) : trainings.length === 0 ? (
         <div className="trn-card-base">
           <EmptyState icon={FiBookOpen} title="No trainings yet">
-            When you are added to a training it shows up here — with the date and time, the join link and any files.
           </EmptyState>
         </div>
       ) : (
@@ -319,7 +318,6 @@ export default function EmployeeTrainings() {
           {listForTab.length === 0 ? (
             <div className="trn-card-base">
               <EmptyState icon={tab === 'completed' ? FiCheckCircle : FiCalendar} title={tab === 'completed' ? 'Nothing completed yet' : hero && tab === 'upcoming' ? 'Nothing else coming up' : 'Nothing here'}>
-                {tab === 'upcoming' ? 'New sessions appear here as soon as you are added — you get a notification too.' : null}
               </EmptyState>
             </div>
           ) : (

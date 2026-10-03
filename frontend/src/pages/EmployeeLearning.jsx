@@ -89,7 +89,7 @@ export default function EmployeeLearning() {
       {loading ? (
         <div className="space-y-2 py-1"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
       ) : approved.length === 0 ? (
-        <p className="text-sm text-gray-500 mb-8">No active courses yet. Request one from the catalog below, or wait to be assigned.</p>
+        <p className="text-sm text-gray-500 mb-8">No active courses yet.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
           {approved.map((e) => (

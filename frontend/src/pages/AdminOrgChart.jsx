@@ -17,6 +17,10 @@
  * company before anything renders.
  */
 import { useEffect, useRef, useState } from 'react';
+import {
+  FiMinus, FiPlus, FiChevronLeft, FiChevronRight, FiBriefcase, FiUsers, FiGitBranch, FiLayers,
+} from 'react-icons/fi';
+import '../styles/pages/org-help.css';
 import api from '../api/client';
 import { COMPANY_NAME } from '../config/company';
 import PageHeader from '../components/PageHeader';
@@ -49,6 +53,26 @@ const ASSIGNABLE_ROLES = ROLES;
 const ROOT_COLOR = 'var(--org-root, #111827)';
 const BRANCH_COLOR = '#f59e0b';
 const LEAF_COLOR = '#2563eb';
+
+// A quiet hue per department, so a branch of one team reads as one colour
+// family at a glance (the card's head band and its department chip). Hashed
+// from the name, so the same department is the same colour on every visit.
+const DEPT_HUES = ['#6366f1', '#0ea5e9', '#0d9488', '#8b5cf6', '#16a34a', '#d97706', '#db2777', '#0891b2', '#ea580c', '#64748b'];
+function deptHue(name) {
+  if (!name) return null;
+  let h = 0;
+  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return DEPT_HUES[h % DEPT_HUES.length];
+}
+
+// How many people on the chart have someone reporting to them.
+function countManagers(nodes) {
+  let n = 0;
+  for (const node of nodes) {
+    if (node.reports?.length) n += 1 + countManagers(node.reports);
+  }
+  return n;
+}
 
 // Derive up-to-two-letter initials from a full name.
 function initials(name) {
@@ -102,7 +126,7 @@ function branchOf(roots, id) {
 function NodeCard({ node, depth, editable, selectedId, myId, onSelect, showCompany }) {
   const hasReports = Array.isArray(node.reports) && node.reports.length > 0;
   const color = depth === 0 ? ROOT_COLOR : hasReports ? BRANCH_COLOR : LEAF_COLOR;
-  const meta = [node.designation, node.department].filter(Boolean).join(' · ');
+  const hue = deptHue(node.department);
   const isCeo = node.role === 'CEO';
   const isExec = node.role === 'CEO' || node.role === 'MD';
   const isMe = myId && String(node.id) === String(myId);
@@ -113,15 +137,18 @@ function NodeCard({ node, depth, editable, selectedId, myId, onSelect, showCompa
   // a profile; the panel disables just that control when there isn't one.
   const canEdit = editable;
 
-  // Highlight the viewer's own node: a green ring on the avatar (coexists with
-  // the selection outline) plus a "You" badge.
-  const dotShadow = isMe ? '0 0 0 3px #10b981, 0 0 0 6px rgba(16,185,129,0.25)' : 'none';
+  // Highlight the viewer's own node: a green ring on the avatar plus a "You"
+  // badge. Everyone else's ring is their level colour, so a photo still says
+  // manager / individual. The selected card carries an accent ring.
+  const ring = isMe ? '#10b981' : color;
+  const isSelected = selectedId === node.id;
 
   return (
     <div
       // rounded-xl + shadow are load-bearing, not decoration: index.css gives
       // that pair the app-wide card hairline that adapts to dark mode.
-      className={`org-node rounded-xl shadow ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''}`}
+      className={`org-node rounded-xl shadow ${canEdit ? 'is-editable' : ''} ${isMe ? 'is-me' : ''} ${isSelected ? 'is-selected' : ''}`}
+      style={hue ? { '--oc-hue': hue } : undefined}
       onClick={() => canEdit && onSelect(node)}
       title={isMe ? 'This is you'
         : canEdit && !node.profileId ? `${node.name} — click to change role (no employee profile, so no manager)`
@@ -131,7 +158,7 @@ function NodeCard({ node, depth, editable, selectedId, myId, onSelect, showCompa
       <span
         className={`org-dot ${isCeo ? 'org-dot--ceo' : ''}`}
         title={isCeo ? 'CEO' : undefined}
-        style={{ background: color, outline: selectedId === node.id ? '3px solid var(--accent)' : 'none', outlineOffset: '2px', overflow: 'hidden', boxShadow: dotShadow }}
+        style={{ background: color, '--oc-ring': ring, overflow: 'hidden' }}
       >
         {node.hasPhoto ? (
           <AuthImage
@@ -145,17 +172,14 @@ function NodeCard({ node, depth, editable, selectedId, myId, onSelect, showCompa
       </span>
       <span className="org-name">
         {node.name || 'Unnamed'}
-        {isMe && (
-          <span style={{ marginLeft: 6, fontSize: '0.65rem', fontWeight: 700, color: '#047857', background: '#d1fae5', borderRadius: 9999, padding: '1px 6px', verticalAlign: 'middle' }}>
-            You
-          </span>
-        )}
+        {isMe && <span className="oc-you">You</span>}
       </span>
-      {meta && <span className="org-meta">{meta}</span>}
+      {node.designation && <span className="oc-role">{node.designation}</span>}
+      {node.department && <span className="oc-dept">{node.department}</span>}
       {/* Only while every company is on screen at once — repeating the same
           company name on every node of a filtered chart is pure noise. */}
       {showCompany && node.companyName && (
-        <span className="org-meta" style={{ opacity: 0.75 }}>{node.companyName}</span>
+        <span className="oc-company"><FiBriefcase size={10} aria-hidden="true" />{node.companyName}</span>
       )}
     </div>
   );
@@ -337,6 +361,8 @@ export default function AdminOrgChart() {
         : COMPANY_NAME);
 
   const everyone = flatten(roots);
+  const managerCount = countManagers(roots);
+  const deptCount = new Set(everyone.map((p) => p.department).filter(Boolean)).size;
   // The selected card's own branch, and where it sits in it. This is what the
   // ◀ ▶ buttons move it through: a card only ever changes places with the people
   // it already shares a manager with, so arranging a branch can never be
@@ -428,62 +454,103 @@ export default function AdminOrgChart() {
 
   return (
     <div>
-      <PageHeader
-        title="Org Chart"
-        subtitle={isSuperAdmin ? 'Reporting hierarchy · click a person to set who they report to' : 'Reporting hierarchy'}
-      >
-        {/* Only worth a picker when there is more than one company to pick:
-            an account scoped to a single company sees just that chart (the
-            server walls the data anyway), so a filter would be noise. */}
-        {isMultiCompanyViewer && companies.length > 1 && (
-          <select
-            value={company}
-            onChange={(e) => onCompanyChange(e.target.value)}
-            aria-label="Show a company"
-            className="border rounded-lg px-3 py-2 text-sm text-gray-700"
-          >
-            <option value="">All companies</option>
-            {companies.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
-          </select>
-        )}
+      <PageHeader title="Org Chart" />
 
-        {/* Zoom. A wide hierarchy does not fit a laptop at full size, and the
-            board already scrolls — shrinking it is how you see the shape. */}
-        {/* items-stretch, not items-center: the readout in the middle is text-xs
-            against the +/− buttons' text-sm, so centred it stood 32px inside a
-            36px group and its own border-x dividers stopped 2px short at each
-            end — visible gaps in the segmented control's separators. Stretching
-            lets every segment run the full height whatever type each carries. */}
-        <div className="inline-flex items-stretch rounded-lg border border-gray-300 overflow-hidden">
-          <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}
-            aria-label="Zoom out" title="Zoom out"
-            className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">−</button>
-          <button type="button" onClick={() => { userZoomed.current = true; setZoom(1); }} title="Reset zoom to 100%"
-            className="px-2 py-2 text-xs tabular-nums text-gray-600 border-x border-gray-300 hover:bg-gray-50 min-w-[3.25rem]">
-            {Math.round(zoom * 100)}%
-          </button>
-          <button type="button" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}
-            aria-label="Zoom in" title="Zoom in"
-            className="px-2.5 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">+</button>
+      {/* One bar: whose chart this is and how big it is, then the company
+          filter and the zoom. */}
+      <div className="pb-toolbar oc-bar">
+        <div className="oc-co">
+          <span className="oc-co-icon" aria-hidden="true"><FiBriefcase size={19} /></span>
+          <div className="min-w-0">
+            <div className="oc-co-title">
+              {loading && !companies.length ? <span className="skeleton oc-skel-title" /> : heading}
+            </div>
+            {!loading && roots.length > 0 && (
+              <div className="oc-co-stats">
+                <span className="oc-stat"><FiUsers size={12} aria-hidden="true" />{everyone.length} {everyone.length === 1 ? 'person' : 'people'}</span>
+                {managerCount > 0 && (
+                  <span className="oc-stat"><FiGitBranch size={12} aria-hidden="true" />{managerCount} {managerCount === 1 ? 'manager' : 'managers'}</span>
+                )}
+                {deptCount > 0 && (
+                  <span className="oc-stat"><FiLayers size={12} aria-hidden="true" />{deptCount} {deptCount === 1 ? 'department' : 'departments'}</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        <span className="hidden md:inline text-xs text-gray-400 self-center">Ctrl + scroll to zoom</span>
-      </PageHeader>
+
+        <div className="pb-toolbar-end">
+          {/* Only worth a picker when there is more than one company to pick:
+              an account scoped to a single company sees just that chart (the
+              server walls the data anyway), so a filter would be noise. */}
+          {isMultiCompanyViewer && companies.length > 1 && (
+            <select
+              value={company}
+              onChange={(e) => onCompanyChange(e.target.value)}
+              aria-label="Show a company"
+              className="trn-select oc-select"
+            >
+              <option value="">All companies</option>
+              {companies.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+            </select>
+          )}
+
+          {/* Zoom. A wide hierarchy does not fit a laptop at full size, and the
+              board already scrolls — shrinking it is how you see the shape.
+              Ctrl + scroll does the same on the board itself (the tooltips). */}
+          <div className="oc-zoom" role="group" aria-label="Zoom">
+            <button type="button" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN}
+              aria-label="Zoom out" title="Zoom out (Ctrl + scroll)"
+              className="oc-zoom-btn"><FiMinus size={15} /></button>
+            <button type="button" onClick={() => { userZoomed.current = true; setZoom(1); }}
+              title="Reset zoom to 100% (Ctrl + scroll to zoom)"
+              className="oc-zoom-val">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button type="button" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX}
+              aria-label="Zoom in" title="Zoom in (Ctrl + scroll)"
+              className="oc-zoom-btn"><FiPlus size={15} /></button>
+          </div>
+        </div>
+      </div>
 
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
       {isSuperAdmin && selected && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 bg-white shadow rounded-lg px-4 py-3 text-sm">
-          <span className="text-gray-700">
-            <span className="font-semibold">{selected.name}</span> reports to:
-          </span>
-          <SearchableSelect
-            value={selected.managerId || ''}
-            disabled={savingId === selected.id || !selected.profileId}
-            onChange={(e) => onSetManager(selected, e.target.value)}
-            className="border rounded-lg px-2 py-1 max-w-[14rem]"
-          >
+        <div className="oc-edit">
+          <div className="oc-edit-who">
+            <span className="oc-edit-av" aria-hidden="true">
+              {selected.hasPhoto ? (
+                <AuthImage
+                  url={`/auth/users/${selected.id}/avatar`}
+                  alt=""
+                  className="w-full h-full rounded-full object-cover"
+                  style={{ width: '100%', height: '100%' }}
+                  fallback={<span>{initials(selected.name)}</span>}
+                />
+              ) : initials(selected.name)}
+            </span>
+            <div className="min-w-0">
+              <div className="oc-edit-name">{selected.name}</div>
+              {(selected.designation || selected.department) && (
+                <div className="oc-edit-sub">
+                  {[selected.designation, selected.department].filter(Boolean).join(' · ')}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="oc-edit-fields">
+            <div className="oc-field">
+              <span className="prm-label">Reports to</span>
+              <SearchableSelect
+                value={selected.managerId || ''}
+                disabled={savingId === selected.id || !selected.profileId}
+                onChange={(e) => onSetManager(selected, e.target.value)}
+                className="trn-select oc-pick"
+              >
             <option value="">Top level</option>
             {/* The person's own department and the executives lead, because
                 those are the normal choices. Everyone else is still offered
@@ -530,61 +597,72 @@ export default function AdminOrgChart() {
                 </>
               );
             })()}
-          </SearchableSelect>
-          {!selected.profileId && (
-            <span className="text-xs text-gray-400 italic">(no employee profile — role only)</span>
-          )}
-          <span className="text-gray-700">· role:</span>
-          <select
-            value={selected.role || 'Employee'}
-            disabled={savingId === selected.id}
-            onChange={(e) => onSetRole(selected, e.target.value)}
-            className="border rounded-lg px-2 py-1"
-          >
-            {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-          </select>
-          {/* WHERE THE CARD SITS AMONG ITS OWN SIBLINGS. Hidden when it has
-              none to trade places with — a lone child has only one position and
-              two dead buttons would say otherwise. Same padding as the zoom
-              control in the header so the segmented pair matches the selects
-              beside it rather than sitting a few pixels short. */}
-          {siblings.length > 1 && position >= 0 && (
-            <>
-              <span className="text-gray-700">· position:</span>
-              <div className="inline-flex items-stretch rounded-lg border border-gray-300 overflow-hidden">
-                <button type="button" onClick={() => onMove(-1)}
-                  disabled={savingId === selected.id || position === 0}
-                  aria-label="Move left" title="Move one place left, among the people who share this manager"
-                  className="px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">◀</button>
-                <span className="px-2 py-1.5 text-xs tabular-nums text-gray-600 border-x border-gray-300 self-center">
-                  {position + 1} of {siblings.length}
-                </span>
-                <button type="button" onClick={() => onMove(1)}
-                  disabled={savingId === selected.id || position === siblings.length - 1}
-                  aria-label="Move right" title="Move one place right, among the people who share this manager"
-                  className="px-2.5 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">▶</button>
+              </SearchableSelect>
+              {!selected.profileId && (
+                <span className="oc-note">No employee profile — role only</span>
+              )}
+            </div>
+
+            <div className="oc-field">
+              <span className="prm-label">Role</span>
+              <select
+                value={selected.role || 'Employee'}
+                disabled={savingId === selected.id}
+                onChange={(e) => onSetRole(selected, e.target.value)}
+                aria-label="Role"
+                className="trn-select oc-select"
+              >
+                {ASSIGNABLE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+              </select>
+            </div>
+
+            {/* WHERE THE CARD SITS AMONG ITS OWN SIBLINGS. Hidden when it has
+                none to trade places with — a lone child has only one position
+                and two dead buttons would say otherwise. */}
+            {siblings.length > 1 && position >= 0 && (
+              <div className="oc-field">
+                <span className="prm-label">Position</span>
+                <div className="oc-zoom" role="group" aria-label="Position">
+                  <button type="button" onClick={() => onMove(-1)}
+                    disabled={savingId === selected.id || position === 0}
+                    aria-label="Move left" title="Move one place left, among the people who share this manager"
+                    className="oc-zoom-btn"><FiChevronLeft size={16} /></button>
+                  <span className="oc-zoom-val is-static">
+                    {position + 1} of {siblings.length}
+                  </span>
+                  <button type="button" onClick={() => onMove(1)}
+                    disabled={savingId === selected.id || position === siblings.length - 1}
+                    aria-label="Move right" title="Move one place right, among the people who share this manager"
+                    className="oc-zoom-btn"><FiChevronRight size={16} /></button>
+                </div>
               </div>
-            </>
-          )}
-          {/* hover:underline is the portal's row-action convention, not a
-              decoration: index.css turns it into the standard compact outlined
-              pill, which is how this ends up the same height as the two selects
-              beside it instead of a bare px-2 word with no affordance. */}
-          <button onClick={() => setSelected(null)} className="text-gray-500 hover:text-gray-800 hover:underline">Done</button>
+            )}
+          </div>
+
+          <button type="button" onClick={() => setSelected(null)} className="trn-btn oc-done">Done</button>
         </div>
       )}
 
-      <div className="bg-white shadow rounded-lg p-5">
-        {loading && <p className="text-sm text-gray-500">Loading org chart…</p>}
+      <div className="oc-card">
+        {loading && (
+          <div className="oc-skel" aria-busy="true" aria-label="Loading org chart">
+            <div className="skeleton oc-skel-root" />
+            <div className="oc-skel-row">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton oc-skel-node" />)}
+            </div>
+          </div>
+        )}
 
         {!loading && roots.length === 0 && (
-          <p className="text-sm text-gray-500">No employees to display.</p>
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiUsers size={24} /></span>
+            <p className="text-sm font-semibold">No employees to display.</p>
+          </div>
         )}
 
         {!loading && roots.length > 0 && (
           <>
-            <h2 className="text-center text-2xl font-bold text-gray-900 mb-2">{heading}</h2>
-            <div className="org-tree-wrap" ref={wrapRef}>
+            <div className="org-tree-wrap oc-board" ref={wrapRef}>
               {/* The scale sits on an inner wrapper, not on .org-tree-wrap
                   itself: the wrapper is what scrolls. CSS `zoom` rather than a
                   transform: zoom participates in LAYOUT, so a shrunk tree
@@ -624,10 +702,10 @@ export default function AdminOrgChart() {
             </div>
 
             {/* Legend */}
-            <div className="flex items-center justify-center gap-4 mt-4 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: ROOT_COLOR }} /> Company</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: BRANCH_COLOR }} /> Manager</span>
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full" style={{ background: LEAF_COLOR }} /> Individual</span>
+            <div className="oc-legend">
+              <span className="oc-legend-item"><span className="oc-legend-dot" style={{ background: ROOT_COLOR }} /> Company</span>
+              <span className="oc-legend-item"><span className="oc-legend-dot" style={{ background: BRANCH_COLOR }} /> Manager</span>
+              <span className="oc-legend-item"><span className="oc-legend-dot" style={{ background: LEAF_COLOR }} /> Individual</span>
             </div>
           </>
         )}

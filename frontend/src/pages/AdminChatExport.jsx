@@ -82,7 +82,7 @@ export default function AdminChatExport() {
 
   return (
     <div>
-      <PageHeader title="Chat Export" subtitle="Extract the full conversation between any two people · including messages they deleted from their own view" />
+      <PageHeader title="Chat Export" />
 
       <div className="bg-white shadow rounded-lg p-4 mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
         <div>

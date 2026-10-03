@@ -212,10 +212,7 @@ export default function AdminAccountSecurity() {
 
   return (
     <div>
-      <PageHeader
-        title="Passwords & Access"
-        subtitle="Who can sign in, how old their password is, and setting a new one"
-      />
+      <PageHeader title="Passwords & Access" />
 
       {/* Says the thing this page will be opened expecting, rather than leaving
           someone hunting for a column that cannot exist. */}
@@ -223,14 +220,6 @@ export default function AdminAccountSecurity() {
         <span className="stat-icon bg-violet-100 text-violet-600 shrink-0"><FiShield /></span>
         <div className="text-sm text-gray-600">
           <p className="font-semibold text-gray-900">Passwords can&apos;t be displayed — not even here.</p>
-          <p className="mt-1">
-            Every password is hashed before it is stored, which is a one-way operation: the server keeps
-            only enough to check a login attempt, never the password itself. Nothing on this screen, in the
-            database, or in a backup can turn that back into readable text. If someone is locked out, set
-            them a new password below and tell them what you typed — then they replace it on the way in.
-            If they can still sign in and the password is merely stale, use <b>Ask to change</b> instead: it leaves
-            their password working and makes them choose a new one at their next sign-in.
-          </p>
         </div>
       </div>
 

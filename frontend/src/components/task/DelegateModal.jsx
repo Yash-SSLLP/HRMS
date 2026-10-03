@@ -213,11 +213,11 @@ export function PieceEditor({
             shared out — <strong className="text-gray-900">{left}</strong> {remainderLabel}
           </span>
         </div>
-        <p className="mt-1 text-[11px] text-gray-500">
-          {over > 0
-            ? `That is ${over} point${over === 1 ? '' : 's'} more than this task has left. Lower a figure to carry on.`
-            : 'Shared out equally until you type a figure. Typing one pins that piece and re-shares the rest.'}
-        </p>
+        {over > 0 && (
+          <p className="mt-1 text-[11px] text-gray-500">
+            {`${over} point${over === 1 ? '' : 's'} more than this task has left.`}
+          </p>
+        )}
       </div>
 
       {/* ── Same person, every piece ─────────────────────────────── */}
@@ -341,7 +341,6 @@ export function PieceEditor({
                   className="min-h-[40px] w-full rounded-xl border border-gray-200 px-3 text-sm"
                   aria-label={`Deadline for piece ${i + 1}`}
                 />
-                <p className="mt-1 text-[11px] text-gray-400">the task&apos;s, if left blank</p>
               </div>
             </div>
 
@@ -375,11 +374,6 @@ export function PieceEditor({
                   onChange={(ids) => set(i, { openTo: ids })}
                   placeholder="Your team"
                 />
-                <p className="mt-1.5 text-[11px] text-gray-500">
-                  Nobody is named for this piece, so it is offered to these people and
-                  <strong> the first one to pick it up gets it</strong>.
-                  {(row.openTo || []).length === 0 && ' Left empty, it goes to your own team.'}
-                </p>
               </div>
             )}
           </div>
@@ -537,11 +531,9 @@ export default function DelegateModal({
           {mayGiveWhole && maySplit && (
             <div className="grid gap-2 sm:grid-cols-2">
               {[
-                ['whole', FiUserPlus, 'Give the whole task to one person',
-                  'They pick it up as it stands and it stays one task.'],
-                ['split', FiGitBranch, 'Split it into pieces',
-                  'Several people, a piece each, the points shared out.'],
-              ].map(([key, Icon, title, blurb]) => {
+                ['whole', FiUserPlus, 'Give the whole task to one person'],
+                ['split', FiGitBranch, 'Split it into pieces'],
+              ].map(([key, Icon, title]) => {
                 const on = mode === key;
                 return (
                   <button
@@ -558,7 +550,6 @@ export default function DelegateModal({
                     <span className="flex items-center gap-1.5 text-gray-900">
                       <Icon size={14} className="shrink-0" /> {title}
                     </span>
-                    <span className="mt-1 block text-[11px] font-normal text-gray-500">{blurb}</span>
                   </button>
                 );
               })}
@@ -567,10 +558,7 @@ export default function DelegateModal({
 
           {/* ── Who signs it off ─────────────────────────────────── */}
           <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            <strong>You will be the one to approve this.</strong>{' '}
-            {splitting
-              ? 'Every piece comes back to you when it is handed in, whoever set the task originally.'
-              : 'When they submit it, it lands in your queue rather than with whoever set it.'}
+            <strong>You will approve this.</strong>
           </p>
 
           {/* ── Whole ───────────────────────────────────────────── */}
@@ -584,7 +572,6 @@ export default function DelegateModal({
                 onChange={setTo}
                 max={1}
                 placeholder="Choose somebody…"
-                hint="Your own team first — search anyone by name, code, designation or department."
               />
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500" htmlFor="delegate-note">
@@ -600,11 +587,6 @@ export default function DelegateModal({
                   className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-sm"
                 />
               </div>
-              <p className="text-[11px] text-gray-500">
-                They start fresh — it is theirs to accept or decline — and you keep hearing
-                about every move on it. A task cannot be passed <em>up</em> the line any more
-                than it can be assigned up it.
-              </p>
             </div>
           )}
 
@@ -614,8 +596,7 @@ export default function DelegateModal({
               {budget <= 0 && (
                 <p className="inline-flex w-full items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                   <FiAlertTriangle className="mt-0.5 shrink-0" size={13} />
-                  This task has no points left to share out — the pieces will be worth nothing
-                  until the task&apos;s own points are raised.
+                  No points left to share — the pieces will be worth nothing.
                 </p>
               )}
               <PieceEditor

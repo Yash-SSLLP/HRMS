@@ -10,6 +10,8 @@ const eventSchema = new mongoose.Schema(
     location: { type: String, trim: true },
     description: { type: String, trim: true, maxlength: 5000 },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    // Who saved the last edit. Like createdBy, only ever shown to a Super Admin.
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }
 );

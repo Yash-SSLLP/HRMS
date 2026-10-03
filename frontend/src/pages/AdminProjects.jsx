@@ -171,7 +171,6 @@ export default function AdminProjects() {
                   className="mt-1 block w-full border rounded-lg px-3 py-2">
                   {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: form.members })}
                 </SearchableSelect>
-                <p className="text-xs text-gray-400 mt-1">Search and tick everyone who should be on this project.</p>
               </div>
               {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="flex justify-end gap-2 pt-2">

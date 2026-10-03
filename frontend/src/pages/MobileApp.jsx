@@ -114,9 +114,6 @@ export default function MobileApp({ standalone = false }) {
               <div className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
                 Installing on your phone
               </div>
-              <p className="text-sm text-gray-600">
-                Open this link on the phone itself — no sign-in needed to download:
-              </p>
               <div className="mt-2 flex gap-2">
                 <input
                   readOnly
@@ -140,7 +137,7 @@ export default function MobileApp({ standalone = false }) {
               </ol>
               <p className="mt-3 text-xs text-gray-500 flex items-start gap-1.5">
                 <FiAlertTriangle size={13} className="shrink-0 mt-0.5" aria-hidden="true" />
-                Updating: install this over your existing app — your data stays. There is no iPhone build.
+                No iPhone build. Install over the existing app to update.
               </p>
             </div>
           </>
@@ -156,7 +153,7 @@ export default function MobileApp({ standalone = false }) {
       <div className="min-h-screen bg-gray-50 py-10 px-4">
         <div className="max-w-2xl mx-auto">
           <h1 className="text-2xl font-bold text-gray-900 mb-1">Get the HRMS app</h1>
-          <p className="text-sm text-gray-500 mb-6">Android · install and sign in with your employee code</p>
+          <p className="text-sm text-gray-500 mb-6">Android app</p>
           {body}
         </div>
       </div>
@@ -165,7 +162,7 @@ export default function MobileApp({ standalone = false }) {
 
   return (
     <div>
-      <PageHeader title="Mobile App" subtitle="Download the Android app, or update to the latest build" />
+      <PageHeader title="Mobile App" />
       {body}
     </div>
   );

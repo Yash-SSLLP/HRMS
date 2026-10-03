@@ -291,10 +291,6 @@ export default function AdminEmployeeDetail() {
             {docBusy ? 'Generating…' : 'Generate submission link'}
           </button>
         )}
-        <p className="text-xs text-gray-500 mb-3">
-          Share this link with {fullName(u) || 'the employee'} to collect documents. Submitted files — and the
-          offer and appointment letters the portal issued — appear below for you to verify.
-        </p>
 
         {docs.length === 0 ? (
           <p className="text-sm text-gray-400 italic">No documents on file yet.</p>

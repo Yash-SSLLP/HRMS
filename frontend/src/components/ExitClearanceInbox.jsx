@@ -143,7 +143,7 @@ export default function ExitClearanceInbox({ onCount }) {
       {/* No inner card — ApprovalsBoard's section card is the surface. */}
       {tab === 'pending' && <div>
         {rows.length === 0 ? (
-          <ApprovalsEmpty message="No no-dues clearances are waiting on you." hint="A leaver's checklist appears here while your department still has to sign off." />
+          <ApprovalsEmpty message="No no-dues clearances are waiting on you." />
         ) : (
           <ul className="divide-y divide-gray-100">
             {rows.map((r) => (
@@ -202,7 +202,6 @@ export default function ExitClearanceInbox({ onCount }) {
                           ? <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">Cleared</span>
                           : <span className="text-xs text-gray-500 bg-gray-100 border border-transparent rounded px-1.5 py-0.5">Pending</span>}
                       </div>
-                      <p className="text-xs text-gray-500 mb-2">Tick each item once it has been handed back to the company, then submit.</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                         {s.items.map((it, idx) => (
                           <label key={idx} className="flex items-center gap-2 text-sm">
@@ -230,8 +229,8 @@ export default function ExitClearanceInbox({ onCount }) {
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs text-gray-500 min-w-0 grow basis-64">
                           {ticked < total
-                            ? `${ticked} of ${total} ticked · unticked items keep this section pending`
-                            : 'All items ticked · submitting clears this section'}
+                            ? `${ticked} of ${total} ticked`
+                            : 'All items ticked'}
                           {s.submittedAt && (
                             <span className="block text-gray-400">
                               Last submitted {formatDateTime12(s.submittedAt)}{s.submittedByName ? ` by ${s.submittedByName}` : ''}

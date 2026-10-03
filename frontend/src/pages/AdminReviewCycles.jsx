@@ -190,7 +190,7 @@ export default function AdminReviewCycles() {
 
   return (
     <div>
-      <PageHeader title="Appraisal Cycles" subtitle="Create review cycles and assign 360° reviewers.">
+      <PageHeader title="Appraisal Cycles">
         <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Cycle</button>
       </PageHeader>
       {error && (
@@ -267,11 +267,10 @@ export default function AdminReviewCycles() {
       {manageCycle && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <div className="flex items-start justify-between gap-3 mb-1">
+            <div className="flex items-start justify-between gap-3 mb-4">
               <h2 className="card-title">Manage: {manageCycle.name}</h2>
               <button type="button" aria-label="Close" title="Close" onClick={() => setManageCycle(null)} className="topbar-icon-btn shrink-0">×</button>
             </div>
-            <p className="text-xs text-gray-500 mb-4">Assign reviewers and track submitted reviews for this cycle.</p>
 
             {manageError && (
               <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{manageError}</div>

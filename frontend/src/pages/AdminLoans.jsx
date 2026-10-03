@@ -158,7 +158,7 @@ export default function AdminLoans() {
           to the people who can fix it, with the button right there. */}
       {formCfg?.canEdit && !purposes.length && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-          <span>Employees cannot submit an advance request yet: the form has no purposes of advance to choose from.</span>
+          <span>No purposes of advance set up — employees cannot request one.</span>
           <button onClick={() => setShowSettings(true)} className="text-amber-800 hover:underline">Add purposes</button>
         </div>
       )}

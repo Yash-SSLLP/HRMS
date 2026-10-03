@@ -200,13 +200,12 @@ export default function TrainingDetail({ id, writable, meetAvailable, onClose, o
                       </div>
                     ) : (
                       <div className="trn-note text-gray-600">
-                        <span className="flex-1">{t.status === 'Cancelled' ? 'No link — the training was cancelled.' : 'No meeting link — in person, or not added yet.'}</span>
+                        <span className="flex-1">{t.status === 'Cancelled' ? 'No link — cancelled.' : 'No meeting link.'}</span>
                         {writable && meetAvailable && upcoming && (
                           <button type="button" className="trn-btn" onClick={makeMeet} disabled={!!busy}><FiVideo size={13} /> {busy === 'meet' ? 'Creating…' : 'Create Google Meet'}</button>
                         )}
                       </div>
                     )}
-                    {t.meetAuto && t.meetingLink && <div className="text-xs text-gray-500 mt-1.5">Google Meet · calendar invites sent to everyone on the training.</div>}
                   </div>
 
                   <div>
@@ -252,16 +251,13 @@ export default function TrainingDetail({ id, writable, meetAvailable, onClose, o
                         </div>
                       </div>
                     ))}
-                    <p className="text-[11px] text-gray-500 mt-3">“Joined” means they opened the meeting from My Trainings while it was on.</p>
                   </div>
                 )
               )}
 
               {tab === 'reviews' && (
                 !sum?.count ? (
-                  <EmptyState icon={FiMessageSquare} title="No reviews yet">
-                    {t.status === 'Completed' ? 'Participants were asked when it ended — reviews appear here as they come in.' : 'Participants are asked how clear it was as soon as it ends.'}
-                  </EmptyState>
+                  <EmptyState icon={FiMessageSquare} title="No reviews yet" />
                 ) : (
                   <div className="space-y-4">
                     <div className="trn-fb-hero">

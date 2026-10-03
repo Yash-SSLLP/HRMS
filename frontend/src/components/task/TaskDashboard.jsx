@@ -237,11 +237,9 @@ export default function TaskDashboard({ meta, isAdmin }) {
             </table>
           </div>
 
-          <p className="mt-2 text-[11px] text-gray-400">
-            The percentage beside each figure is its share of that half of the table — overdue,
-            pending and in progress add up to what is NOT done; in time and delayed add up to what is.
-            {!meta?.pointsArePaid && ' Points are recorded for scoring and are not paid into the incentive pool.'}
-          </p>
+          {!meta?.pointsArePaid && (
+            <p className="mt-2 text-[11px] text-gray-400">Points are for scoring — not paid.</p>
+          )}
         </>
       )}
     </div>
@@ -262,7 +260,6 @@ function OverdueTable({ rows }) {
     return (
       <div className="rounded-2xl border border-dashed border-green-200 bg-green-50/40 px-6 py-12 text-center">
         <p className="text-sm font-medium text-green-700">Nothing is overdue</p>
-        <p className="mt-1 text-xs text-green-600">Every task in this window is on time or done.</p>
       </div>
     );
   }

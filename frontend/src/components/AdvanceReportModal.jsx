@@ -93,12 +93,7 @@ export default function AdvanceReportModal({ people, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <form onSubmit={download} className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 my-8">
-        <h3 className="text-lg font-semibold text-gray-900">Advance report</h3>
-        <p className="text-xs text-gray-500 mt-1 mb-4">
-          How much each person was advanced between two dates, with every advance behind the totals on a
-          second sheet. Only money actually paid out is counted — requests still waiting for approval,
-          declined ones and reversed ones are left out.
-        </p>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Advance report</h3>
 
         <p className="block text-sm text-gray-700 mb-1">Dates</p>
         <div className="flex flex-wrap gap-2 mb-2">
@@ -140,9 +135,7 @@ export default function AdvanceReportModal({ people, onClose }) {
           </label>
         </div>
 
-        {who === 'all' ? (
-          <p className="text-xs text-gray-500">Everyone who was advanced money in these dates.</p>
-        ) : (
+        {who !== 'all' && (
           <div className="border border-gray-200 rounded-lg">
             <div className="flex items-center gap-2 p-2 border-b border-gray-200">
               <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}

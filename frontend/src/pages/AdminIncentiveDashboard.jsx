@@ -299,7 +299,6 @@ export default function AdminIncentiveDashboard() {
     <div>
       <PageHeader
         title="Points Dashboard"
-        subtitle="Everyone, and the points they hold this month — rolled, credited, billed, paid and still owed."
       >
         <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm" aria-label="Month" />
@@ -385,16 +384,14 @@ export default function AdminIncentiveDashboard() {
                   {billingUnmatched.length > 0 && (
                     <p>
                       {billingUnmatched.length} billing {billingUnmatched.length === 1 ? 'row' : 'rows'} worth{' '}
-                      {points(billing?.unmatchedPoints)} points could not be matched to anybody in the portal,
-                      so they are in nobody&apos;s balance and nobody will be paid for them. The Billing
-                      Incentive tab lists them — the SSL code is missing or wrong at the billing end.
+                      {points(billing?.unmatchedPoints)} points could not be matched to anybody —
+                      see the Billing Incentive tab.
                     </p>
                   )}
                   {billingFailed.length > 0 && (
                     <p>
                       {billingFailed.length === 1 ? 'A month' : `${billingFailed.length} months`} could not be
-                      read from the billing system ({billingFailed.map((f) => f.month).join(', ')}), so every
-                      billing figure here is short by whatever {billingFailed.length === 1 ? 'it' : 'they'} held.
+                      read from the billing system ({billingFailed.map((f) => f.month).join(', ')}).
                     </p>
                   )}
                 </div>
@@ -405,14 +402,11 @@ export default function AdminIncentiveDashboard() {
                   question than the dates on screen. */}
               {billing?.billingWholeMonths && billingMonths.length > 0 && (
                 <p className="mb-4 text-xs text-gray-500">
-                  A date range counts a billing month whole, because the billing system settles per
-                  month: {billingMonths.join(', ')} {billingMonths.length === 1 ? 'is' : 'are'} in the
-                  billing figures in full.
+                  Billing figures count {billingMonths.join(', ')} in full.
                   {/* Except the month counting began in, which is a part month
                       everywhere — saying "in full" of it would be untrue. */}
                   {billing?.startedOn && billingMonths.includes(billing.startedOn.slice(0, 7)) ? (
-                    <> Billing points are counted from {billing.startedOn}, so{' '}
-                      {billing.startedOn.slice(0, 7)} covers that day onwards only.</>
+                    <> {billing.startedOn.slice(0, 7)} counts from {billing.startedOn} only.</>
                   ) : null}
                 </p>
               )}
@@ -537,7 +531,6 @@ export default function AdminIncentiveDashboard() {
         ) : credits.length === 0 ? (
           <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
             No points were credited in {monthLabel}.
-            {canCredit && <> Credit somebody from their row on the Everyone tab, or with the button above.</>}
           </div>
         ) : (
           <div className="bg-white shadow rounded-xl overflow-x-auto">
@@ -580,11 +573,7 @@ export default function AdminIncentiveDashboard() {
       {creditForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="card-title mb-1">Credit points</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Points given outside a team-day. They join the same pool the teams earn into, and are
-              paid the same way.
-            </p>
+            <h2 className="card-title mb-4">Credit points</h2>
 
             <form onSubmit={saveCredit} className="space-y-4">
               <div>
@@ -598,9 +587,6 @@ export default function AdminIncentiveDashboard() {
                   placeholder="Search by name, code or department…"
                   className="block w-full border rounded-lg px-3 py-2"
                 />
-                <p className="text-xs text-gray-400 mt-1">
-                  Everyone chosen gets the same number of points — each, not shared out.
-                </p>
               </div>
 
               {/* One column below sm: half of this dialog is ~140px on a phone,
@@ -620,7 +606,6 @@ export default function AdminIncentiveDashboard() {
                   <input required type="date" value={creditForm.date}
                     onChange={(e) => setCreditForm({ ...creditForm, date: e.target.value })}
                     className="block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-400 mt-1">Decides which month it is paid in.</p>
                 </div>
               </div>
 
@@ -630,9 +615,6 @@ export default function AdminIncentiveDashboard() {
                   placeholder="Stood in on Sunday, extra load on the night shift…"
                   onChange={(e) => setCreditForm({ ...creditForm, reason: e.target.value })}
                   className="block w-full border rounded-lg px-3 py-2" />
-                <p className="text-xs text-gray-400 mt-1">
-                  This is the only record of why the points were given. It goes on the export.
-                </p>
               </div>
 
               {creditForm.employees.length > 1 && Number(creditForm.points) > 0 && (

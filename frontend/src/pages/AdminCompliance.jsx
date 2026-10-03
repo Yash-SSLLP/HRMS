@@ -183,8 +183,7 @@ export default function AdminCompliance() {
         subtitle="PF · ESI · PT · TDS · Form 16"
       />
       <p className="text-xs text-gray-400 -mt-3 mb-5">
-        Figures are computed from processed payslips. Exports are summaries to
-        assist filing, not official government return files.
+        Exports assist filing; they are not official government returns.
       </p>
 
       {/* Tab strip */}

@@ -141,7 +141,7 @@ export default function AdminCompanies() {
 
   return (
     <div>
-      <PageHeader title="Companies" subtitle="The companies this HRMS runs for — employees belong to one, and a CEO/MD can be limited to some">
+      <PageHeader title="Companies" subtitle="The companies this HRMS runs for">
         {canCreate && (
           <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Company</button>
         )}
@@ -153,7 +153,7 @@ export default function AdminCompanies() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : companies.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
-          No companies yet. Add one, then set it on each employee’s record.
+          No companies yet.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -214,11 +214,9 @@ export default function AdminCompanies() {
             <p className="text-sm text-gray-500">Loading…</p>
           ) : (
             <>
-              <p className="text-xs text-gray-500 -mt-2 mb-3">
-                {canEditCompany(roster.company)
-                  ? 'An employee belongs to one company. Adding somebody here moves them out of whichever company they are in now.'
-                  : 'Read-only — assigning employees to a company is done by the Backend account or a CEO/MD.'}
-              </p>
+              {!canEditCompany(roster.company) && (
+                <p className="text-xs text-gray-500 -mt-2 mb-3">Read-only — Backend account or CEO/MD only.</p>
+              )}
 
               <input
                 value={rosterQ}
@@ -273,11 +271,6 @@ export default function AdminCompanies() {
                 className="block w-full border rounded-lg px-3 py-2" />
               {/* The YEAR is what turns this into "5th Anniversary" rather than
                   an undated note, so ask for the full date, not a day+month. */}
-              <p className="text-xs text-gray-500 mt-1">
-                The day this company was established. It then appears every year on the calendar and the
-                celebrations card for everyone in this company — employees, HR and the CEO/MD alike.
-                Leave blank for none.
-              </p>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input type="checkbox" checked={editing.isActive} onChange={(e) => setEditing({ ...editing, isActive: e.target.checked })} />

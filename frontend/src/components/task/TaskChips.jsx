@@ -317,19 +317,18 @@ export function EmptyTasks({
   // empty — say where they went rather than "nothing assigned to you".
   const done = completedHint ? ' Finished tasks are under Completed, beside Filter.' : '';
   const lines = {
-    mine: [completedHint ? 'Nothing open on your plate' : 'Nothing assigned to you',
-      `Tasks people set for you — and the ones you set yourself — land here.${done || older}`],
-    delegated: ['Nothing you assigned is open', `Hand something over and it will show up here.${done || older}`],
-    loop: ['Nothing to follow', `When somebody keeps you in the loop on a task, it shows up here.${done || older}`],
-    all: ['No open tasks', `Nothing is waiting on anybody.${done || older}`],
+    mine: [completedHint ? 'Nothing open on your plate' : 'Nothing assigned to you', done || older],
+    delegated: ['Nothing you assigned is open', done || older],
+    loop: ['Nothing to follow', done || older],
+    all: ['No open tasks', done || older],
   };
   const [title, body] = filtered
-    ? ['Nothing matches', 'Try a wider due date, another figure, or clear the filters.']
+    ? ['Nothing matches', 'Try clearing the filters.']
     : (lines[scope] || lines.all);
   return (
     <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
       <p className="text-sm font-medium text-gray-700">{title}</p>
-      <p className="mt-1 text-xs text-gray-500">{body}</p>
+      {body && <p className="mt-1 text-xs text-gray-500">{body.trim()}</p>}
       {onAssign && (
         <button
           type="button"

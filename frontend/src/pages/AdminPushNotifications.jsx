@@ -21,16 +21,13 @@ const REMINDERS = [
   {
     key: 'punchIn',
     label: 'Punch-in reminder',
-    blurb: 'Sent to employees who have not checked in yet. Skipped on Sundays, listed holidays, '
-      + 'and for anyone on approved leave — so nobody is nudged on a day off.',
+    blurb: 'Sent to employees who have not checked in yet — skipped on Sundays, holidays and approved leave.',
     defaults: { hour: 9, minute: 45 },
   },
   {
     key: 'punchOut',
     label: 'Punch-out reminder',
-    blurb: 'Sent to anyone who checked in but has not checked out. Worth keeping close to the end '
-      + 'of the workday: a day left open is closed at an assumed 7:00 PM, which can turn a full '
-      + 'day into a half day and cost the employee a regularization.',
+    blurb: 'Sent to anyone who has not checked out. Open days close at 7:00 PM.',
     defaults: { hour: 19, minute: 0 },
   },
 ];
@@ -138,9 +135,6 @@ function CustomReminders({ canEdit }) {
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
         <div>
           <h2 className="card-title">Custom reminders</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Your own recurring pushes — a message, a time, and who gets it.
-          </p>
         </div>
         {canEdit && !editing && (
           <button onClick={() => setEditing(blankCustom())}
@@ -159,7 +153,6 @@ function CustomReminders({ canEdit }) {
                 onChange={(e) => setEditing({ ...editing, title: e.target.value })}
                 placeholder="Submit your timesheet"
                 className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm" />
-              <p className="text-[11px] text-gray-400 mt-1">This is the bold line of the push.</p>
             </div>
             <div className="sm:col-span-2">
               <label className="block text-sm text-gray-700">Message</label>
@@ -216,9 +209,6 @@ function CustomReminders({ canEdit }) {
                   );
                 })}
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">
-                Select none for every day.
-              </p>
             </div>
           </div>
 
@@ -382,7 +372,6 @@ export default function AdminPushNotifications() {
     <div>
       <PageHeader
         title="Push Notification"
-        subtitle="When the daily attendance reminders are pushed to the mobile app."
       >
         {isSuperAdmin && (
           <>
@@ -400,7 +389,7 @@ export default function AdminPushNotifications() {
 
       {!isSuperAdmin && (
         <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-          Read-only — only a Super Admin can change the reminder schedule.
+          Read-only — Super Admin only.
         </div>
       )}
       {error && (
@@ -417,8 +406,7 @@ export default function AdminPushNotifications() {
               <div key={r.key} className="bg-white shadow rounded-lg p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0 max-w-2xl">
-                    <h2 className="card-title">{r.label}</h2>
-                    <p className="text-sm text-gray-500 mt-1">{r.blurb}</p>
+                    <h2 className="card-title" title={r.blurb}>{r.label}</h2>
                   </div>
 
                   <div className="flex items-center gap-4 shrink-0">
@@ -451,8 +439,7 @@ export default function AdminPushNotifications() {
           })}
 
           <p className="text-xs text-gray-500">
-            Each reminder is sent at most once a day and only within 30 minutes of its scheduled time —
-            so a server restart later in the day cannot replay a morning reminder. Times are IST.
+            Times are IST.
           </p>
 
           <CustomReminders canEdit={isSuperAdmin} />

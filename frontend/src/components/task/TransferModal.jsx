@@ -122,26 +122,8 @@ export default function TransferModal({ task, meta, open, onClose, onDone }) {
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
               <FiAlertTriangle size={13} className="shrink-0" />
-              This is not delegating — it hands the task over completely
+              Hands the task over completely — progress resets.
             </p>
-            <ul className="mt-2 list-disc space-y-1.5 pl-4 text-[11px] leading-relaxed text-amber-900 marker:text-amber-500">
-              <li>
-                <strong>{leaving}</strong> comes off the task. It leaves their list and they
-                stop hearing about it.
-              </li>
-              <li>
-                Any progress reported so far is <strong>reset</strong>. The new person starts
-                at To do and has to accept it first.
-              </li>
-              <li>
-                You do <strong>not</strong> become the approver — it goes on being signed off by
-                whoever set it. To keep the outcome yours, use <strong>Delegate</strong> instead.
-              </li>
-              <li>
-                A correction can point any way, so this is the one place the task can travel
-                <em> up</em> the line as easily as down it.
-              </li>
-            </ul>
           </div>
 
           <PeoplePicker
@@ -169,10 +151,6 @@ export default function TransferModal({ task, meta, open, onClose, onDone }) {
               placeholder="e.g. This is the accounts team's, not ours — it was raised against the wrong department."
               className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-sm"
             />
-            <p className="mt-1 text-[11px] text-gray-500">
-              Required. It is written into the task&apos;s history and is the only thing the
-              person picking it up has to go on.
-            </p>
           </div>
         </div>
 

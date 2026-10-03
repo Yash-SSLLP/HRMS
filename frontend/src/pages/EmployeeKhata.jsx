@@ -165,11 +165,11 @@ const BLANK_FILTERS = { khata: '', status: '', type: '', from: '', to: '' };
 const ROLE_WORDS = {
   operator: {
     label: 'Can add entries',
-    hint: 'Can add their own spending to this book and see everyone\'s. What they spend comes out of their own advance, not yours.',
+    hint: 'Adds their own spending, from their own advance — not yours.',
   },
   viewer: {
     label: 'Can only view',
-    hint: 'Can read this book and download its reports. Adds nothing.',
+    hint: 'Can read this book and its reports only.',
   },
 };
 const ROLE_PILLS = {
@@ -941,11 +941,6 @@ export default function EmployeeKhata() {
     <div>
       <PageHeader title="My Cashbook" />
 
-      <p className="text-sm text-gray-500 mb-4">
-        The company advances money into your wallet; you then record what you spend it on against
-        whichever book it belongs to. Every book spends from the same wallet.
-      </p>
-
       {error && (
         <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
@@ -987,8 +982,6 @@ export default function EmployeeKhata() {
           {/* Signed on purpose: negative when they have spent past the advance,
               positive while they are still holding company cash. */}
           <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(display.signed ?? display.amount)}</p>
-          <p className="text-xs text-gray-500 mt-2">{style.hint}</p>
-
           {wallet.creditLimit > 0 && (
             <p className="text-xs text-gray-500 mt-1">
               You may hold up to {money(wallet.creditLimit)} at a time.
@@ -1029,10 +1022,8 @@ export default function EmployeeKhata() {
               {/* Said plainly when they are holding company cash (2026-09-29,
                   as in the app: "it should say having advance in hand"). */}
               {display.direction === 'holding'
-                ? `You have ${money(display.amount)} of advance in hand, so there is nothing to reimburse yet. `
-                : ''}
-              Ask for reimbursement opens when you have spent more than you were advanced — it asks the
-              company to pay the difference back.
+                ? `You have ${money(display.amount)} in hand — nothing to reimburse yet.`
+                : 'Reimbursement opens once you spend more than you were advanced.'}
             </p>
           )}
         </div>
@@ -1073,7 +1064,6 @@ export default function EmployeeKhata() {
             <div className="flex items-center justify-between gap-3 sm:gap-0 py-2.5 border-t-2 border-gray-200">
               <dt className="font-medium text-gray-800">
                 {display.label}
-                <span className="block text-xs text-gray-400">{style.hint}</span>
               </dt>
               <dd className={`text-lg font-semibold whitespace-nowrap ${style.amount}`}>{money(display.signed ?? display.amount)}</dd>
             </div>
@@ -1083,9 +1073,7 @@ export default function EmployeeKhata() {
             <p className="text-xs text-gray-500 mt-3">
               Not counted above: {money(totals.awaitingAdvance + totals.pendingAdvance)} requested
               and {money(totals.pendingSpend)} declared
-              across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting on
-              the company. Nothing moves until they act. Expenses are not in this figure — those
-              count the moment you record them.
+              across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting.
             </p>
           )}
         </div>
@@ -1158,8 +1146,7 @@ export default function EmployeeKhata() {
                         Admin or a cashbook manager can open it again. */}
                     {!k.isActive && (
                       <p className="text-xs text-gray-500 mt-1">
-                        {k.closedByOwner && isOwner ? 'Closed by you.' : 'Closed.'} No new expenses, and the ones
-                        in it can no longer be edited. Only the CEO, MD, an Admin or a cashbook manager can re-open it.
+                        {k.closedByOwner && isOwner ? 'Closed by you.' : 'Closed.'}
                       </p>
                     )}
                     {/* The same figure on every card — and red when it is money
@@ -1247,7 +1234,6 @@ export default function EmployeeKhata() {
       {waiting.length > 0 && (
         <div className="mb-4 text-sm bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg">
           {waiting.length === 1 ? '1 entry is' : `${waiting.length} entries are`} waiting for a decision.
-          Nothing has moved on your wallet yet.
         </div>
       )}
 
@@ -1328,7 +1314,7 @@ export default function EmployeeKhata() {
           app's summary card.) */}
       {!loading && truncated && (
         <p className="text-xs text-gray-500 mb-2">
-          Your most recent 400 entries are shown; download a report for the full period.
+          Showing your most recent 400 entries.
         </p>
       )}
 
@@ -1360,9 +1346,6 @@ export default function EmployeeKhata() {
               ) : entries.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-10 text-center">
                   <p className="text-gray-700 font-medium">Nothing here yet</p>
-                  <p className="text-gray-500 text-xs mt-1">
-                    Ask for an advance, then record what you spend it on. Both will show here.
-                  </p>
                 </td></tr>
               ) : visibleEntries.length === 0 ? (
                 /* There ARE entries — they are just all filtered out. Saying
@@ -1465,11 +1448,7 @@ export default function EmployeeKhata() {
       {newKhata && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={createKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              A separate heading for a separate purpose — a site, a vehicle, a particular job. It holds
-              no money of its own: expenses filed under it still come out of your one wallet.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Add a new book</h3>
 
             <label className="block text-sm text-gray-700 mb-1">What will you be spending on?<Req /></label>
             <input type="text" required autoFocus maxLength={80} value={newKhata.name}
@@ -1499,10 +1478,7 @@ export default function EmployeeKhata() {
       {renaming && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={saveRename} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Rename this book</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              Only the heading changes. Everything already filed under it stays exactly where it is.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Rename this book</h3>
 
             <label className="block text-sm text-gray-700 mb-1">Name<Req /></label>
             <input type="text" required autoFocus maxLength={80} value={renaming.name}
@@ -1532,9 +1508,7 @@ export default function EmployeeKhata() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900">Who is on “{membersFor.name}”</h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              Sharing a book shares the heading, never the money. What a colleague spends comes out of
-              their own advance, and their entries count towards this book&apos;s total — but your
-              statement below still shows only your own rows.
+              Sharing a book never shares the money.
             </p>
 
             {members.loading ? (
@@ -1628,7 +1602,7 @@ export default function EmployeeKhata() {
 
             {membersFor.myRole === 'owner' && !membersFor.isActive && (
               <p className="text-xs text-gray-500 border-t border-gray-100 pt-4">
-                This book is closed, so it cannot be shared with anybody new.
+                Closed books cannot be shared.
               </p>
             )}
 
@@ -1645,12 +1619,7 @@ export default function EmployeeKhata() {
       {report && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Download a report</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              Built from what you are looking at — the same book, dates, search and filters — so the
-              document and the screen can never disagree about the money. Rows the company has not
-              approved are shown but never counted.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Download a report</h3>
 
             <dl className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 space-y-0.5">
               <div className="flex gap-2">
@@ -1689,7 +1658,6 @@ export default function EmployeeKhata() {
                       onChange={() => setReport({ ...report, kind: r.value })} />
                     <span className="min-w-0">
                       <span className="block text-sm text-gray-800">{r.label}</span>
-                      <span className="block text-xs text-gray-500">{r.hint}</span>
                     </span>
                   </label>
                 ))}
@@ -1698,20 +1666,13 @@ export default function EmployeeKhata() {
             ) : (
               <p className="mb-4 text-sm text-gray-700">
                 <span className="font-medium">Day-wise with category summary</span>
-                <span className="block text-xs text-gray-500">{REPORT_KINDS.find((r) => r.value === 'daywise_category').hint}</span>
               </p>
             )}
 
             <label className="flex items-start gap-2 text-sm text-gray-700 mb-4">
               <input type="checkbox" className="mt-1" checked={report.bills}
                 onChange={(e) => setReport({ ...report, bills: e.target.checked })} />
-              <span>
-                Attach the bills
-                <span className="block text-xs text-gray-500">
-                  Every bill — photos, iPhone photos and PDF invoices — is attached in full at the end, one to a
-                  page, and each entry links to it. It takes longer to build.
-                </span>
-              </span>
+              <span>Attach the bills</span>
             </label>
 
             <div className="flex flex-wrap justify-end gap-2">
@@ -1735,10 +1696,7 @@ export default function EmployeeKhata() {
       {sheet && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5">
-            <h3 className="text-lg font-semibold text-red-700">Cash Out</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              Money leaving your wallet — spent on the job, or handed back to the company.
-            </p>
+            <h3 className="text-lg font-semibold text-red-700 mb-4">Cash Out</h3>
 
             <div className="space-y-2">
               {cashOutOptions.map((o) => (
@@ -1746,7 +1704,7 @@ export default function EmployeeKhata() {
                   onClick={() => { setSheet(null); open(o.key); }}
                   className="w-full text-left border border-gray-200 rounded-lg p-3 hover:border-gray-400 disabled:opacity-50 disabled:hover:border-gray-200">
                   <span className="block text-sm text-gray-800">{o.label}</span>
-                  <span className="block text-xs text-gray-500">{o.disabled ? o.why : o.hint}</span>
+                  {o.disabled && <span className="block text-xs text-gray-500">{o.why}</span>}
                 </button>
               ))}
             </div>
@@ -1768,28 +1726,19 @@ export default function EmployeeKhata() {
                 : TITLES[modal]}
             </h3>
             <p className="text-xs text-gray-500 mt-1 mb-4">
-              {editing && 'The company has not confirmed this one yet, so you can still fix it. '
-                + 'It carries on counting against your advance at whatever it says — change the amount and your '
-                + 'wallet moves with it. Once the company confirms it, it is locked.'}
+              {editing && 'Not confirmed yet — changing the amount moves your wallet.'}
               {!editing && modal === 'request' && (data?.approvalRequired
-                ? 'Your request goes to the CEO/MD to approve, then to whoever handles company cash. Nothing is paid until both have acted.'
-                : 'Your request goes to whoever handles company cash. Nothing is paid until they approve it.')}
-              {!editing && modal === 'expense' && 'Log what you spent the advance on. It comes off your wallet straight away — the company can reject it afterwards if it should not stand, so attach the bill.'}
-              {!editing && modal === 'refund' && 'Money that came back into a book — a supplier refund, a cancelled booking, unused material returned. It goes back onto your advance straight away, so attach the credit note.'}
-              {modal === 'settle' && 'Tell the company you have handed cash back. Your wallet updates once they confirm receiving it.'}
-              {modal === 'claim' && 'You have spent more than you were advanced, so the company owes you the difference. '
-                + 'This asks them to pay it back; they choose which account it comes from.'}
+                ? 'Goes to the CEO/MD, then to whoever handles company cash.'
+                : 'Goes to whoever handles company cash.')}
+              {!editing && modal === 'expense' && 'Comes off your wallet straight away — attach the bill.'}
+              {!editing && modal === 'refund' && 'Goes back onto your advance straight away — attach the credit note.'}
+              {modal === 'settle' && 'Your wallet updates once they confirm receiving it.'}
+              {modal === 'claim' && 'Asks the company to pay back what you are owed.'}
             </p>
 
             {/* Which fields cannot be left blank, said once rather than only
                 implied by the markers. Not on a claim: its amount is fixed and
                 everything else on it is optional, so there is no marker to explain. */}
-            {modal !== 'claim' && (
-              <p className="text-xs text-gray-500 mb-3">
-                Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
-              </p>
-            )}
-
             {modal === 'claim' && (
               <div className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-2 mb-3">
                 The company owes you {money(display.amount)}
@@ -1800,8 +1749,7 @@ export default function EmployeeKhata() {
 
             {modal === 'request' && display.direction === 'holding' && (
               <div className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg px-3 py-2 mb-3">
-                You are already carrying {money(display.amount)}. Record what you have spent it on
-                before asking for more, where you can.
+                You are already carrying {money(display.amount)}.
               </div>
             )}
 
@@ -1810,7 +1758,7 @@ export default function EmployeeKhata() {
                 <label className="block text-sm text-gray-700 mb-1">Which book?<Req /></label>
                 <select value={form.khata} required
                   onChange={(e) => setForm({ ...form, khata: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
                   <option value="">Choose a book…</option>
                   {postableKhatas.map((k) => (
                     <option key={k._id} value={k._id}>
@@ -1818,11 +1766,6 @@ export default function EmployeeKhata() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mb-3">
-                  {modal === 'refund'
-                    ? 'Which heading the money came back into. It goes back onto your one wallet either way.'
-                    : `Which heading this purchase belongs under. The money comes out of your one wallet either way — ${money(display.amount)} left.`}
-                </p>
               </>
             )}
 
@@ -1832,8 +1775,7 @@ export default function EmployeeKhata() {
               // still checks it against what is owed at the moment it lands.
               <>
                 <p className="block text-sm text-gray-700 mb-1">Amount</p>
-                <p className="text-2xl font-semibold text-red-700">{money(form.amount)}</p>
-                <p className="text-xs text-gray-500 mb-3">Everything the company still owes you.</p>
+                <p className="text-2xl font-semibold text-red-700 mb-3">{money(form.amount)}</p>
               </>
             ) : (
               <>
@@ -1911,9 +1853,7 @@ export default function EmployeeKhata() {
                     placeholder="Type the category"
                     aria-label="Type the category"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
-                ) : (
-                  <p className="text-xs text-gray-500 mb-3">What it was for — your most used first.</p>
-                )}
+                ) : null}
               </>
             )}
 
@@ -1953,13 +1893,6 @@ export default function EmployeeKhata() {
                     keep={keepBills}
                     onKeepChange={setKeepBills}
                     onViewExisting={editing ? (i) => openBillInTab(billPath(editing._id, i)) : undefined}
-                    hint={editing
-                      ? 'Images or PDFs, up to 5 MB each. Take off any that are wrong, or add more.'
-                      : modal === 'expense'
-                        ? 'Images or PDFs, up to 5 MB each. An expense cannot be recorded without a bill — add as many as it took.'
-                        : modal === 'refund'
-                          ? 'Images or PDFs, up to 5 MB each. A refund cannot be recorded without the credit note.'
-                          : 'Images or PDFs, up to 5 MB each.'}
                   />
                 </div>
               </>
@@ -1968,7 +1901,7 @@ export default function EmployeeKhata() {
             {/* Said plainly, where it happens, rather than left to be found out. */}
             {BOOK_FORMS.includes(modal) && !editing && (
               <p className="text-xs text-gray-500 mb-1">
-                📍 Your location is recorded with the entry. Only a Super Admin can see it.
+                📍 Your location is recorded with the entry.
               </p>
             )}
 

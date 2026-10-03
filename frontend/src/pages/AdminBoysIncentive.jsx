@@ -62,8 +62,14 @@
  *          PUT /incentives/settings,
  *          GET /incentives/template.xlsx|export.xlsx, POST /incentives/import.
  */
+import '../styles/pages/boys-incentive.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiAward, FiCalendar, FiCheck, FiCheckCircle, FiCheckSquare, FiChevronDown, FiClock, FiDownload,
+  FiEdit2, FiLayers, FiLock, FiPercent, FiPlus, FiRefreshCw, FiSearch, FiSliders, FiTrash2,
+  FiUpload, FiUser, FiUsers, FiX,
+} from 'react-icons/fi';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useTabParam } from '../hooks/useTabParam';
@@ -72,6 +78,7 @@ import { isViewOnlyAccount, canPayIncentive } from '../config/permissions';
 import PageHeader from '../components/PageHeader';
 import SearchableSelect from '../components/SearchableSelect';
 import { confirmDialog } from '../components/dialogs';
+import { PersonAvatar } from '../components/permissions/permUi';
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 const todayStr = () => {
@@ -92,6 +99,41 @@ const TABS = [
   ['summary', 'Per employee'],
   ['points', 'Points per sheet'],
 ];
+const TAB_ICONS = { entries: FiUsers, qc: FiCheckSquare, summary: FiUser, points: FiSliders };
+
+/** yyyy-mm-dd of a stored date, or '' when there is none — the day a row is grouped under. */
+const ymdOf = (d) => {
+  const dt = new Date(d);
+  if (!d || Number.isNaN(dt.getTime())) return '';
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+};
+
+/** The day log's section heading: the long date, plus Today / Yesterday. */
+const dayHeading = (ymd) => {
+  if (!ymd) return { label: 'No date', rel: '' };
+  const d = new Date(`${ymd}T12:00:00`);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const label = d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  return { label, rel: ymd === todayStr() ? 'Today' : ymd === ymdOf(yesterday) ? 'Yesterday' : '' };
+};
+
+/** Rows grouped by day, in the order the server sent them. */
+const groupByDay = (rows) => {
+  const map = new Map();
+  for (const r of rows) {
+    const key = ymdOf(r.date);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  }
+  return [...map.entries()];
+};
+
+/** A stored name as the {firstName, lastName} the avatar reads its initials from. */
+const asUser = (name) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return { firstName: parts[0] || '', lastName: parts.length > 1 ? parts[parts.length - 1] : '' };
+};
 
 const personLabel = (p) => [p.employeeCode, p.name].filter(Boolean).join(' · ') + (p.department ? ` (${p.department})` : '');
 
@@ -152,26 +194,74 @@ const firstOfThisMonth = () => {
  */
 function ApplyToRecorded({ value, onChange, days }) {
   return (
-    <div className="rounded-lg border border-gray-200 p-3">
-      <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
-        <input type="checkbox" className="mt-0.5" checked={!!value}
+    <div className="bi-apply">
+      <label className="bi-apply-check">
+        <input type="checkbox" checked={!!value}
           onChange={(e) => onChange(e.target.checked ? firstOfThisMonth() : '')} />
         <span>Also apply it to the {days} already recorded</span>
       </label>
       {value ? (
-        <div className="mt-2 pl-6">
-          <label className="block text-xs font-medium text-gray-600 mb-1">From *</label>
+        <div className="bi-apply-from">
+          <label className="prm-label">From *</label>
           <input required type="date" value={value} onChange={(e) => onChange(e.target.value)}
-            className="block w-full border rounded-lg px-3 py-2" />
-          <p className="text-xs text-gray-400 mt-1">
-            The {days} from this date on are worked out again with the new figure.
+            className="prm-input" />
+          <p className="bi-hint">
+            Recalculates from this date on.
           </p>
         </div>
-      ) : (
-        <p className="text-xs text-gray-400 mt-1 pl-6">
-          Left unticked, {days} already recorded keep the figure they were saved with.
-        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One KPI card. `sub` is the small line under the label (amber unless `tone`
+ * says otherwise); left out when empty.
+ */
+function Kpi({ icon: Icon, hue, value, label, sub, tone = 'amber' }) {
+  return (
+    <div className="trn-kpi" style={{ '--kpi-hue': hue }}>
+      <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>
+      <span className="min-w-0">
+        <span className="trn-kpi-value block">{value}</span>
+        <span className="trn-kpi-label block">{label}</span>
+        {sub ? <span className={`trn-kpi-sub block bi-kpi-sub is-${tone}`} title={sub}>{sub}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * A day's credited points with the rate under it, and — when a deduction was
+ * actually taken — what came off the gross. Without that line the credited
+ * figure does not reconcile against the sheets and the row looks like it is
+ * losing points. The same figures for a team day and a QC day.
+ */
+function PointsStat({ row, label }) {
+  return (
+    <div className="bi-stat">
+      <span className="bi-stat-label">{label}</span>
+      <span className={`bi-stat-value${row.sheets == null ? ' is-muted' : ''}`}>
+        {row.sheets == null ? '—' : points(row.teamPoints)}
+      </span>
+      <span className="bi-stat-line">{points(row.pointsPerSheet)}/sheet</span>
+      {row.sheets != null && row.deductionPoints > 0 && (
+        <span className="bi-stat-line">
+          {points(row.grossPoints)} less {points(row.deductionPoints)} ({points(row.deductionPct)}%)
+        </span>
       )}
+    </div>
+  );
+}
+
+/** One head's equal share of the day — the figure people look for first. */
+function EachStat({ row }) {
+  return (
+    <div className="bi-stat">
+      <span className="bi-stat-label">Points each</span>
+      <span className={`bi-each-value${row.sheets == null ? ' is-muted' : ''}`}>
+        {row.sheets == null ? '—' : points(row.perPersonPoints)}
+      </span>
     </div>
   );
 }
@@ -872,199 +962,240 @@ export default function AdminBoysIncentive() {
     );
   }, [qcForm, settings.qcPointsPerSheet, settings.qcDeductionPct]);
 
+  // The day log, one section per day, in the order the server sent the rows.
+  const entryGroups = useMemo(() => groupByDay(entries), [entries]);
+  const qcGroups = useMemo(() => groupByDay(qcDays), [qcDays]);
+  const tabCount = { entries: entries.length, qc: qcDays.length, summary: summary.people.length };
+
+  // First-load placeholder shaped like the tab: a KPI strip, then cards.
+  const skeleton = (kpis, rows) => (
+    <>
+      <div className={`bi-kpis${kpis === 5 ? ' is-5' : ''}`}>
+        {Array.from({ length: kpis }, (_, i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}
+      </div>
+      <div className="space-y-2.5">
+        {Array.from({ length: rows }, (_, i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
+      </div>
+    </>
+  );
+
   return (
     <div>
       <PageHeader
         title="Boys Incentive"
-        subtitle={tab === 'qc'
-          ? `Who is doing QC each day — set in the morning, sheet count filled in the evening. Sheets × ${points(settings.qcPointsPerSheet)} points, less ${points(settings.qcDeductionPct)}%, split equally between everyone on QC that day.${
-            isManager ? '' : ' The manager of this incentive sets it.'
-          }`
-          : `One team a day. Sheets × points a sheet, less the deduction, is what the team is credited with — split equally between everyone on it, the picker included.${
-            // A picker's one restriction, said once and in the open. The row only
-            // has room for "Saved", and a tooltip is invisible on a touch screen.
-            isManager ? '' : ' Pick your team each morning — once it is saved, the manager of this incentive makes any correction.'
-          }`}
+        subtitle={isManager ? undefined : tab === 'qc' ? 'The manager sets QC.' : 'Pick your team each morning; the manager corrects it.'}
       >
-        {tab !== 'points' && (
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
-            className="border rounded-lg px-3 py-2 text-sm" aria-label="Month" />
-        )}
-        <button onClick={() => downloadFile(`/incentives/export.xlsx${exportQuery}`, 'incentive.xlsx')}
-          className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Export</button>
+        <button type="button" onClick={() => downloadFile(`/incentives/export.xlsx${exportQuery}`, 'incentive.xlsx')}
+          className="trn-btn">
+          <FiDownload size={14} aria-hidden="true" /> Export
+        </button>
         {tab === 'qc' ? (
           // QC is the manager's to set — a picker gets no button here at all.
           !viewOnly && isManager && (
-            <button onClick={openQcCreate}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-              + Set QC for a day
+            <button type="button" onClick={openQcCreate} className="trn-btn is-primary accent-bg text-white">
+              <FiPlus size={15} aria-hidden="true" /> Set QC for a day
             </button>
           )
         ) : (
           <>
             {!viewOnly && isManager && (
-              <button onClick={() => setShowImport(true)}
-                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Import Excel</button>
+              <button type="button" onClick={() => setShowImport(true)} className="trn-btn">
+                <FiUpload size={14} aria-hidden="true" /> Import Excel
+              </button>
             )}
             {!viewOnly && (
-              <button onClick={openCreate}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-                {isManager ? '+ Record a day' : "+ Pick today's team"}
+              <button type="button" onClick={openCreate} className="trn-btn is-primary accent-bg text-white">
+                <FiPlus size={15} aria-hidden="true" /> {isManager ? 'Record a day' : "Pick today's team"}
               </button>
             )}
           </>
         )}
       </PageHeader>
 
-      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{error}</div>}
 
-      <div className="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
-        {visibleTabs.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${tab === k ? 'accent-border accent-text' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {(tab === 'entries' || tab === 'qc') && (
-        <>
-          <div className="flex flex-wrap items-center gap-2 mb-4">
-            <input value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder={tab === 'qc' ? 'Search person or note…' : 'Search team, person or note…'}
-              className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
-            {refreshing && <span className="text-xs text-gray-400">Refreshing…</span>}
+      {/* One bar: the view, then the search and the month. */}
+      <div className="pb-toolbar">
+        <div className="trn-seg" role="tablist" aria-label="View">
+          {visibleTabs.map(([k, label]) => {
+            const Icon = TAB_ICONS[k];
+            return (
+              <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+                className={`trn-seg-btn${tab === k ? ' is-on' : ''}`}>
+                <Icon size={14} aria-hidden="true" /> {label}
+                {tabCount[k] != null && <span className="trn-seg-count">{tabCount[k]}</span>}
+              </button>
+            );
+          })}
+        </div>
+        {/* The rate tab has no month and no search, so no second half. */}
+        {tab !== 'points' && (
+          <div className="pb-toolbar-end">
+            {/* Always in the bar, only visible while a reload is in flight, so
+                nothing beside it shifts when it comes and goes. */}
+            <span className={`bi-refresh${refreshing ? ' is-on' : ''}`} title={refreshing ? 'Refreshing…' : undefined} aria-live="polite">
+              <FiRefreshCw size={14} className={refreshing ? 'animate-spin' : ''} aria-hidden="true" />
+              {refreshing && <span className="sr-only">Refreshing…</span>}
+            </span>
+            {(tab === 'entries' || tab === 'qc') && (
+              <label className="trn-search">
+                <FiSearch size={15} className="opacity-50 shrink-0" aria-hidden="true" />
+                <input value={q} onChange={(e) => setQ(e.target.value)}
+                  placeholder={tab === 'qc' ? 'Search person or note…' : 'Search team, person or note…'}
+                  aria-label="Search" />
+                {q && (
+                  <button type="button" onClick={() => setQ('')} aria-label="Clear search" className="opacity-50 hover:opacity-100">
+                    <FiX size={14} />
+                  </button>
+                )}
+              </label>
+            )}
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)}
+              className="trn-select bi-month" aria-label="Month" />
           </div>
-        </>
-      )}
+        )}
+      </div>
 
       {/* --------------------------------------------------- rolling teams -- */}
       {tab === 'entries' && (
-        loading ? (
-          <p className="text-sm text-gray-500">Loading…</p>
-        ) : (
+        loading ? skeleton(4, 3) : (
           <>
             {entryTotals && entries.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                {[
-                  ['Days', entryTotals.days, ''],
-                  ['Teams', entryTotals.teams, ''],
-                  ['Sheet Rolled', entryTotals.sheets,
-                    entryTotals.pending ? `${entryTotals.pending} team${entryTotals.pending === 1 ? '' : 's'} not filled in` : ''],
-                  ['Points earned', points(entryTotals.points), entryTotals.pending ? 'so far' : ''],
-                ].map(([label, value, hint]) => (
-                  <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
-                    <div className="text-xs text-gray-500">{label}</div>
-                    <div className="text-xl font-semibold text-gray-900 mt-0.5">{value}</div>
-                    {hint ? <div className="text-[11px] text-amber-600 mt-0.5">{hint}</div> : null}
-                  </div>
-                ))}
+              <div className="bi-kpis">
+                <Kpi icon={FiCalendar} hue="#6366f1" value={entryTotals.days} label="Days" />
+                <Kpi icon={FiUsers} hue="#0ea5e9" value={entryTotals.teams} label="Teams" />
+                <Kpi icon={FiLayers} hue="#0d9488" value={entryTotals.sheets} label="Sheet Rolled"
+                  sub={entryTotals.pending ? `${entryTotals.pending} team${entryTotals.pending === 1 ? '' : 's'} not filled in` : ''} />
+                <Kpi icon={FiAward} hue="#16a34a" value={points(entryTotals.points)} label="Points earned"
+                  sub={entryTotals.pending ? 'so far' : ''} />
               </div>
             )}
 
             {entries.length === 0 ? (
-              <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
-                Nothing recorded for this month yet.
-                {!viewOnly && <> Record the day’s team, or upload a month’s sheet at once.</>}
+              <div className="prm-list">
+                <div className="trn-empty">
+                  <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                  <p className="text-sm font-semibold">Nothing recorded for this month yet.</p>
+                </div>
               </div>
             ) : (
-              <div className="bg-white shadow rounded-xl overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-medium">Date</th>
-                      <th className="text-left px-4 py-3 font-medium">Picker</th>
-                      <th className="text-left px-4 py-3 font-medium">Team</th>
-                      <th className="text-right px-4 py-3 font-medium">Sheet Rolled</th>
-                      <th className="text-right px-4 py-3 font-medium">Team points</th>
-                      <th className="text-right px-4 py-3 font-medium">Points each</th>
-                      {!viewOnly && <th className="px-4 py-3" />}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {entries.map((e) => (
-                      <tr key={e._id} className="align-top">
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="text-gray-900">{fmtDate(e.date)}</div>
-                          {e.teamName && <div className="text-xs text-gray-400">{e.teamName}</div>}
-                          {e.sheets == null && (
-                            <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800">
-                              Awaiting sheet count
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="text-gray-900">{e.picker?.name}</div>
-                          <div className="text-xs text-gray-400">{e.picker?.employeeCode}</div>
-                        </td>
-                        <td className="px-4 py-3 min-w-[220px]">
-                          <button type="button" onClick={() => setExpanded(expanded === e._id ? null : e._id)}
-                            className="text-left text-indigo-600 hover:underline">
-                            {e.headCount} people{e.members?.length ? ` (${e.members.length} member${e.members.length === 1 ? '' : 's'})` : ''}
-                          </button>
-                          {expanded === e._id && (
-                            <ul className="mt-1 space-y-0.5 text-xs text-gray-600">
-                              <li>{e.picker?.employeeCode} · {e.picker?.name} <span className="text-gray-400">— picker</span></li>
-                              {(e.members || []).map((m) => (
-                                <li key={String(m.employee)}>{m.employeeCode} · {m.name}</li>
-                              ))}
-                            </ul>
-                          )}
-                          {e.note && <div className="text-xs text-gray-400 mt-1">{e.note}</div>}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {e.sheets != null ? e.sheets : (viewOnly || !isManager ? '—' : (
-                            /* The whole evening job, in the row it belongs to. */
-                            <span className="inline-flex items-center gap-1 justify-end">
-                              <input type="number" min="0" step="1" inputMode="numeric"
-                                aria-label="Sheets rolled by this team"
-                                value={fillDraft[e._id] ?? ''}
-                                onChange={(ev) => setFillDraft({ ...fillDraft, [e._id]: ev.target.value })}
-                                onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fillSheets(e); } }}
-                                className="w-20 border rounded-lg px-2 py-1 text-right" />
-                              <button type="button" onClick={() => fillSheets(e)} disabled={filling === e._id}
-                                className="text-blue-600 hover:underline text-xs">
-                                {filling === e._id ? '…' : 'Save'}
-                              </button>
-                            </span>
-                          ))}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {e.sheets == null ? '—' : points(e.teamPoints)}
-                          <div className="text-[11px] text-gray-400">{points(e.pointsPerSheet)}/sheet</div>
-                          {/* What came off the gross. Without this the credited
-                              figure does not reconcile against the sheets and
-                              the row looks like it is losing points. */}
-                          {e.sheets != null && e.deductionPoints > 0 && (
-                            <div className="text-[11px] text-gray-400">
-                              {points(e.grossPoints)} less {points(e.deductionPoints)} ({points(e.deductionPct)}%)
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
-                          {e.sheets == null ? '—' : points(e.perPersonPoints)}
-                        </td>
-                        {!viewOnly && (
-                          <td className="px-4 py-3 whitespace-nowrap text-right">
-                            {isManager ? (
-                              <>
-                                <button onClick={() => openEdit(e)} className="text-blue-600 hover:underline">Edit</button>
-                                <button onClick={() => remove(e)} className="text-red-600 hover:underline ml-3">Delete</button>
-                              </>
-                            ) : (
-                              // A picker cannot change a team once it is saved —
-                              // say so where the buttons would be, rather than
-                              // leaving an unexplained blank.
-                              <span className="text-xs text-gray-400" title="Ask the manager of this incentive to correct a saved team.">
-                                Saved
-                              </span>
-                            )}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div>
+                {entryGroups.map(([ymd, list]) => {
+                  const h = dayHeading(ymd);
+                  const awaiting = list.filter((x) => x.sheets == null).length;
+                  return (
+                    <section key={ymd || 'none'} className="rst-day">
+                      <div className="rst-day-head bi-day-head">
+                        <span className="rst-day-title">{h.label}</span>
+                        {h.rel && <span className="rst-day-rel">{h.rel}</span>}
+                        {awaiting > 0 && <span className="bi-await">{awaiting} awaiting</span>}
+                        <span className="rst-day-count">{list.length}</span>
+                      </div>
+                      <div className="bi-list">
+                        {list.map((e) => {
+                          const crew = [e.picker, ...(e.members || [])].filter(Boolean);
+                          const open = expanded === e._id;
+                          return (
+                            <article key={e._id} className={`bi-day${e.sheets == null ? ' is-awaiting' : ''}`}>
+                              <div className="bi-who">
+                                <PersonAvatar user={asUser(e.picker?.name)} />
+                                <div className="min-w-0">
+                                  <div className="bi-name">{e.picker?.name}</div>
+                                  <div className="bi-meta">
+                                    {e.picker?.employeeCode && <span className="bi-code">{e.picker.employeeCode}</span>}
+                                    <span className="bi-tag">Picker</span>
+                                    {e.teamName && <span className="bi-team-name">{e.teamName}</span>}
+                                    {e.sheets == null && (
+                                      <span className="bi-await"><FiClock size={11} aria-hidden="true" /> Awaiting sheet count</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bi-crew">
+                                <button type="button" onClick={() => setExpanded(expanded === e._id ? null : e._id)}
+                                  aria-expanded={open} className="bi-crew-btn">
+                                  <span className="bi-stack" aria-hidden="true">
+                                    {crew.slice(0, 4).map((p, i) => <PersonAvatar key={i} user={asUser(p.name)} size="sm" />)}
+                                    {crew.length > 4 && <span className="bi-stack-more">+{crew.length - 4}</span>}
+                                  </span>
+                                  <span className="bi-crew-text">
+                                    {e.headCount} people{e.members?.length ? ` (${e.members.length} member${e.members.length === 1 ? '' : 's'})` : ''}
+                                  </span>
+                                  <FiChevronDown size={14} className="bi-chev" aria-hidden="true" />
+                                </button>
+                                {e.note && <div className="bi-note">{e.note}</div>}
+                              </div>
+
+                              <div className="bi-figs">
+                                <div className={`bi-stat${e.sheets == null && !(viewOnly || !isManager) ? ' is-fill' : ''}`}>
+                                  <span className="bi-stat-label">Sheet Rolled</span>
+                                  {e.sheets != null ? <span className="bi-stat-value">{e.sheets}</span> : (viewOnly || !isManager ? <span className="bi-stat-value is-muted">—</span> : (
+                                    /* The whole evening job, in the row it belongs to. */
+                                    <span className="bi-fill">
+                                      <input type="number" min="0" step="1" inputMode="numeric"
+                                        aria-label="Sheets rolled by this team"
+                                        value={fillDraft[e._id] ?? ''}
+                                        onChange={(ev) => setFillDraft({ ...fillDraft, [e._id]: ev.target.value })}
+                                        onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fillSheets(e); } }}
+                                        className="bi-fill-input" />
+                                      <button type="button" onClick={() => fillSheets(e)} disabled={filling === e._id}
+                                        className="trn-btn is-primary accent-bg text-white bi-fill-save">
+                                        {filling === e._id ? '…' : 'Save'}
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                <PointsStat row={e} label="Team points" />
+                                <EachStat row={e} />
+                              </div>
+
+                              {!viewOnly && (
+                                <div className="bi-actions">
+                                  {isManager ? (
+                                    <>
+                                      <button type="button" onClick={() => openEdit(e)} className="trn-icon-btn" aria-label="Edit" title="Edit">
+                                        <FiEdit2 size={15} />
+                                      </button>
+                                      <button type="button" onClick={() => remove(e)} className="trn-icon-btn bi-del" aria-label="Delete" title="Delete">
+                                        <FiTrash2 size={15} />
+                                      </button>
+                                    </>
+                                  ) : (
+                                    // A picker cannot change a team once it is saved —
+                                    // say so where the buttons would be, rather than
+                                    // leaving an unexplained blank.
+                                    <span className="bi-saved" title="Ask the manager of this incentive to correct a saved team.">
+                                      <FiLock size={11} aria-hidden="true" /> Saved
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {open && (
+                                <ul className="bi-roster">
+                                  <li className="bi-person is-picker">
+                                    <PersonAvatar user={asUser(e.picker?.name)} size="sm" />
+                                    <span className="bi-person-name">{e.picker?.name}</span>
+                                    {e.picker?.employeeCode && <span className="bi-code">{e.picker.employeeCode}</span>}
+                                    <span className="bi-tag">Picker</span>
+                                  </li>
+                                  {(e.members || []).map((m) => (
+                                    <li key={String(m.employee)} className="bi-person">
+                                      <PersonAvatar user={asUser(m.name)} size="sm" />
+                                      <span className="bi-person-name">{m.name}</span>
+                                      {m.employeeCode && <span className="bi-code">{m.employeeCode}</span>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
               </div>
             )}
           </>
@@ -1073,109 +1204,104 @@ export default function AdminBoysIncentive() {
 
       {/* --------------------------------------------------------------- QC -- */}
       {tab === 'qc' && (
-        loading ? (
-          <p className="text-sm text-gray-500">Loading…</p>
-        ) : (
+        loading ? skeleton(4, 3) : (
           <>
             {qcTotals && qcDays.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                {[
-                  ['Days', qcTotals.days, ''],
-                  ['People on QC', qcTotals.people, ''],
-                  ['Sheets', qcTotals.sheets,
-                    qcTotals.pending ? `${qcTotals.pending} day${qcTotals.pending === 1 ? '' : 's'} not filled in` : ''],
-                  ['QC points', points(qcTotals.points), qcTotals.pending ? 'so far' : ''],
-                ].map(([label, value, hint]) => (
-                  <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
-                    <div className="text-xs text-gray-500">{label}</div>
-                    <div className="text-xl font-semibold text-gray-900 mt-0.5">{value}</div>
-                    {hint ? <div className="text-[11px] text-amber-600 mt-0.5">{hint}</div> : null}
-                  </div>
-                ))}
+              <div className="bi-kpis">
+                <Kpi icon={FiCalendar} hue="#6366f1" value={qcTotals.days} label="Days" />
+                <Kpi icon={FiCheckSquare} hue="#8b5cf6" value={qcTotals.people} label="People on QC" />
+                <Kpi icon={FiLayers} hue="#0d9488" value={qcTotals.sheets} label="Sheets"
+                  sub={qcTotals.pending ? `${qcTotals.pending} day${qcTotals.pending === 1 ? '' : 's'} not filled in` : ''} />
+                <Kpi icon={FiAward} hue="#16a34a" value={points(qcTotals.points)} label="QC points"
+                  sub={qcTotals.pending ? 'so far' : ''} />
               </div>
             )}
 
             {qcDays.length === 0 ? (
-              <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
-                No QC set for this month yet.
-                {!viewOnly && isManager && <> Set who is doing QC each morning, and fill in the sheets that evening.</>}
+              <div className="prm-list">
+                <div className="trn-empty">
+                  <span className="trn-empty-icon"><FiCheckSquare size={24} /></span>
+                  <p className="text-sm font-semibold">No QC set for this month yet.</p>
+                </div>
               </div>
             ) : (
-              <div className="bg-white shadow rounded-xl overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-medium">Date</th>
-                      <th className="text-left px-4 py-3 font-medium">QC</th>
-                      <th className="text-right px-4 py-3 font-medium">Sheets</th>
-                      <th className="text-right px-4 py-3 font-medium">QC points</th>
-                      <th className="text-right px-4 py-3 font-medium">Points each</th>
-                      {!viewOnly && isManager && <th className="px-4 py-3" />}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {qcDays.map((d) => (
-                      <tr key={d._id} className="align-top">
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <div className="text-gray-900">{fmtDate(d.date)}</div>
-                          {d.sheets == null && (
-                            <span className="inline-block mt-1 text-[11px] px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800">
-                              Awaiting sheet count
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 min-w-[220px]">
-                          <ul className="space-y-0.5">
-                            {(d.members || []).map((m) => (
-                              <li key={String(m.employee)} className="text-gray-900">
-                                {m.name}
-                                {m.employeeCode && <span className="text-xs text-gray-400"> · {m.employeeCode}</span>}
-                              </li>
-                            ))}
-                          </ul>
-                          {d.note && <div className="text-xs text-gray-400 mt-1">{d.note}</div>}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {d.sheets != null ? d.sheets : (viewOnly || !isManager ? '—' : (
-                            /* The evening job, in the row it belongs to — as for a team. */
-                            <span className="inline-flex items-center gap-1 justify-end">
-                              <input type="number" min="0" step="1" inputMode="numeric"
-                                aria-label="Sheets QC is credited with"
-                                value={qcFillDraft[d._id] ?? ''}
-                                onChange={(ev) => setQcFillDraft({ ...qcFillDraft, [d._id]: ev.target.value })}
-                                onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fillQcSheets(d); } }}
-                                className="w-20 border rounded-lg px-2 py-1 text-right" />
-                              <button type="button" onClick={() => fillQcSheets(d)} disabled={qcFilling === d._id}
-                                className="text-blue-600 hover:underline text-xs">
-                                {qcFilling === d._id ? '…' : 'Save'}
-                              </button>
-                            </span>
-                          ))}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {d.sheets == null ? '—' : points(d.teamPoints)}
-                          <div className="text-[11px] text-gray-400">{points(d.pointsPerSheet)}/sheet</div>
-                          {/* The working, so the credited figure reconciles
-                              against the sheets. */}
-                          {d.sheets != null && d.deductionPoints > 0 && (
-                            <div className="text-[11px] text-gray-400">
-                              {points(d.grossPoints)} less {points(d.deductionPoints)} ({points(d.deductionPct)}%)
+              <div>
+                {qcGroups.map(([ymd, list]) => {
+                  const h = dayHeading(ymd);
+                  const awaiting = list.filter((x) => x.sheets == null).length;
+                  return (
+                    <section key={ymd || 'none'} className="rst-day">
+                      <div className="rst-day-head bi-day-head">
+                        <span className="rst-day-title">{h.label}</span>
+                        {h.rel && <span className="rst-day-rel">{h.rel}</span>}
+                        {awaiting > 0 && <span className="bi-await">{awaiting} awaiting</span>}
+                        <span className="rst-day-count">{list.length}</span>
+                      </div>
+                      <div className="bi-list">
+                        {list.map((d) => (
+                          <article key={d._id} className={`bi-day is-qc${d.sheets == null ? ' is-awaiting' : ''}`}>
+                            <div className="bi-who">
+                              <span className="bi-qc-icon" aria-hidden="true"><FiCheckSquare size={17} /></span>
+                              <div className="min-w-0">
+                                <ul className="bi-people">
+                                  {(d.members || []).map((m) => (
+                                    <li key={String(m.employee)} className="bi-person">
+                                      <PersonAvatar user={asUser(m.name)} size="sm" />
+                                      <span className="bi-person-name">{m.name}</span>
+                                      {m.employeeCode && <span className="bi-code">{m.employeeCode}</span>}
+                                    </li>
+                                  ))}
+                                </ul>
+                                {(d.sheets == null || d.note) && (
+                                  <div className="bi-meta">
+                                    {d.sheets == null && (
+                                      <span className="bi-await"><FiClock size={11} aria-hidden="true" /> Awaiting sheet count</span>
+                                    )}
+                                    {d.note && <span className="bi-note">{d.note}</span>}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">
-                          {d.sheets == null ? '—' : points(d.perPersonPoints)}
-                        </td>
-                        {!viewOnly && isManager && (
-                          <td className="px-4 py-3 whitespace-nowrap text-right">
-                            <button onClick={() => openQcEdit(d)} className="text-blue-600 hover:underline">Edit</button>
-                            <button onClick={() => removeQc(d)} className="text-red-600 hover:underline ml-3">Delete</button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+
+                            <div className="bi-figs">
+                              <div className={`bi-stat${d.sheets == null && !(viewOnly || !isManager) ? ' is-fill' : ''}`}>
+                                <span className="bi-stat-label">Sheets</span>
+                                {d.sheets != null ? <span className="bi-stat-value">{d.sheets}</span> : (viewOnly || !isManager ? <span className="bi-stat-value is-muted">—</span> : (
+                                  /* The evening job, in the row it belongs to — as for a team. */
+                                  <span className="bi-fill">
+                                    <input type="number" min="0" step="1" inputMode="numeric"
+                                      aria-label="Sheets QC is credited with"
+                                      value={qcFillDraft[d._id] ?? ''}
+                                      onChange={(ev) => setQcFillDraft({ ...qcFillDraft, [d._id]: ev.target.value })}
+                                      onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); fillQcSheets(d); } }}
+                                      className="bi-fill-input" />
+                                    <button type="button" onClick={() => fillQcSheets(d)} disabled={qcFilling === d._id}
+                                      className="trn-btn is-primary accent-bg text-white bi-fill-save">
+                                      {qcFilling === d._id ? '…' : 'Save'}
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                              <PointsStat row={d} label="QC points" />
+                              <EachStat row={d} />
+                            </div>
+
+                            {!viewOnly && isManager && (
+                              <div className="bi-actions">
+                                <button type="button" onClick={() => openQcEdit(d)} className="trn-icon-btn" aria-label="Edit" title="Edit">
+                                  <FiEdit2 size={15} />
+                                </button>
+                                <button type="button" onClick={() => removeQc(d)} className="trn-icon-btn bi-del" aria-label="Delete" title="Delete">
+                                  <FiTrash2 size={15} />
+                                </button>
+                              </div>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
               </div>
             )}
           </>
@@ -1185,109 +1311,125 @@ export default function AdminBoysIncentive() {
       {/* ---------------------------------------------------------- summary -- */}
       {tab === 'summary' && (
         loading ? (
-          <p className="text-sm text-gray-500">Loading…</p>
+          <>
+            <div className="bi-kpis is-5">
+              {[0, 1, 2, 3, 4].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}
+            </div>
+            <div className="skeleton h-64 rounded-2xl" />
+          </>
         ) : summary.people.length === 0 ? (
-          <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
-            Nobody has earned an incentive in this range yet.
+          <div className="prm-list">
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiAward size={24} /></span>
+              <p className="text-sm font-semibold">Nobody has earned an incentive in this range yet.</p>
+            </div>
           </div>
         ) : (
           <>
-            {canSettle && summary.people.some((x) => x.unpaidPoints > 0) && (
-              <div className="flex justify-end mb-3">
-                <button onClick={payEveryone} disabled={paying}
-                  className="px-4 py-2 text-sm border border-green-300 text-green-800 bg-green-50 rounded-lg hover:bg-green-100 disabled:opacity-60">
-                  {paying ? 'Working…' : 'Pay everyone in full'}
-                </button>
-              </div>
-            )}
             {summary.totals && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                {[
-                  ['People', summary.totals.people, ''],
-                  ['Teams', summary.totals.teams, ''],
-                  ['Sheet Rolled', summary.totals.sheets, ''],
-                  ['Points earned', points(summary.totals.points),
+              <div className="bi-kpis is-5">
+                <Kpi icon={FiUser} hue="#6366f1" value={summary.totals.people} label="People" />
+                <Kpi icon={FiUsers} hue="#0ea5e9" value={summary.totals.teams} label="Teams" />
+                <Kpi icon={FiLayers} hue="#0d9488" value={summary.totals.sheets} label="Sheet Rolled" />
+                <Kpi icon={FiAward} hue="#16a34a" value={points(summary.totals.points)} label="Points earned"
+                  sub={
                     // `pending` counts QC days waiting on a count as well as
                     // teams, so the wording names neither.
                     summary.totals.pending
                       ? `not final — ${summary.totals.pending} sheet count${summary.totals.pending === 1 ? '' : 's'} still to fill in`
-                      : ''],
-                  ['Still owed', points(summary.totals.unpaidPoints),
-                    summary.totals.unpaidPoints ? 'not marked paid' : 'all settled'],
-                ].map(([label, value, hint]) => (
-                  <div key={label} className="bg-white shadow rounded-xl px-4 py-3">
-                    <div className="text-xs text-gray-500">{label}</div>
-                    <div className="text-xl font-semibold text-gray-900 mt-0.5">{value}</div>
-                    {hint ? <div className="text-[11px] text-amber-600 mt-0.5">{hint}</div> : null}
-                  </div>
-                ))}
+                      : ''
+                  } />
+                <Kpi icon={FiClock} hue={summary.totals.unpaidPoints ? '#d97706' : '#16a34a'}
+                  value={points(summary.totals.unpaidPoints)} label="Still owed"
+                  sub={summary.totals.unpaidPoints ? 'not marked paid' : 'all settled'}
+                  tone={summary.totals.unpaidPoints ? 'amber' : 'green'} />
               </div>
             )}
-            <div className="bg-white shadow rounded-xl overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600">
-                  <tr>
-                    <th className="text-left px-4 py-3 font-medium">Employee</th>
-                    <th className="text-left px-4 py-3 font-medium">Department</th>
-                    <th className="text-right px-4 py-3 font-medium">Days</th>
-                    <th className="text-right px-4 py-3 font-medium">Days as picker</th>
-                    <th className="text-right px-4 py-3 font-medium">Sheet Rolled</th>
-                    {/* Only when somebody did QC in the range — a column of
-                        dashes on every month before QC existed says nothing. */}
-                    {showQcColumn && <th className="text-right px-4 py-3 font-medium">QC points</th>}
-                    <th className="text-right px-4 py-3 font-medium">Points earned</th>
-                    <th className="text-right px-4 py-3 font-medium">Paid</th>
-                    <th className="text-right px-4 py-3 font-medium">Still owed</th>
-                    {canSettle && <th className="px-4 py-3" />}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {summary.people.map((p) => (
-                    <tr key={String(p.employee)}>
-                      <td className="px-4 py-3">
-                        <div className="text-gray-900">{p.name}</div>
-                        <div className="text-xs text-gray-400">{p.employeeCode}</div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{p.department || '-'}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{p.days}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{p.pickerDays}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{p.sheets}</td>
-                      {showQcColumn && (
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {p.qcPoints ? points(p.qcPoints) : '—'}
-                          {p.qcDays ? <div className="text-[11px] text-gray-400">{p.qcDays} day{p.qcDays === 1 ? '' : 's'}</div> : null}
-                        </td>
-                      )}
-                      <td className="px-4 py-3 text-right tabular-nums font-medium text-gray-900">{points(p.points)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-green-700">{points(p.paidPoints)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">{points(p.unpaidPoints)}</td>
-                      {canSettle && (
-                        <td className="px-4 py-3 text-right whitespace-nowrap">
-                          {p.unpaidPoints > 0 ? (
-                            <button
-                              onClick={() => setPayFor({
-                                employee: p.employee,
-                                name: p.name,
-                                employeeCode: p.employeeCode,
-                                earned: p.points,
-                                alreadyPaid: p.paidPoints,
-                                owed: p.unpaidPoints,
-                                points: String(p.unpaidPoints),
-                                note: '',
-                              })}
-                              className="text-green-700 hover:underline"
-                            >
-                              Pay
-                            </button>
-                          ) : (
-                            <span className="text-xs text-gray-400">Settled</span>
-                          )}
-                        </td>
-                      )}
+
+            <div className="prm-head bi-head">
+              <span className="prm-head-title">People</span>
+              {canSettle && summary.people.some((x) => x.unpaidPoints > 0) && (
+                <button type="button" onClick={payEveryone} disabled={paying} className="trn-btn bi-pay-btn">
+                  <FiCheckCircle size={14} aria-hidden="true" /> {paying ? 'Working…' : 'Pay everyone in full'}
+                </button>
+              )}
+            </div>
+
+            <div className="bg-white shadow rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 text-gray-600">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-medium">Employee</th>
+                      <th className="text-left px-4 py-3 font-medium">Department</th>
+                      <th className="text-right px-4 py-3 font-medium">Days</th>
+                      <th className="text-right px-4 py-3 font-medium">Days as picker</th>
+                      <th className="text-right px-4 py-3 font-medium">Sheet Rolled</th>
+                      {/* Only when somebody did QC in the range — a column of
+                          dashes on every month before QC existed says nothing. */}
+                      {showQcColumn && <th className="text-right px-4 py-3 font-medium">QC points</th>}
+                      <th className="text-right px-4 py-3 font-medium">Points earned</th>
+                      <th className="text-right px-4 py-3 font-medium">Paid</th>
+                      <th className="text-right px-4 py-3 font-medium">Still owed</th>
+                      {canSettle && <th className="px-4 py-3" />}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {summary.people.map((p) => (
+                      <tr key={String(p.employee)}>
+                        <td className="px-4 py-3">
+                          <div className="bi-emp">
+                            <PersonAvatar user={asUser(p.name)} size="sm" />
+                            <div className="min-w-0">
+                              <div className="bi-emp-name">{p.name}</div>
+                              {p.employeeCode && <div className="bi-emp-code">{p.employeeCode}</div>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {p.department ? <span className="bi-dept">{p.department}</span> : <span className="opacity-50">-</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{p.days}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{p.pickerDays}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{p.sheets}</td>
+                        {showQcColumn && (
+                          <td className="px-4 py-3 text-right tabular-nums">
+                            {p.qcPoints ? points(p.qcPoints) : '—'}
+                            {p.qcDays ? <div className="text-[11px] text-gray-400">{p.qcDays} day{p.qcDays === 1 ? '' : 's'}</div> : null}
+                          </td>
+                        )}
+                        <td className="px-4 py-3 text-right tabular-nums bi-strong">{points(p.points)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums bi-paid">{points(p.paidPoints)}</td>
+                        <td className={`px-4 py-3 text-right tabular-nums bi-owed${p.unpaidPoints > 0 ? '' : ' is-zero'}`}>{points(p.unpaidPoints)}</td>
+                        {canSettle && (
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            {p.unpaidPoints > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setPayFor({
+                                  employee: p.employee,
+                                  name: p.name,
+                                  employeeCode: p.employeeCode,
+                                  earned: p.points,
+                                  alreadyPaid: p.paidPoints,
+                                  owed: p.unpaidPoints,
+                                  points: String(p.unpaidPoints),
+                                  note: '',
+                                })}
+                                className="trn-btn bi-pay-btn is-sm"
+                              >
+                                Pay
+                              </button>
+                            ) : (
+                              <span className="bi-settled"><FiCheck size={12} aria-hidden="true" /> Settled</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </>
         )
@@ -1297,46 +1439,52 @@ export default function AdminBoysIncentive() {
       {payFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-1">Pay {payFor.name}</h2>
-            <p className="text-sm text-gray-500 mb-4">{monthLabel}</p>
+            <div className="bi-modal-head">
+              <div className="flex items-center gap-3 min-w-0">
+                <PersonAvatar user={asUser(payFor.name)} />
+                <div className="min-w-0">
+                  <h2 className="card-title truncate">Pay {payFor.name}</h2>
+                  <p className="text-xs opacity-60 mt-0.5">{monthLabel}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setPayFor(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
 
-            <dl className="text-sm space-y-1 mb-4">
-              <div className="flex justify-between gap-4">
-                <dt className="text-gray-500">Earned this month</dt>
-                <dd className="text-gray-900">{points(payFor.earned)} points</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-gray-500">Paid so far</dt>
-                <dd className="text-gray-900">{points(payFor.alreadyPaid)} points</dd>
-              </div>
-              <div className="flex justify-between gap-4 pt-1 border-t border-gray-100">
-                <dt className="text-gray-500">Still owed</dt>
-                <dd className="font-semibold text-gray-900">{points(payFor.owed)} points</dd>
-              </div>
-            </dl>
-
-            <form onSubmit={payOne} className="space-y-3">
+            <div className="bi-paysum">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Paying now (points) *</label>
+                <span className="bi-paysum-label">Earned this month</span>
+                <span className="bi-paysum-value">{points(payFor.earned)}<span className="bi-paysum-unit">points</span></span>
+              </div>
+              <div>
+                <span className="bi-paysum-label">Paid so far</span>
+                <span className="bi-paysum-value">{points(payFor.alreadyPaid)}<span className="bi-paysum-unit">points</span></span>
+              </div>
+              <div className="is-owed">
+                <span className="bi-paysum-label">Still owed</span>
+                <span className="bi-paysum-value">{points(payFor.owed)}<span className="bi-paysum-unit">points</span></span>
+              </div>
+            </div>
+
+            <form onSubmit={payOne} className="space-y-3.5">
+              <div>
+                <label className="prm-label">Paying now (points) *</label>
                 <input autoFocus required type="number" min="0" step="0.01" max={payFor.owed}
                   value={payFor.points}
                   onChange={(e) => setPayFor({ ...payFor, points: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2" />
-                <p className="text-xs text-gray-400 mt-1">
-                  Pay less than the full {points(payFor.owed)} and the rest stays owed.
+                  className="prm-input" />
+                <p className="bi-hint">
+                  Anything under {points(payFor.owed)} stays owed.
                 </p>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Note</label>
+                <label className="prm-label">Note</label>
                 <input value={payFor.note} placeholder="Optional"
                   onChange={(e) => setPayFor({ ...payFor, note: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2" />
+                  className="prm-input" />
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setPayFor(null)}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={paying}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setPayFor(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={paying} className="trn-btn is-primary accent-bg text-white">
                   {paying ? 'Saving…' : 'Record payment'}
                 </button>
               </div>
@@ -1347,167 +1495,159 @@ export default function AdminBoysIncentive() {
 
       {/* -------------------------------------------------- points per sheet -- */}
       {tab === 'points' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-w-4xl">
-        <div className="bg-white shadow rounded-xl p-6">
-          <h2 className="card-title mb-1">Rolling - Points Per Sheet</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            What one rolled sheet is worth. It fills in a new day and can still be changed on the
-            day itself; a day already recorded keeps the figure it was saved with, unless you
-            choose to apply the change to the days already recorded when you make it.
-          </p>
-
-          {pointsForm === null ? (
-            <>
-              <div className="text-3xl font-semibold text-gray-900">{points(settings.pointsPerSheet)}</div>
-              <div className="text-xs text-gray-500 mt-1">points per sheet</div>
-              <p className="text-xs text-gray-400 mt-4">
-                A team of 5 rolling 10 sheets earns{' '}
-                {points(10 * (Number(settings.pointsPerSheet) || 0))} points — {' '}
-                {points((10 * (Number(settings.pointsPerSheet) || 0)) / 5)} each{' '}
-                {/* Said out loud, or this card and the one beside it disagree
-                    about what a head actually takes home. */}
-                before the deduction.
-              </p>
-              {!viewOnly && (
-                <button onClick={() => setPointsForm(String(settings.pointsPerSheet))}
-                  className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
-              )}
-            </>
-          ) : (
-            <form onSubmit={savePointsPerSheet} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Rolling points per sheet *</label>
-                <input autoFocus required type="number" min="0" step="0.01" value={pointsForm}
-                  onChange={(e) => setPointsForm(e.target.value)}
-                  className="block w-full border rounded-lg px-3 py-2" />
+        <div className="max-w-4xl">
+          <div className="prm-head bi-head">
+            <span className="prm-head-title">Rolling team</span>
+            <span className="prm-head-sub">Recorded days keep their saved figure unless you re-apply.</span>
+          </div>
+          <div className="bi-rates">
+            <div className="bi-rate" style={{ '--hue': '#0d9488' }}>
+              <div className="bi-rate-head">
+                <span className="bi-rate-icon" aria-hidden="true"><FiLayers size={18} /></span>
+                <h2 className="bi-rate-title">Points per sheet</h2>
               </div>
-              <ApplyToRecorded value={applyFrom.points} onChange={(v) => setApply('points', v)} days="team days" />
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => { setPointsForm(null); setApply('points', ''); }}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingPoints}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-                  {savingPoints ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        {/* The other half of what a team's points are worth: how much of them
-            never reaches the team. It sits beside the per-sheet yield because
-            the two are read together — one decides the size of the gross, the
-            other how much of it the team is credited with. */}
-        <div className="bg-white shadow rounded-xl p-6">
-          <h2 className="card-title mb-1">Rolling - Deduction</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            How much comes off a team&apos;s points before they are credited. Taken from every
-            team on every day; what it is used for is settled outside the portal, so it is not
-            paid to anybody here.
-          </p>
-
-          {shareForm === null ? (
-            <>
-              <div className="text-3xl font-semibold text-gray-900">{points(settings.deductionPct)}%</div>
-              <div className="text-xs text-gray-500 mt-1">off every team&apos;s points</div>
-              <p className="text-xs text-gray-400 mt-4">
-                A team of 5 rolling 10 sheets earns{' '}
-                {points(10 * (Number(settings.pointsPerSheet) || 0))} points; {' '}
-                {points((10 * (Number(settings.pointsPerSheet) || 0)) * (Number(settings.deductionPct) || 0) / 100)}{' '}
-                comes off and the team is credited with{' '}
-                {points((10 * (Number(settings.pointsPerSheet) || 0)) * (1 - (Number(settings.deductionPct) || 0) / 100))}{' '}
-                — {points(((10 * (Number(settings.pointsPerSheet) || 0)) * (1 - (Number(settings.deductionPct) || 0) / 100)) / 5)} each.
-              </p>
-              {!viewOnly && (
-                <button onClick={() => setShareForm(String(settings.deductionPct))}
-                  className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
-              )}
-            </>
-          ) : (
-            <form onSubmit={saveShare} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Rolling deduction (%) *</label>
-                <input autoFocus required type="number" min="0" max="100" step="0.01" value={shareForm}
-                  onChange={(e) => setShareForm(e.target.value)}
-                  className="block w-full border rounded-lg px-3 py-2" />
-              </div>
-              <ApplyToRecorded value={applyFrom.share} onChange={(v) => setApply('share', v)} days="team days" />
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => { setShareForm(null); setApply('share', ''); }}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingShare}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-                  {savingShare ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </form>
-          )}
-        </div>
-
-        {/* QC's own pair — separate figures that start at the teams' numbers
-            (4 a sheet, 30% off) and can move on their own. */}
-        {[
-          {
-            key: 'qcPointsPerSheet',
-            title: 'QC - Points Per Sheet',
-            text: 'What one sheet is worth to the day\'s QC. It fills in a new QC day; a day already recorded keeps the figure it was saved with, unless you choose to apply the change to it.',
-            value: settings.qcPointsPerSheet,
-            suffix: '',
-            unit: 'points per sheet',
-            label: 'QC points per sheet *',
-            max: undefined,
-          },
-          {
-            key: 'qcDeductionPct',
-            title: 'QC - Deduction',
-            text: 'How much comes off QC\'s points before they are credited, the same way it comes off a team\'s. Settled outside the portal.',
-            value: settings.qcDeductionPct,
-            suffix: '%',
-            unit: 'off QC\'s points',
-            label: 'QC deduction (%) *',
-            max: '100',
-          },
-        ].map((c) => {
-          const ex = qcSum(100, 2, settings.qcPointsPerSheet, settings.qcDeductionPct);
-          return (
-            <div key={c.key} className="bg-white shadow rounded-xl p-6">
-              <h2 className="card-title mb-1">{c.title}</h2>
-              <p className="text-sm text-gray-500 mb-4">{c.text}</p>
-              {qcSettingForm?.key !== c.key ? (
-                <>
-                  <div className="text-3xl font-semibold text-gray-900">{points(c.value)}{c.suffix}</div>
-                  <div className="text-xs text-gray-500 mt-1">{c.unit}</div>
-                  <p className="text-xs text-gray-400 mt-4">
-                    Two people on QC for 100 sheets: {points(ex.gross)} points, {points(ex.cut)} comes off, QC is
-                    credited with {points(ex.credited)} — {points(ex.each)} each.
-                  </p>
-                  {!viewOnly && (
-                    <button onClick={() => { setQcSettingForm({ key: c.key, value: String(c.value) }); setApply('qc', ''); }}
-                      className="mt-5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Change</button>
-                  )}
-                </>
-              ) : (
-                <form onSubmit={saveQcSetting} className="space-y-3">
+              {pointsForm === null ? (
+                <div className="bi-rate-body">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">{c.label}</label>
-                    <input autoFocus required type="number" min="0" max={c.max} step="0.01" value={qcSettingForm.value}
-                      onChange={(e) => setQcSettingForm({ ...qcSettingForm, value: e.target.value })}
-                      className="block w-full border rounded-lg px-3 py-2" />
+                    <div className="bi-rate-value">{points(settings.pointsPerSheet)}</div>
+                    <div className="bi-rate-unit">points per sheet</div>
                   </div>
-                  <ApplyToRecorded value={applyFrom.qc} onChange={(v) => setApply('qc', v)} days="QC days" />
-                  <div className="flex justify-end gap-2 pt-2">
-                    <button type="button" onClick={() => { setQcSettingForm(null); setApply('qc', ''); }}
-                      className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                    <button type="submit" disabled={savingQcSetting}
-                      className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-                      {savingQcSetting ? 'Saving…' : 'Save'}
+                  {!viewOnly && (
+                    <button type="button" onClick={() => setPointsForm(String(settings.pointsPerSheet))} className="trn-btn">
+                      <FiEdit2 size={14} aria-hidden="true" /> Change
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <form onSubmit={savePointsPerSheet} className="space-y-3">
+                  <div>
+                    <label className="prm-label">Rolling points per sheet *</label>
+                    <input autoFocus required type="number" min="0" step="0.01" value={pointsForm}
+                      onChange={(e) => setPointsForm(e.target.value)}
+                      className="prm-input" />
+                  </div>
+                  <ApplyToRecorded value={applyFrom.points} onChange={(v) => setApply('points', v)} days="team days" />
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" onClick={() => { setPointsForm(null); setApply('points', ''); }} className="trn-btn">Cancel</button>
+                    <button type="submit" disabled={savingPoints} className="trn-btn is-primary accent-bg text-white">
+                      {savingPoints ? 'Saving…' : 'Save'}
                     </button>
                   </div>
                 </form>
               )}
             </div>
-          );
-        })}
+
+            {/* The other half of what a team's points are worth: how much of them
+                never reaches the team. It sits beside the per-sheet yield because
+                the two are read together — one decides the size of the gross, the
+                other how much of it the team is credited with. */}
+            <div className="bi-rate" style={{ '--hue': '#0d9488' }}>
+              <div className="bi-rate-head">
+                <span className="bi-rate-icon" aria-hidden="true"><FiPercent size={18} /></span>
+                <h2 className="bi-rate-title">Deduction</h2>
+              </div>
+              {shareForm === null ? (
+                <div className="bi-rate-body">
+                  <div>
+                    <div className="bi-rate-value">{points(settings.deductionPct)}%</div>
+                    <div className="bi-rate-unit">off every team&apos;s points</div>
+                  </div>
+                  {!viewOnly && (
+                    <button type="button" onClick={() => setShareForm(String(settings.deductionPct))} className="trn-btn">
+                      <FiEdit2 size={14} aria-hidden="true" /> Change
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <form onSubmit={saveShare} className="space-y-3">
+                  <div>
+                    <label className="prm-label">Rolling deduction (%) *</label>
+                    <input autoFocus required type="number" min="0" max="100" step="0.01" value={shareForm}
+                      onChange={(e) => setShareForm(e.target.value)}
+                      className="prm-input" />
+                  </div>
+                  <ApplyToRecorded value={applyFrom.share} onChange={(v) => setApply('share', v)} days="team days" />
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button type="button" onClick={() => { setShareForm(null); setApply('share', ''); }} className="trn-btn">Cancel</button>
+                    <button type="submit" disabled={savingShare} className="trn-btn is-primary accent-bg text-white">
+                      {savingShare ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+
+          {/* QC's own pair — separate figures that start at the teams' numbers
+              (4 a sheet, 30% off) and can move on their own. */}
+          <div className="prm-head">
+            <span className="prm-head-title">QC</span>
+            <span className="prm-head-sub">Recorded days keep their saved figure unless you re-apply.</span>
+          </div>
+          <div className="bi-rates">
+            {[
+              {
+                key: 'qcPointsPerSheet',
+                title: 'Points per sheet',
+                icon: FiLayers,
+                value: settings.qcPointsPerSheet,
+                suffix: '',
+                unit: 'points per sheet',
+                label: 'QC points per sheet *',
+                max: undefined,
+              },
+              {
+                key: 'qcDeductionPct',
+                title: 'Deduction',
+                icon: FiPercent,
+                value: settings.qcDeductionPct,
+                suffix: '%',
+                unit: 'off QC\'s points',
+                label: 'QC deduction (%) *',
+                max: '100',
+              },
+            ].map((c) => {
+              const Icon = c.icon;
+              return (
+                <div key={c.key} className="bi-rate" style={{ '--hue': '#8b5cf6' }}>
+                  <div className="bi-rate-head">
+                    <span className="bi-rate-icon" aria-hidden="true"><Icon size={18} /></span>
+                    <h2 className="bi-rate-title">{c.title}</h2>
+                  </div>
+                  {qcSettingForm?.key !== c.key ? (
+                    <div className="bi-rate-body">
+                      <div>
+                        <div className="bi-rate-value">{points(c.value)}{c.suffix}</div>
+                        <div className="bi-rate-unit">{c.unit}</div>
+                      </div>
+                      {!viewOnly && (
+                        <button type="button" onClick={() => { setQcSettingForm({ key: c.key, value: String(c.value) }); setApply('qc', ''); }}
+                          className="trn-btn">
+                          <FiEdit2 size={14} aria-hidden="true" /> Change
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <form onSubmit={saveQcSetting} className="space-y-3">
+                      <div>
+                        <label className="prm-label">{c.label}</label>
+                        <input autoFocus required type="number" min="0" max={c.max} step="0.01" value={qcSettingForm.value}
+                          onChange={(e) => setQcSettingForm({ ...qcSettingForm, value: e.target.value })}
+                          className="prm-input" />
+                      </div>
+                      <ApplyToRecorded value={applyFrom.qc} onChange={(v) => setApply('qc', v)} days="QC days" />
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button type="button" onClick={() => { setQcSettingForm(null); setApply('qc', ''); }} className="trn-btn">Cancel</button>
+                        <button type="submit" disabled={savingQcSetting} className="trn-btn is-primary accent-bg text-white">
+                          {savingQcSetting ? 'Saving…' : 'Save'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -1515,30 +1655,33 @@ export default function AdminBoysIncentive() {
       {form && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-4">{form._id ? 'Edit the day' : (isManager ? "Record the day's team" : "Pick today's team")}</h2>
-            <form onSubmit={save} className="space-y-3">
+            <div className="bi-modal-head">
+              <h2 className="card-title">{form._id ? 'Edit the day' : (isManager ? "Record the day's team" : "Pick today's team")}</h2>
+              <button type="button" onClick={() => setForm(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
+            <form onSubmit={save} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                  <label className="prm-label">Date *</label>
                   <input required type="date" value={form.date}
                     onChange={(e) => setForm({ ...form, date: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2" />
+                    className="prm-input" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Team name</label>
+                  <label className="prm-label">Team name</label>
                   <input value={form.teamName} placeholder="Optional — e.g. Team A"
                     onChange={(e) => setForm({ ...form, teamName: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2" />
+                    className="prm-input" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Picker *</label>
+                <label className="prm-label">Picker *</label>
                 {!isManager ? (
                   // A picker picks for THEMSELVES — the server refuses anything
                   // else, so the field states the fact rather than offering a
                   // choice that would be rejected.
-                  <div className="block w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-700">
+                  <div className="prm-input bi-readonly">
                     {peopleById.get(String(myEmployeeId))
                       ? personLabel(peopleById.get(String(myEmployeeId)))
                       : 'You'}
@@ -1550,14 +1693,13 @@ export default function AdminBoysIncentive() {
                   options={pickerOptions}
                   placeholder="Choose the picker"
                   searchPlaceholder="Search by code or name…"
-                  className="block w-full border rounded-lg px-3 py-2 text-left"
+                  className="prm-input block w-full text-left"
                 />
                 )}
-                <p className="text-xs text-gray-400 mt-1">Takes an equal share, the same as everybody else on the team.</p>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Team members *</label>
+                <label className="prm-label">Team members *</label>
                 <SearchableSelect
                   multiple
                   value={form.members}
@@ -1565,56 +1707,52 @@ export default function AdminBoysIncentive() {
                   options={memberOptions}
                   placeholder="Pick the members"
                   searchPlaceholder="Search by code or name…"
-                  className="block w-full border rounded-lg px-3 py-2 text-left"
+                  className="prm-input block w-full text-left"
                 />
                 {form.members.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
+                  <div className="bi-chips">
                     {form.members.map((id) => {
                       const p = peopleById.get(String(id));
                       return (
-                        <span key={id} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 rounded-lg px-2 py-1">
+                        <span key={id} className="bi-chip">
                           {p ? (p.employeeCode || p.name) : id}
                           <button type="button" aria-label="Remove"
                             onClick={() => setForm({ ...form, members: form.members.filter((m) => m !== id) })}
-                            className="text-gray-400 hover:text-red-600">×</button>
+                            className="bi-chip-x"><FiX size={12} /></button>
                         </span>
                       );
                     })}
                   </div>
                 )}
-                <p className="text-xs text-gray-400 mt-1">
-                  {department} is listed first — search to pick anyone standing in from another department.
-                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {isManager && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Sheet Rolled</label>
+                  <label className="prm-label">Sheet Rolled</label>
                   <input type="number" min="0" step="1" value={form.sheets} placeholder="Fill in this evening"
                     onChange={(e) => setForm({ ...form, sheets: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-400 mt-1">Leave it blank to record the team now.</p>
+                    className="prm-input" />
                 </div>
                 )}
-                <div className="flex items-end pb-1">
+                <div className="flex items-end pb-2">
                   {/* Points per sheet is a setting, not a per-day field (user
                       decision 2026-09-10) — shown here so the sum is legible,
                       and changed on the Points per sheet tab. */}
-                  <p className="text-xs text-gray-500">
+                  <p className="bi-per-sheet">
                     Each sheet is worth <strong>{points(settings.pointsPerSheet)} points</strong>.
                   </p>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Note</label>
+                <label className="prm-label">Note</label>
                 <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2" />
+                  className="prm-input" />
               </div>
 
               {preview && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                <div className="bi-preview">
                   <strong>{preview.heads}</strong> {preview.heads === 1 ? 'person' : 'people'} on the team
                   {preview.pending ? (
                     // A picker never fills the count in, so telling them to
@@ -1646,10 +1784,8 @@ export default function AdminBoysIncentive() {
               )}
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setForm(null)}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setForm(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
@@ -1662,26 +1798,28 @@ export default function AdminBoysIncentive() {
       {qcForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-4">{qcForm._id ? 'Edit the QC day' : 'Set QC for a day'}</h2>
-            <form onSubmit={saveQc} className="space-y-3">
+            <div className="bi-modal-head">
+              <h2 className="card-title">{qcForm._id ? 'Edit the QC day' : 'Set QC for a day'}</h2>
+              <button type="button" onClick={() => setQcForm(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
+            <form onSubmit={saveQc} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                  <label className="prm-label">Date *</label>
                   <input required type="date" value={qcForm.date}
                     onChange={(e) => setQcForm({ ...qcForm, date: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2" />
+                    className="prm-input" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Sheets</label>
+                  <label className="prm-label">Sheets</label>
                   <input type="number" min="0" step="1" value={qcForm.sheets} placeholder="Fill in this evening"
                     onChange={(e) => setQcForm({ ...qcForm, sheets: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-400 mt-1">Leave it blank to set who is on QC now.</p>
+                    className="prm-input" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Who is doing QC *</label>
+                <label className="prm-label">Who is doing QC *</label>
                 <SearchableSelect
                   multiple
                   value={qcForm.members}
@@ -1689,36 +1827,33 @@ export default function AdminBoysIncentive() {
                   options={qcOptions}
                   placeholder="Pick the QC people"
                   searchPlaceholder="Search by code or name…"
-                  className="block w-full border rounded-lg px-3 py-2 text-left"
+                  className="prm-input block w-full text-left"
                 />
                 {qcForm.members.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
+                  <div className="bi-chips">
                     {qcForm.members.map((mid) => {
                       const p = peopleById.get(String(mid));
                       return (
-                        <span key={mid} className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 rounded-lg px-2 py-1">
+                        <span key={mid} className="bi-chip">
                           {p ? (p.employeeCode || p.name) : mid}
                           <button type="button" aria-label="Remove"
                             onClick={() => setQcForm({ ...qcForm, members: qcForm.members.filter((m) => m !== mid) })}
-                            className="text-gray-400 hover:text-red-600">×</button>
+                            className="bi-chip-x"><FiX size={12} /></button>
                         </span>
                       );
                     })}
                   </div>
                 )}
-                <p className="text-xs text-gray-400 mt-1">
-                  Staff designated QC are listed first. Everybody on QC takes an equal share.
-                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Note</label>
+                <label className="prm-label">Note</label>
                 <input value={qcForm.note} onChange={(e) => setQcForm({ ...qcForm, note: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2" />
+                  className="prm-input" />
               </div>
 
               {qcPreview && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                <div className="bi-preview">
                   <strong>{qcPreview.heads}</strong> {qcPreview.heads === 1 ? 'person' : 'people'} on QC
                   {qcPreview.pending ? (
                     <>{' '}· sheet count not filled in — save now and fill it this evening</>
@@ -1739,10 +1874,8 @@ export default function AdminBoysIncentive() {
               )}
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setQcForm(null)}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingQc}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setQcForm(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={savingQc} className="trn-btn is-primary accent-bg text-white">
                   {savingQc ? 'Saving…' : 'Save'}
                 </button>
               </div>
@@ -1755,17 +1888,14 @@ export default function AdminBoysIncentive() {
       {showImport && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-xl p-6">
-            <h2 className="card-title mb-1">Upload a month of sheets</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              One row per team, per day: date, picker, the members (employee codes, comma separated) and
-              the sheets rolled. <strong>Leave Sheet Rolled blank</strong> to upload the morning&rsquo;s teams and
-              fill the figures in later. A day already recorded for the same picker is UPDATED, so the evening&rsquo;s
-              sheet — or a corrected one — can be uploaded over it safely.
-            </p>
+            <div className="bi-modal-head">
+              <h2 className="card-title">Upload a month of sheets</h2>
+              <button type="button" onClick={closeImport} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
 
             <form onSubmit={runImport} className="space-y-3">
               <input ref={importFileRef} type="file" accept=".xlsx"
-                className="block w-full text-sm border rounded-lg px-3 py-2" />
+                className="prm-input" />
 
               {importResult?.errorBanner && (
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
@@ -1775,36 +1905,36 @@ export default function AdminBoysIncentive() {
 
               {importResult && !importResult.errorBanner && (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bi-tiles">
                     {[
                       ['recorded', importResult.created],
                       ['updated', importResult.updated],
                       ['skipped', importResult.skipped],
                     ].map(([label, n]) => (
-                      <div key={label} className={`rounded-lg border px-3 py-2 ${label === 'skipped' && n ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
-                        <div className={`text-lg font-semibold ${label === 'skipped' && n ? 'text-red-800' : 'text-green-800'}`}>{n || 0}</div>
-                        <div className={`text-xs ${label === 'skipped' && n ? 'text-red-700' : 'text-green-700'}`}>days {label}</div>
+                      <div key={label} className={`bi-tile ${label === 'skipped' && n ? 'is-bad' : 'is-ok'}`}>
+                        <div className="bi-tile-value">{n || 0}</div>
+                        <div className="bi-tile-label">days {label}</div>
                       </div>
                     ))}
                   </div>
 
                   {importResult.warnings?.length > 0 && (
-                    <details className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
-                      <summary className="cursor-pointer text-amber-800">
+                    <details className="bi-details is-amber">
+                      <summary>
                         {importResult.warnings.length} row(s) need a look
                       </summary>
-                      <ul className="mt-1 space-y-0.5 text-xs text-amber-900">
+                      <ul>
                         {importResult.warnings.map((w, i) => <li key={i}>Row {w.row}: {w.message}</li>)}
                       </ul>
                     </details>
                   )}
 
                   {importResult.errors?.length > 0 && (
-                    <details open className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm">
-                      <summary className="cursor-pointer text-red-800">
+                    <details open className="bi-details is-red">
+                      <summary>
                         {importResult.errors.length} row(s) could not be recorded
                       </summary>
-                      <ul className="mt-1 space-y-0.5 text-xs text-red-900">
+                      <ul>
                         {importResult.errors.map((s, i) => <li key={i}>Row {s.row}: {s.message}</li>)}
                       </ul>
                     </details>
@@ -1817,16 +1947,14 @@ export default function AdminBoysIncentive() {
               <div className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-2 pt-2">
                 <button type="button"
                   onClick={() => downloadFile('/incentives/template.xlsx', 'incentive-sheets-template.xlsx')}
-                  className="text-sm text-blue-600 hover:underline">
-                  Download the template
+                  className="bi-link">
+                  <FiDownload size={14} aria-hidden="true" /> Download the template
                 </button>
                 <span className="flex gap-2 ml-auto">
-                  <button type="button" onClick={closeImport}
-                    className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">
+                  <button type="button" onClick={closeImport} className="trn-btn">
                     {importResult && !importResult.errorBanner ? 'Done' : 'Cancel'}
                   </button>
-                  <button type="submit" disabled={importing}
-                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  <button type="submit" disabled={importing} className="trn-btn is-primary accent-bg text-white">
                     {importing ? 'Uploading…' : 'Upload'}
                   </button>
                 </span>

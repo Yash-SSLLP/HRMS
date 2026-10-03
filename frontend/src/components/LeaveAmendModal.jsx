@@ -84,11 +84,7 @@ export default function LeaveAmendModal({ request, onClose, onSaved }) {
         <h3 className="text-lg font-semibold text-gray-900">Change this leave</h3>
         <p className="text-xs text-gray-500 mt-1 mb-4">
           {who}&apos;s {request.leaveType}, currently {request.totalDays} day{request.totalDays === 1 ? '' : 's'}.
-          {request.status === 'Approved'
-            ? ' It is already approved, so changing it moves the days on their attendance calendar and recalculates how much of it is paid.'
-            : request.status === 'Pending'
-              ? ' It has not been decided yet, so this only changes what is being asked for.'
-              : ` It is ${request.status.toLowerCase()}, so nothing is on their calendar for these days right now.`}
+          {request.status === 'Approved' ? ' Changing it recalculates paid days.' : ''}
         </p>
 
         {error && (
@@ -114,14 +110,7 @@ export default function LeaveAmendModal({ request, onClose, onSaved }) {
               <option value="Cancelled">Cancelled — same, but nobody refused it</option>
               {request.status === 'Pending' && <option value="Pending">Still waiting on a decision</option>}
             </select>
-            {form.status !== request.status && (
-              <p className="text-xs text-amber-700 mb-3">
-                {form.status === 'Approved'
-                  ? 'Those days go back onto their attendance calendar as leave.'
-                  : 'Those days come off their attendance calendar — whether they were present is then whatever their punches say.'}
-              </p>
-            )}
-            {form.status === request.status && <div className="mb-3" />}
+            <div className="mb-3" />
           </>
         )}
 
@@ -177,8 +166,8 @@ export default function LeaveAmendModal({ request, onClose, onSaved }) {
         <input type="text" required maxLength={500} value={form.note}
           onChange={(e) => set({ note: e.target.value })}
           placeholder="e.g. Came back a day early"
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1 text-sm" />
-        <p className="text-xs text-gray-400 mb-4">{who} is told about the change and shown this reason.</p>
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4 text-sm" />
+
 
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose}

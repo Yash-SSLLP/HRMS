@@ -29,7 +29,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
-import { FiX, FiTrash2, FiEdit2, FiCheck, FiTag, FiCornerDownRight, FiAlertTriangle } from 'react-icons/fi';
+import { FiX, FiTrash2, FiEdit2, FiCheck, FiTag, FiCornerDownRight } from 'react-icons/fi';
 import { confirmDialog } from '../dialogs';
 import * as T from '../../api/tasks';
 
@@ -144,9 +144,6 @@ export default function CategoryManager({ open, onClose, onChanged }) {
             <h2 className="flex items-center gap-1.5 text-base font-semibold text-gray-900">
               <FiTag size={15} /> Categories
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">
-              Anybody can add one. Only you can rename or remove one.
-            </p>
           </div>
           <button
             type="button"
@@ -264,14 +261,6 @@ export default function CategoryManager({ open, onClose, onChanged }) {
               ))}
             </ul>
           )}
-        </div>
-
-        <div className="flex items-start gap-2 border-t border-gray-100 px-5 py-3 text-[11px] text-gray-500">
-          <FiAlertTriangle className="mt-0.5 shrink-0 text-amber-500" size={12} />
-          <p>
-            A category with tasks under it is <strong>hidden</strong> rather than deleted, and those
-            tasks keep the label they were filed under. Merge first if you want them moved.
-          </p>
         </div>
       </div>
     </div>

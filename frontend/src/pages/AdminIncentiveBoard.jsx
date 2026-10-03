@@ -171,10 +171,7 @@ export default function AdminIncentiveBoard() {
 
   return (
     <div>
-      <PageHeader
-        title="Leaderboard"
-        subtitle="Who has earned the most points of all time, across every department."
-      >
+      <PageHeader title="Leaderboard">
         {/* The page has nothing else that would ever ask the server again —
             there is no month to change and both filters are applied on rows the
             browser is already holding — so without this a board opened on Monday
@@ -205,8 +202,7 @@ export default function AdminIncentiveBoard() {
         // Switched off org-wide is a decision, not an error — say which decision
         // and where it is made, because the person reading this can change it.
         <div className="bg-white shadow rounded-xl p-6 text-sm text-gray-500">
-          The leaderboard is switched off for the whole company. A Super Admin can turn it
-          back on under <span className="font-medium text-gray-700">Incentive ▸ Leaderboard Access</span>.
+          The leaderboard is switched off for the whole company.
         </div>
       ) : (
         <>
@@ -301,21 +297,17 @@ export default function AdminIncentiveBoard() {
           {/* Say plainly what the list covers and what the two figures mean. A
               ranking that quietly left half the company off, or whose columns
               somebody had to guess at, would both be worse than a sentence. */}
-          <p className="mt-3 text-xs text-gray-500 flex items-start gap-1.5">
-            <FiAward size={13} className="mt-0.5 shrink-0" />
-            <span>
-              {board.unrestricted
-                ? 'Everyone in the company, ranked by total points.'
-                : `Covers ${departments.join(', ')} — set under Incentive ▸ Leaderboard Access.`}
-              {' '}Ranks are company-wide and stay the same when you filter.
-              {' '}Total is everything a person has ever earned; current is what is left after
-              {' '}what they have redeemed. Both are lifetime, so there is no month to choose.
-              {' '}Rupees, and where each person&apos;s points came from, stay on the Points Dashboard.
-              {board.billingUnavailable
-                ? ' The billing system could not be read, so anybody who earns through it is short here.'
-                : ''}
-            </span>
-          </p>
+          {(!board.unrestricted || board.billingUnavailable) && (
+            <p className="mt-3 text-xs text-gray-500 flex items-start gap-1.5">
+              <FiAward size={13} className="mt-0.5 shrink-0" />
+              <span>
+                {board.unrestricted ? '' : `Covers ${departments.join(', ')}.`}
+                {board.billingUnavailable
+                  ? ' The billing system could not be read, so some totals are short.'
+                  : ''}
+              </span>
+            </p>
+          )}
         </>
       )}
     </div>

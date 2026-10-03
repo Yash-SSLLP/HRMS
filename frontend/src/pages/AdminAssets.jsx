@@ -26,15 +26,30 @@
  * or POST /assets/employees/:userId/assignments with one row per item
  * (employee-wise). The legacy PATCH /assets/:id/assign is the mobile app's and
  * is not used here.
+ *
+ * 2026-10-03 redesign ("make it more premium"): a KPI strip from what is
+ * loaded, the four tabs as one segmented toolbar carrying each tab's own
+ * filters, asset / person cards with a type tile and holder rows (verb as a
+ * labelled button, Edit / Remove as icons), and return requests as request
+ * cards. Every modal and flow is unchanged. Styling: styles/pages/docs-assets.css
+ * (`.ast-*`) over the shared primitives in index.css.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiArchive, FiBox, FiCheck, FiCheckCircle, FiChevronDown, FiClock, FiCornerDownLeft, FiCornerUpLeft, FiCreditCard,
+  FiEdit2, FiInbox, FiMonitor, FiPackage, FiPlus, FiRefreshCw, FiSearch, FiServer, FiSmartphone, FiTrash2, FiTruck,
+  FiTv, FiUserPlus, FiUsers, FiX,
+} from 'react-icons/fi';
+import '../styles/pages/docs-assets.css';
 import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { PersonAvatar, RoleChip } from '../components/permissions/permUi';
+import { roleLabel } from '../config/roles';
 import { peopleOptionList } from '../utils/peopleOptions';
 import { toYMD, formatDateTime12 } from '../utils/time';
 import { useNavCountsStore } from '../store/navCountsStore';
@@ -44,12 +59,29 @@ const CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Phone', 'SIM', 'Furniture',
 // single-unit row from before the rework — shown when a row carries it, never offered.
 const STATUS = ['Available', 'InRepair', 'Retired'];
 const STATUS_LABEL = { Available: 'Available', Assigned: 'Assigned', InRepair: 'In repair', Retired: 'Retired' };
-const STATUS_STYLES = {
-  Available: 'bg-green-100 text-green-800',
-  Assigned: 'bg-blue-100 text-blue-800',
-  InRepair: 'bg-amber-100 text-amber-800',
-  Retired: 'bg-gray-200 text-gray-600',
+// The availability pill's tone (.ast-avail.is-*).
+const STATUS_TONE = { Available: 'is-ok', Assigned: 'is-info', InRepair: 'is-warn', Retired: 'is-off' };
+// Each category's tile: a Feather icon and the hue it is tinted with.
+const KIND_LOOK = {
+  Laptop: { icon: FiMonitor, hue: '#6366f1' },
+  Desktop: { icon: FiServer, hue: '#0ea5e9' },
+  Monitor: { icon: FiTv, hue: '#0d9488' },
+  Phone: { icon: FiSmartphone, hue: '#8b5cf6' },
+  SIM: { icon: FiCreditCard, hue: '#d97706' },
+  Furniture: { icon: FiArchive, hue: '#64748b' },
+  Vehicle: { icon: FiTruck, hue: '#ea580c' },
+  Other: { icon: FiBox, hue: '' },
 };
+const lookOf = (category) => KIND_LOOK[category] || KIND_LOOK.Other;
+/** The category's icon in a tinted tile — on asset cards, person-card rows and the register. */
+function KindTile({ category, size = 'md' }) {
+  const { icon: Icon, hue } = lookOf(category);
+  return (
+    <span className={`ast-tile${size === 'sm' ? ' is-sm' : ''}`} style={hue ? { '--hue': hue } : undefined} aria-hidden="true">
+      <Icon size={size === 'sm' ? 15 : 19} />
+    </span>
+  );
+}
 // The server refuses to issue a Retired or InRepair kind; people who already
 // hold one keep it.
 const isIssuable = (k) => !!k && k.status !== 'Retired' && k.status !== 'InRepair';
@@ -77,11 +109,12 @@ const TAB_IDS = TABS.map(([k]) => k);
 const isPendingReturn = (h) => h?.returnRequest?.status === 'Pending' && !h.returnedAt;
 // How an answered request ended. 'Rejected' reads as Declined and 'Cancelled'
 // as Withdrawn — the words the employee's own page uses.
+// `tone` colours both the history card's edge and its pill (.rg-card / .rg-status).
 const OUTCOME = {
-  Pending: { label: 'Waiting', cls: 'bg-amber-100 text-amber-800' },
-  Accepted: { label: 'Accepted', cls: 'bg-green-100 text-green-800' },
-  Rejected: { label: 'Declined', cls: 'bg-red-100 text-red-800' },
-  Cancelled: { label: 'Withdrawn', cls: 'bg-gray-100 text-gray-600' },
+  Pending: { label: 'Waiting', tone: 'is-pending' },
+  Accepted: { label: 'Accepted', tone: 'is-approved' },
+  Rejected: { label: 'Declined', tone: 'is-rejected' },
+  Cancelled: { label: 'Withdrawn', tone: 'ast-withdrawn' },
 };
 
 // The chip a holding wears on the Assets and Assignments tabs while its request
@@ -90,7 +123,7 @@ const OUTCOME = {
 function ReturnChip({ rr }) {
   const when = formatDateTime12(rr?.requestedAt);
   const title = `Return requested${when ? ` ${when}` : ''}${rr?.note ? ` — “${rr.note}”` : ''}`;
-  return <span title={title} className="text-xs px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 whitespace-nowrap">Return requested</span>;
+  return <span title={title} className="ast-tag is-amber"><FiCornerUpLeft size={10} /> Return requested</span>;
 }
 
 let rowSeq = 0;
@@ -668,142 +701,264 @@ export default function AdminAssets() {
   // Remove last, so the two red buttons never sit side by side.
   const decisionButtons = (h) => (
     <>
-      <button onClick={() => openDecide(h, 'accept')} className="text-emerald-700 hover:underline">Accept return</button>
-      <button onClick={() => openDecide(h, 'decline')} className="text-red-600 hover:underline">Decline</button>
+      <button type="button" onClick={() => openDecide(h, 'accept')} className="trn-btn rg-approve ast-act">
+        <FiCheck size={14} /> Accept return
+      </button>
+      <button type="button" onClick={() => openDecide(h, 'decline')} className="trn-btn is-danger ast-act">Decline</button>
     </>
   );
 
+  // Every holding's actions, wherever it shows: the verb as a labelled button
+  // (Accept / Decline while a request waits — Accept IS the take-back — or Take
+  // back), then Edit and Remove as icons. `canTakeBack` is false on a register
+  // row already returned.
+  const holdingActions = (h, asked, canTakeBack = true) => (
+    <>
+      {asked && decisionButtons(h)}
+      {!asked && canTakeBack && (
+        <button type="button" onClick={() => openTakeBack(h)} className="trn-btn ast-act">
+          <FiCornerDownLeft size={14} /> Take back
+        </button>
+      )}
+      <span className="ast-tools">
+        <button type="button" onClick={() => openItemEdit(h)} className="trn-icon-btn ast-ibtn"
+          aria-label={`Edit ${h.asset?.name || 'item'}`} title="Edit"><FiEdit2 size={15} /></button>
+        <button type="button" onClick={() => removeHolding(h)} className="trn-icon-btn ast-ibtn ast-del"
+          aria-label={`Remove ${h.asset?.name || 'record'}`} title="Remove"><FiTrash2 size={15} /></button>
+      </span>
+    </>
+  );
+
+  // One holding as a row. `lead` is what the row opens with: the person (on an
+  // asset's card) or the asset (on a person's card) — the item itself is the
+  // point of the row either way.
+  const holdingRow = (h, lead) => {
+    const unit = unitLine(h);
+    const asked = isPendingReturn(h);
+    return (
+      <li key={h._id} className={`ast-hold${asked ? ' is-asked' : ''}`}>
+        {lead === 'person' ? (
+          <div className="ast-hold-who">
+            <PersonAvatar user={h.employee} size="sm" />
+            <div className="min-w-0">
+              <div className="ast-hold-name">{personName(h.employee)}</div>
+              <div className="ast-hold-sub">
+                {[h.employee?.role ? roleLabel(h.employee.role) : null, `Issued ${fmtDate(h.assignedAt)}`].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="ast-hold-who">
+            <KindTile category={h.asset?.category} size="sm" />
+            <div className="min-w-0">
+              <div className="ast-hold-name">{h.asset?.name || 'Asset'}</div>
+              <div className="ast-hold-sub">
+                {[h.asset?.assetTag, h.asset?.category, `Issued ${fmtDate(h.assignedAt)}`].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="ast-hold-item">
+          {h.details
+            ? <div className="ast-hold-details">{h.details}</div>
+            : <div className="ast-hold-nodetails">No details recorded</div>}
+          {unit && <div className="ast-hold-unit">{unit}</div>}
+          {h.note && <div className="ast-hold-note">{h.note}</div>}
+          {asked && <div className="mt-1"><ReturnChip rr={h.returnRequest} /></div>}
+        </div>
+        {!viewOnly && <div className="ast-hold-actions">{holdingActions(h, asked)}</div>}
+      </li>
+    );
+  };
+
+  // ---- Presentation only: the KPI strip and the tab counts, from what is loaded ----
+  const holdingsCount = assets.reduce((n, k) => n + (k.holdings || []).length, 0);
+  const availableCount = assets.filter((k) => k.status === 'Available').length;
+  const repairCount = assets.filter((k) => k.status === 'InRepair').length;
+  const retiredCount = assets.filter((k) => k.status === 'Retired').length;
+  const KPIS = [
+    { key: 'assets', label: 'Assets', value: loading ? '—' : assets.length, icon: FiBox, hue: '#6366f1' },
+    { key: 'employees', label: 'Issued', value: loading ? '—' : holdingsCount, icon: FiPackage, hue: '#0ea5e9', sub: loading ? '' : `${byEmployee.length} ${byEmployee.length === 1 ? 'person' : 'people'}` },
+    {
+      key: null, label: 'Available', value: loading ? '—' : availableCount, icon: FiCheckCircle, hue: '#16a34a',
+      sub: [repairCount ? `${repairCount} in repair` : null, retiredCount ? `${retiredCount} retired` : null].filter(Boolean).join(' · '),
+    },
+    { key: 'returns', label: 'Return requests', value: reqLoading ? '—' : requests.length, icon: FiCornerUpLeft, hue: '#d97706' },
+  ];
+  const tabCount = {
+    assets: loading ? null : assets.length,
+    employees: loading ? null : byEmployee.length,
+    assignments: regLoading ? null : register.length,
+    returns: reqLoading ? null : requests.length,
+  };
+  const cardSkeletons = (
+    <div className="ast-grid">
+      {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-44 rounded-2xl" />)}
+    </div>
+  );
+
   return (
-    <div>
-      <PageHeader title="Assets" subtitle="Company assets and who holds which item">
-        {updating && <span className="text-xs text-gray-400">Updating…</span>}
+    <div className="ast-page">
+      <PageHeader title="Assets">
+        {updating && <span className="ast-updating"><FiRefreshCw size={12} className="animate-spin" /> Updating…</span>}
         {viewOnly || onReturns ? null : tab === 'assets'
-          ? <button onClick={openCreateKind} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ New asset</button>
+          ? <button type="button" onClick={openCreateKind} className="trn-btn is-primary accent-bg text-white"><FiPlus size={15} /> New asset</button>
           : tab === 'employees'
-            ? <button onClick={() => openBundle(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Assign assets</button>
-            : <button onClick={() => openIssue(null)} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Issue asset</button>}
+            ? <button type="button" onClick={() => openBundle(null)} className="trn-btn is-primary accent-bg text-white"><FiPlus size={15} /> Assign assets</button>
+            : <button type="button" onClick={() => openIssue(null)} className="trn-btn is-primary accent-bg text-white"><FiPlus size={15} /> Issue asset</button>}
       </PageHeader>
 
-      {/* font-medium sits on the base, not the active branch: a weight that changes
-          with selection re-measures the label and slides the tab beside it on every
-          click. The active tab is told apart by colour and the border-b-2 alone, and
-          border-transparent already reserves that border's width on the inactive one.
-          The waiting count rides on the Return requests label in either state. */}
-      <div className="flex gap-1 mb-4 border-b border-gray-200">
-        {TABS.map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 -mb-px border-b-2 text-sm font-medium ${tab === k ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {label}
-            {k === 'returns' && requests.length > 0 && (
-              <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800">{requests.length}</span>
-            )}
-          </button>
-        ))}
+      <div className="trn-kpis">
+        {KPIS.map((k) => {
+          const Icon = k.icon;
+          const Tag = k.key ? 'button' : 'div';
+          const on = !!k.key && tab === k.key;
+          return (
+            <Tag key={k.label} type={k.key ? 'button' : undefined} onClick={k.key ? () => setTab(k.key) : undefined}
+              aria-pressed={k.key ? on : undefined}
+              className={`trn-kpi pb-kpi${on ? ' is-on' : ''}`} style={{ '--kpi-hue': k.hue }}>
+              <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>
+              <span className="min-w-0">
+                <span className="trn-kpi-value block">{k.value}</span>
+                <span className="trn-kpi-label block">{k.label}</span>
+                {k.sub && <span className="trn-kpi-sub block">{k.sub}</span>}
+              </span>
+            </Tag>
+          );
+        })}
       </div>
 
-      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {/* Views + the open tab's own filters in one bar. Selection is paint-only
+          (.trn-seg-btn.is-on), so a tab never resizes when picked; the waiting
+          count rides on Return requests in either state. */}
+      <div className="pb-toolbar mt-4">
+        <div className="trn-seg" role="tablist" aria-label="Show">
+          {TABS.map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+              className={`trn-seg-btn${tab === k ? ' is-on' : ''}`}>
+              {label}
+              {tabCount[k] != null && (
+                <span className={`trn-seg-count${k === 'returns' && tabCount[k] > 0 ? ' ast-seg-amber' : ''}`}>{tabCount[k]}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        {tab !== 'assets' && (
+          <div className="pb-toolbar-end">
+            {tab === 'employees' && (
+              <>
+                <label className={`pb-chip ast-check${showEveryone ? ' is-on' : ''}`}>
+                  <input type="checkbox" checked={showEveryone} onChange={(e) => setShowEveryone(e.target.checked)} />
+                  Show people with no assets
+                </label>
+                <label className="trn-search">
+                  <FiSearch size={15} className="opacity-50 shrink-0" />
+                  <input
+                    type="search"
+                    value={peopleQuery}
+                    onChange={(e) => setPeopleQuery(e.target.value)}
+                    placeholder="Search employee, asset, details, serial…"
+                    aria-label="Search employees and assets"
+                  />
+                  {peopleQuery && <button type="button" onClick={() => setPeopleQuery('')} aria-label="Clear search" className="opacity-50 hover:opacity-100"><FiX size={14} /></button>}
+                </label>
+              </>
+            )}
+            {tab === 'assignments' && (
+              <>
+                <label className={`pb-chip ast-check${activeOnly ? ' is-on' : ''}`}>
+                  <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
+                  Currently held only
+                </label>
+                <label className="trn-search">
+                  <FiSearch size={15} className="opacity-50 shrink-0" />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search employee, asset, details, serial…"
+                    aria-label="Search assignments"
+                  />
+                  {query && <button type="button" onClick={() => setQuery('')} aria-label="Clear search" className="opacity-50 hover:opacity-100"><FiX size={14} /></button>}
+                </label>
+              </>
+            )}
+            {onReturns && (
+              <label className={`pb-chip ast-check${showHistory ? ' is-on' : ''}`}>
+                <input type="checkbox" checked={showHistory} onChange={(e) => setShowHistory(e.target.checked)} />
+                Show history
+              </label>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{error}</div>}
 
       {/* ===== Asset kinds, each with its holders ===== */}
       {tab === 'assets' && (
-        loading ? (
-          <div className="space-y-3">
-            {[0, 1, 2].map((i) => <div key={i} className="bg-white shadow rounded-lg p-4">{SKELETON}</div>)}
-          </div>
-        ) : assets.length === 0 ? (
-          <div className="bg-white shadow rounded-lg px-4 py-10 text-center">
-            <p className="text-sm font-medium text-gray-700">No assets yet</p>
-            {!viewOnly && (
-              <>
-                <p className="text-sm text-gray-500 mt-1">Create one — say “Laptop” — then issue it to as many people as you like, each with their own details.</p>
-                <button onClick={openCreateKind} className="mt-4 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ New asset</button>
-              </>
-            )}
+        loading ? cardSkeletons : assets.length === 0 ? (
+          <div className="prm-list">
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiBox size={24} /></span>
+              <p className="text-sm font-semibold">No assets yet</p>
+              {!viewOnly && (
+                <button type="button" onClick={openCreateKind} className="trn-btn is-primary accent-bg text-white"><FiPlus size={15} /> New asset</button>
+              )}
+            </div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="ast-grid">
             {assets.map((k) => {
               const holders = k.holdings || [];
               const open = expanded.has(k._id);
               const visible = open ? holders : holders.slice(0, HOLDER_PREVIEW);
               const hidden = holders.length - visible.length;
+              const look = lookOf(k.category);
               return (
-                <section key={k._id} className="bg-white shadow rounded-lg overflow-hidden">
-                  <div className="px-4 py-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-gray-100">
-                    <div className="min-w-0 grow basis-64">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <h3 className="text-base font-semibold text-gray-900 break-words">{k.name}</h3>
-                        <span className="text-xs font-mono text-gray-500">{k.assetTag}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded-lg ${STATUS_STYLES[k.status] || STATUS_STYLES.Retired}`}>{STATUS_LABEL[k.status] || k.status}</span>
+                <section key={k._id} className={`ast-card${k.status === 'Retired' ? ' is-off' : ''}`}
+                  style={look.hue ? { '--hue': look.hue } : undefined}>
+                  <div className="ast-card-head">
+                    <KindTile category={k.category} />
+                    <div className="ast-card-main">
+                      <div className="ast-card-titleline">
+                        <h3 className="ast-card-name">{k.name}</h3>
+                        {k.assetTag && <span className="rst-code">{k.assetTag}</span>}
+                        <span className={`ast-avail ${STATUS_TONE[k.status] || STATUS_TONE.Retired}`}>{STATUS_LABEL[k.status] || k.status}</span>
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
+                      <div className="ast-card-sub">
                         {k.category}
                         {k.holderCount > 0 && ` · ${k.holderCount} ${k.holderCount === 1 ? 'person holds' : 'people hold'} one`}
                       </div>
-                      {k.notes && <p className="text-xs text-gray-500 mt-1 break-words">{k.notes}</p>}
+                      {k.notes && <p className="ast-card-notes">{k.notes}</p>}
                     </div>
                     {!viewOnly && (
-                      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                      <div className="ast-card-tools">
                         {isIssuable(k)
-                          ? <button onClick={() => openIssue(k)} className="text-emerald-700 hover:underline">Issue</button>
-                          : <span className="text-xs text-gray-400">Not issuable while {STATUS_LABEL[k.status].toLowerCase()}</span>}
-                        <button onClick={() => openEditKind(k)} className="text-blue-600 hover:underline">Edit</button>
-                        <button onClick={() => deleteKind(k)} className="text-red-600 hover:underline">Delete</button>
+                          ? <button type="button" onClick={() => openIssue(k)} className="trn-btn ast-act ast-issue"><FiUserPlus size={14} /> Issue</button>
+                          : <span className="ast-muted">Not issuable while {STATUS_LABEL[k.status].toLowerCase()}</span>}
+                        <span className="ast-tools">
+                          <button type="button" onClick={() => openEditKind(k)} className="trn-icon-btn ast-ibtn"
+                            aria-label={`Edit ${k.name}`} title="Edit"><FiEdit2 size={15} /></button>
+                          <button type="button" onClick={() => deleteKind(k)} className="trn-icon-btn ast-ibtn ast-del"
+                            aria-label={`Delete ${k.name}`} title="Delete"><FiTrash2 size={15} /></button>
+                        </span>
                       </div>
                     )}
                   </div>
 
                   {holders.length === 0 ? (
-                    <p className="px-4 py-3 text-sm text-gray-500">Not issued to anyone right now.</p>
+                    <p className="ast-none">Not issued to anyone right now.</p>
                   ) : (
                     <>
-                      <ul className="divide-y divide-gray-100">
-                        {visible.map((raw) => {
-                          const h = withKind(raw, k);
-                          const unit = unitLine(h);
-                          const asked = isPendingReturn(h);
-                          return (
-                            <li key={h._id} className="px-4 py-3">
-                              <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:gap-4">
-                                {/* Phone: name left, issue date right on one line.
-                                    Desktop: a fixed column, so every holder's item
-                                    starts at the same x and the list scans down. */}
-                                <div className="flex items-baseline justify-between gap-3 md:block md:w-48 md:shrink-0 min-w-0">
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-medium text-gray-800 truncate">{personName(h.employee)}</div>
-                                    {h.employee?.role && <div className="hidden md:block text-xs text-gray-500">{h.employee.role}</div>}
-                                  </div>
-                                  <div className="shrink-0 text-xs text-gray-500 md:mt-0.5">Issued {fmtDate(h.assignedAt)}</div>
-                                </div>
-                                {/* The item itself is the point of the row. */}
-                                <div className="flex-1 min-w-0">
-                                  {h.details
-                                    ? <div className="text-sm font-semibold text-gray-900 break-words">{h.details}</div>
-                                    : <div className="text-sm italic text-gray-400">No details recorded</div>}
-                                  {unit && <div className="text-xs font-mono text-gray-500 mt-0.5 break-words">{unit}</div>}
-                                  {h.note && <div className="text-xs text-gray-500 mt-0.5 break-words">{h.note}</div>}
-                                  {asked && <div className="mt-1"><ReturnChip rr={h.returnRequest} /></div>}
-                                </div>
-                                {!viewOnly && (
-                                  <div className="flex flex-wrap items-center gap-2 md:justify-end md:shrink-0">
-                                    {/* While a request waits, Accept stands in for Take back —
-                                        it is the same take-back, and it answers the request. */}
-                                    {asked && decisionButtons(h)}
-                                    <button onClick={() => openItemEdit(h)} className="text-blue-600 hover:underline">Edit</button>
-                                    {!asked && <button onClick={() => openTakeBack(h)} className="text-amber-700 hover:underline">Take back</button>}
-                                    <button onClick={() => removeHolding(h)} className="text-red-600 hover:underline">Remove</button>
-                                  </div>
-                                )}
-                              </div>
-                            </li>
-                          );
-                        })}
+                      <ul className="ast-holds">
+                        {visible.map((raw) => holdingRow(withKind(raw, k), 'person'))}
                       </ul>
                       {holders.length > HOLDER_PREVIEW && (
-                        <div className="px-4 py-2 border-t border-gray-100 bg-gray-50">
-                          <button onClick={() => toggleExpanded(k._id)} className="text-blue-600 hover:underline">
-                            {open ? 'Show fewer' : `Show all ${holders.length} (${hidden} more)`}
-                          </button>
-                        </div>
+                        <button type="button" onClick={() => toggleExpanded(k._id)} className="ast-more" aria-expanded={open}>
+                          {open ? 'Show fewer' : `Show all ${holders.length} (${hidden} more)`}
+                          <FiChevronDown size={14} className={`ast-more-icon${open ? ' is-open' : ''}`} />
+                        </button>
                       )}
                     </>
                   )}
@@ -816,144 +971,78 @@ export default function AdminAssets() {
 
       {/* ===== By employee: every item each person holds ===== */}
       {tab === 'employees' && (
-        <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between mb-3">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input type="checkbox" checked={showEveryone} onChange={(e) => setShowEveryone(e.target.checked)} />
-              Show people with no assets
-            </label>
-            <input
-              type="search"
-              value={peopleQuery}
-              onChange={(e) => setPeopleQuery(e.target.value)}
-              placeholder="Search employee, asset, details, serial…"
-              className="w-full sm:w-80 border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-          {loading ? (
-            <div className="space-y-3">
-              {[0, 1, 2].map((i) => <div key={i} className="bg-white shadow rounded-lg p-4">{SKELETON}</div>)}
-            </div>
-          ) : shownPeople.length === 0 ? (
-            <div className="bg-white shadow rounded-lg px-4 py-10 text-center">
-              <p className="text-sm font-medium text-gray-700">
+        loading ? cardSkeletons : shownPeople.length === 0 ? (
+          <div className="prm-list">
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiUsers size={24} /></span>
+              <p className="text-sm font-semibold">
                 {peopleQuery.trim() ? 'Nobody matches that search' : 'Nobody holds an asset right now'}
               </p>
               {!viewOnly && !peopleQuery.trim() && (
-                <>
-                  <p className="text-sm text-gray-500 mt-1">Pick an employee and give them several assets at once — a laptop, a phone and a SIM in one go.</p>
-                  <button onClick={() => openBundle(null)} className="mt-4 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">+ Assign assets</button>
-                </>
+                <button type="button" onClick={() => openBundle(null)} className="trn-btn is-primary accent-bg text-white"><FiPlus size={15} /> Assign assets</button>
               )}
             </div>
-          ) : (
-            <div className="space-y-3">
-              {shownPeople.map((p) => {
-                const open = openPeople.has(p.id);
-                const visible = open ? p.items : p.items.slice(0, HOLDER_PREVIEW);
-                const hidden = p.items.length - visible.length;
-                const askedCount = p.items.filter(isPendingReturn).length;
-                return (
-                  <section key={p.id} className="bg-white shadow rounded-lg overflow-hidden">
-                    <div className="px-4 py-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-gray-100">
-                      <div className="min-w-0 grow basis-64">
-                        <h3 className="text-base font-semibold text-gray-900 break-words">{personName(p.employee)}</h3>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {[
-                            p.employee?.role,
-                            p.items.length ? `${p.items.length} ${p.items.length === 1 ? 'item' : 'items'} held` : 'Holds nothing',
-                            askedCount ? `${askedCount} return requested` : null,
-                          ].filter(Boolean).join(' · ')}
-                        </div>
+          </div>
+        ) : (
+          <div className="ast-grid">
+            {shownPeople.map((p) => {
+              const open = openPeople.has(p.id);
+              const visible = open ? p.items : p.items.slice(0, HOLDER_PREVIEW);
+              const hidden = p.items.length - visible.length;
+              const askedCount = p.items.filter(isPendingReturn).length;
+              return (
+                <section key={p.id} className={`ast-card ast-person${p.items.length ? '' : ' is-empty'}`}>
+                  <div className="ast-card-head">
+                    <PersonAvatar user={p.employee} />
+                    <div className="ast-card-main">
+                      <div className="ast-card-titleline">
+                        <h3 className="ast-card-name">{personName(p.employee)}</h3>
+                        {p.employee?.role && <RoleChip role={p.employee.role} />}
                       </div>
-                      {/* Only for somebody the picker offers — an account since
-                          deactivated keeps its card (it still owes the items) but
-                          is not handed more. */}
-                      {!viewOnly && users.some((u) => idOf(u) === p.id) && (
-                        <button onClick={() => openBundle(p.id, p.employee)} className="ml-auto text-emerald-700 hover:underline">
-                          {p.items.length ? 'Assign more' : 'Assign assets'}
+                      <div className="ast-card-sub">
+                        {p.items.length ? `${p.items.length} ${p.items.length === 1 ? 'item' : 'items'} held` : 'Holds nothing'}
+                        {askedCount > 0 && <span className="ast-tag is-amber"><FiCornerUpLeft size={10} /> {askedCount} return requested</span>}
+                      </div>
+                    </div>
+                    {/* Only for somebody the picker offers — an account since
+                        deactivated keeps its card (it still owes the items) but
+                        is not handed more. */}
+                    {!viewOnly && users.some((u) => idOf(u) === p.id) && (
+                      <div className="ast-card-tools">
+                        <button type="button" onClick={() => openBundle(p.id, p.employee)} className="trn-btn ast-act ast-issue">
+                          <FiPlus size={14} /> {p.items.length ? 'Assign more' : 'Assign assets'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {p.items.length === 0 ? (
+                    <p className="ast-none">No assets issued.</p>
+                  ) : (
+                    <>
+                      <ul className="ast-holds">
+                        {visible.map((h) => holdingRow(h, 'asset'))}
+                      </ul>
+                      {p.items.length > HOLDER_PREVIEW && (
+                        <button type="button" onClick={() => togglePerson(p.id)} className="ast-more" aria-expanded={open}>
+                          {open ? 'Show fewer' : `Show all ${p.items.length} (${hidden} more)`}
+                          <FiChevronDown size={14} className={`ast-more-icon${open ? ' is-open' : ''}`} />
                         </button>
                       )}
-                    </div>
-
-                    {p.items.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-gray-500">No assets issued.</p>
-                    ) : (
-                      <>
-                        <ul className="divide-y divide-gray-100">
-                          {visible.map((h) => {
-                            const unit = unitLine(h);
-                            const asked = isPendingReturn(h);
-                            return (
-                              <li key={h._id} className="px-4 py-3">
-                                <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:gap-4">
-                                  {/* Same columns as a holder row on By asset, with
-                                      the asset where the person was. */}
-                                  <div className="flex items-baseline justify-between gap-3 md:block md:w-48 md:shrink-0 min-w-0">
-                                    <div className="min-w-0">
-                                      <div className="text-sm font-medium text-gray-800 truncate">{h.asset?.name || 'Asset'}</div>
-                                      <div className="hidden md:block text-xs text-gray-500 font-mono truncate">
-                                        {h.asset?.assetTag}{h.asset?.category ? ` · ${h.asset.category}` : ''}
-                                      </div>
-                                    </div>
-                                    <div className="shrink-0 text-xs text-gray-500 md:mt-0.5">Issued {fmtDate(h.assignedAt)}</div>
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    {h.details
-                                      ? <div className="text-sm font-semibold text-gray-900 break-words">{h.details}</div>
-                                      : <div className="text-sm italic text-gray-400">No details recorded</div>}
-                                    {unit && <div className="text-xs font-mono text-gray-500 mt-0.5 break-words">{unit}</div>}
-                                    {h.note && <div className="text-xs text-gray-500 mt-0.5 break-words">{h.note}</div>}
-                                    {asked && <div className="mt-1"><ReturnChip rr={h.returnRequest} /></div>}
-                                  </div>
-                                  {!viewOnly && (
-                                    <div className="flex flex-wrap items-center gap-2 md:justify-end md:shrink-0">
-                                      {asked && decisionButtons(h)}
-                                      <button onClick={() => openItemEdit(h)} className="text-blue-600 hover:underline">Edit</button>
-                                      {!asked && <button onClick={() => openTakeBack(h)} className="text-amber-700 hover:underline">Take back</button>}
-                                      <button onClick={() => removeHolding(h)} className="text-red-600 hover:underline">Remove</button>
-                                    </div>
-                                  )}
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        {p.items.length > HOLDER_PREVIEW && (
-                          <div className="px-4 py-2 border-t border-gray-100 bg-gray-50">
-                            <button onClick={() => togglePerson(p.id)} className="text-blue-600 hover:underline">
-                              {open ? 'Show fewer' : `Show all ${p.items.length} (${hidden} more)`}
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
-          )}
-        </>
+                    </>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        )
       )}
 
       {/* ===== Assignment register (who has / had what, and when) ===== */}
       {tab === 'assignments' && (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between mb-3">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
-              Currently held only
-            </label>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search employee, asset, details, serial…"
-              className="w-full sm:w-80 border rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
           {!regLoading && query.trim() && (
-            <p className="text-xs text-gray-500 mb-2">Showing {shownRegister.length} of {register.length}</p>
+            <p className="ast-count-line">Showing {shownRegister.length} of {register.length}</p>
           )}
           <div className="bg-white shadow rounded-lg overflow-hidden">
             <div className="table-pane">
@@ -980,8 +1069,13 @@ export default function AdminAssets() {
                     return (
                       <tr key={r._id}>
                         <td className="px-4 py-3">
-                          <span className="font-medium text-gray-900">{r.asset?.name || 'Asset'}</span>
-                          <div className="text-xs text-gray-500 font-mono">{r.asset?.assetTag}{r.asset?.category ? ` · ${r.asset.category}` : ''}</div>
+                          <div className="ast-cell">
+                            <KindTile category={r.asset?.category} size="sm" />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-gray-900">{r.asset?.name || 'Asset'}</div>
+                              <div className="text-xs text-gray-500 font-mono">{r.asset?.assetTag}{r.asset?.category ? ` · ${r.asset.category}` : ''}</div>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           {r.details
@@ -990,21 +1084,26 @@ export default function AdminAssets() {
                           {unit && <div className="text-xs text-gray-500 font-mono">{unit}</div>}
                         </td>
                         <td className="px-4 py-3">
-                          {personName(r.employee)}
-                          {r.employee?.role && <div className="text-xs text-gray-500">{r.employee.role}</div>}
+                          <div className="ast-cell">
+                            <PersonAvatar user={r.employee} size="sm" />
+                            <div className="min-w-0">
+                              <div className="font-medium text-gray-900">{personName(r.employee)}</div>
+                              {r.employee?.role && <div className="text-xs text-gray-500">{roleLabel(r.employee.role)}</div>}
+                            </div>
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{fmtDate(r.assignedAt)}</td>
                         <td className="px-4 py-3">
                           {r.returnedAt ? (
                             <>
                               <span className="text-gray-700 whitespace-nowrap">{fmtDate(r.returnedAt)}</span>
-                              {r.returnedViaExit && <span className="ml-1.5 text-xs px-2 py-0.5 rounded-lg bg-gray-100 text-gray-600">via exit</span>}
+                              {r.returnedViaExit && <span className="ast-tag ml-1.5">via exit</span>}
                               {r.returnNote && <div className="text-xs text-gray-600 break-words">{r.returnNote}</div>}
                               {r.returnedBy && <div className="text-xs text-gray-400">by {personName(r.returnedBy)}</div>}
                             </>
                           ) : (
                             <>
-                              <span className="text-xs px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 whitespace-nowrap">Currently held</span>
+                              <span className="ast-tag is-held">Currently held</span>
                               {asked && <div className="mt-1"><ReturnChip rr={r.returnRequest} /></div>}
                             </>
                           )}
@@ -1012,12 +1111,7 @@ export default function AdminAssets() {
                         <td className="px-4 py-3 text-gray-600 break-words">{r.note || '-'}</td>
                         {!viewOnly && (
                           <td className="px-4 py-3 text-right">
-                            <div className="flex flex-wrap justify-end gap-2">
-                              {asked && decisionButtons(r)}
-                              <button onClick={() => openItemEdit(r)} className="text-blue-600 hover:underline">Edit</button>
-                              {!r.returnedAt && !asked && <button onClick={() => openTakeBack(r)} className="text-amber-700 hover:underline">Take back</button>}
-                              <button onClick={() => removeHolding(r)} className="text-red-600 hover:underline">Remove</button>
-                            </div>
+                            <div className="ast-row-actions">{holdingActions(r, asked, !r.returnedAt)}</div>
                           </td>
                         )}
                       </tr>
@@ -1033,125 +1127,134 @@ export default function AdminAssets() {
       {/* ===== Return requests (items their holders asked to hand back) ===== */}
       {onReturns && (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-            <p className="text-sm text-gray-600">
-              Items employees asked to hand back from My Assets. Accepting one takes it back — it leaves their list.
-            </p>
-            <label className="flex items-center gap-2 text-sm text-gray-600 sm:shrink-0">
-              <input type="checkbox" checked={showHistory} onChange={(e) => setShowHistory(e.target.checked)} />
-              Show history
-            </label>
-          </div>
-          {reqError && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{reqError}</div>}
+          {reqError && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{reqError}</div>}
 
-          <div className="bg-white shadow rounded-lg overflow-hidden">
-            {reqLoading ? (
-              <div className="p-4">{SKELETON}</div>
-            ) : requests.length === 0 ? (
-              <div className="px-4 py-10 text-center">
-                <p className="text-sm font-medium text-gray-700">Nothing waiting</p>
-                <p className="text-sm text-gray-500 mt-1">When somebody asks to hand an item back, it shows up here.</p>
+          {reqLoading ? (
+            <div className="space-y-2.5">{[0, 1].map((i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}</div>
+          ) : requests.length === 0 ? (
+            <div className="prm-list">
+              <div className="trn-empty">
+                <span className="trn-empty-icon"><FiInbox size={24} /></span>
+                <p className="text-sm font-semibold">Nothing waiting</p>
               </div>
-            ) : (
-              <ul className="divide-y divide-gray-100">
-                {requests.map((r) => {
-                  const rr = r.returnRequest || {};
-                  const codes = [r.asset?.assetTag, unitLine(r)].filter(Boolean).join(' · ');
-                  return (
-                    <li key={r._id} className="px-4 py-3">
-                      <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:gap-4">
-                        {/* Same columns as a holder row on the Assets tab: who on
-                            the left at a fixed width, the item beside it. */}
-                        <div className="min-w-0 md:w-48 md:shrink-0">
-                          <div className="text-sm font-medium text-gray-800 truncate">{personName(r.employee)}</div>
-                          {r.employee?.role && <div className="text-xs text-gray-500">{r.employee.role}</div>}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm text-gray-900 break-words">
-                            <span className="font-semibold">{r.asset?.name || 'Asset'}</span>
-                            {r.details
-                              ? <span className="text-gray-700"> — {r.details}</span>
-                              : <span className="italic text-gray-400"> — no details recorded</span>}
-                          </div>
-                          {codes && <div className="text-xs font-mono text-gray-500 mt-0.5 break-words">{codes}</div>}
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            Issued {fmtDate(r.assignedAt)} · Asked {formatDateTime12(rr.requestedAt) || '-'}
-                          </div>
-                          {rr.note
-                            ? <p className="mt-1.5 text-sm text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 break-words">“{rr.note}”</p>
-                            : <p className="mt-1 text-xs italic text-gray-400">No note from the employee</p>}
-                        </div>
-                        {!viewOnly && (
-                          <div className="flex flex-wrap items-center gap-2 md:justify-end md:shrink-0">
-                            <button onClick={() => openDecide(r, 'accept')} className="text-emerald-700 hover:underline">Accept</button>
-                            <button onClick={() => openDecide(r, 'decline')} className="text-red-600 hover:underline">Decline</button>
-                          </div>
-                        )}
+            </div>
+          ) : (
+            <div className="rg-list">
+              {requests.map((r) => {
+                const rr = r.returnRequest || {};
+                const codes = [r.asset?.assetTag, unitLine(r)].filter(Boolean).join(' · ');
+                return (
+                  <article key={r._id} className="rg-card is-pending ast-req">
+                    <div className="rg-who">
+                      <PersonAvatar user={r.employee} />
+                      <div className="min-w-0">
+                        <div className="rg-name"><span className="truncate">{personName(r.employee)}</span></div>
+                        {r.employee?.role && <div className="rg-sub">{roleLabel(r.employee.role)}</div>}
                       </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
+                    </div>
+                    <div className="rg-what">
+                      <div className="ast-req-asset">
+                        <KindTile category={r.asset?.category} size="sm" />
+                        <div className="min-w-0">
+                          <div className="rg-type">{r.asset?.name || 'Asset'}</div>
+                          {r.details
+                            ? <div className="ast-req-details">{r.details}</div>
+                            : <div className="ast-hold-nodetails">no details recorded</div>}
+                        </div>
+                      </div>
+                      {codes && <div className="ast-hold-unit">{codes}</div>}
+                      <div className="rg-for mt-1">Issued {fmtDate(r.assignedAt)}</div>
+                    </div>
+                    <div className="rg-why">
+                      {rr.note
+                        ? <div className="rg-reason">“{rr.note}”</div>
+                        : <div className="ast-hold-nodetails">No note from the employee</div>}
+                    </div>
+                    <div className="rg-side">
+                      <span className="rg-status is-pending">Waiting</span>
+                      <span className="rg-meta">Asked {formatDateTime12(rr.requestedAt) || '-'}</span>
+                      {!viewOnly && (
+                        <div className="rg-actions">
+                          <button type="button" onClick={() => openDecide(r, 'accept')} className="trn-btn rg-approve">
+                            <FiCheck size={14} /> Accept
+                          </button>
+                          <button type="button" onClick={() => openDecide(r, 'decline')} className="trn-btn is-danger">Decline</button>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
 
           {/* Read-only: what became of each request once it was answered. */}
           {showHistory && (
-            <section className="mt-6">
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Answered requests</h3>
-              {histError && <div className="mb-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{histError}</div>}
-              <div className="bg-white shadow rounded-lg overflow-hidden">
-                {histLoading ? (
-                  <div className="p-4">{SKELETON}</div>
-                ) : answered.length === 0 ? (
-                  <p className="px-4 py-6 text-sm text-center text-gray-500">No request has been answered yet.</p>
-                ) : (
-                  <ul className="divide-y divide-gray-100">
-                    {answered.map((r) => {
-                      const rr = r.returnRequest;
-                      const o = OUTCOME[rr.status] || OUTCOME.Cancelled;
-                      // A withdrawal is decided by the employee themselves, so it
-                      // is not credited to anybody.
-                      const by = rr.status !== 'Cancelled' && rr.decidedBy ? personName(rr.decidedBy) : '';
-                      return (
-                        <li key={r._id} className="px-4 py-3">
-                          <div className="flex flex-col gap-1.5 md:flex-row md:items-start md:gap-4">
-                            <div className="min-w-0 md:w-48 md:shrink-0">
-                              <div className="text-sm font-medium text-gray-800 truncate">{personName(r.employee)}</div>
-                              {r.employee?.role && <div className="text-xs text-gray-500">{r.employee.role}</div>}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm text-gray-900 break-words">
-                                <span className="font-semibold">{r.asset?.name || 'Asset'}</span>
-                                {r.details && <span className="text-gray-700"> — {r.details}</span>}
-                              </div>
-                              <div className="text-xs text-gray-500 mt-0.5">
-                                Asked {formatDateTime12(rr.requestedAt) || '-'}
-                                {rr.note && <span className="break-words"> · “{rr.note}”</span>}
-                              </div>
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
-                                <span className={`text-xs px-2 py-0.5 rounded-lg ${o.cls}`}>{o.label}</span>
-                                {r.returnedViaExit && rr.status === 'Accepted' && (
-                                  <span className="text-xs px-2 py-0.5 rounded-lg bg-gray-100 text-gray-600">via exit</span>
-                                )}
-                                <span className="text-xs text-gray-500">
-                                  {by ? `by ${by}` : ''}{by && rr.decidedAt ? ' · ' : ''}{rr.decidedAt ? formatDateTime12(rr.decidedAt) : ''}
-                                </span>
-                              </div>
-                              {rr.status === 'Rejected' && rr.decisionNote && (
-                                <p className="text-xs text-gray-600 mt-1 break-words">Reason: {rr.decisionNote}</p>
-                              )}
-                              {rr.status === 'Accepted' && r.returnNote && (
-                                <p className="text-xs text-gray-600 mt-1 break-words">Condition: {r.returnNote}</p>
-                              )}
+            <section>
+              <div className="prm-head">
+                <span className="prm-head-title">Answered requests</span>
+                {!histLoading && <span className="prm-head-sub">{answered.length}</span>}
+              </div>
+              {histError && <div className="mb-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{histError}</div>}
+              {histLoading ? (
+                <div className="space-y-2.5">{[0, 1].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}</div>
+              ) : answered.length === 0 ? (
+                <div className="prm-list">
+                  <div className="trn-empty">
+                    <span className="trn-empty-icon"><FiClock size={24} /></span>
+                    <p className="text-sm font-semibold">No request has been answered yet.</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="rg-list">
+                  {answered.map((r) => {
+                    const rr = r.returnRequest;
+                    const o = OUTCOME[rr.status] || OUTCOME.Cancelled;
+                    // A withdrawal is decided by the employee themselves, so it
+                    // is not credited to anybody.
+                    const by = rr.status !== 'Cancelled' && rr.decidedBy ? personName(rr.decidedBy) : '';
+                    return (
+                      <article key={r._id} className={`rg-card ${o.tone}`}>
+                        <div className="rg-who">
+                          <PersonAvatar user={r.employee} />
+                          <div className="min-w-0">
+                            <div className="rg-name"><span className="truncate">{personName(r.employee)}</span></div>
+                            {r.employee?.role && <div className="rg-sub">{roleLabel(r.employee.role)}</div>}
+                          </div>
+                        </div>
+                        <div className="rg-what">
+                          <div className="ast-req-asset">
+                            <KindTile category={r.asset?.category} size="sm" />
+                            <div className="min-w-0">
+                              <div className="rg-type">{r.asset?.name || 'Asset'}</div>
+                              {r.details && <div className="ast-req-details">{r.details}</div>}
                             </div>
                           </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
+                          <div className="rg-for mt-1">Asked {formatDateTime12(rr.requestedAt) || '-'}</div>
+                        </div>
+                        <div className="rg-why">
+                          {rr.note && <div className="rg-reason">“{rr.note}”</div>}
+                          {rr.status === 'Rejected' && rr.decisionNote && (
+                            <div className="rg-note">Reason: {rr.decisionNote}</div>
+                          )}
+                          {rr.status === 'Accepted' && r.returnNote && (
+                            <div className="rg-note">Condition: {r.returnNote}</div>
+                          )}
+                        </div>
+                        <div className="rg-side">
+                          <div className="ast-side-tags">
+                            {r.returnedViaExit && rr.status === 'Accepted' && <span className="ast-tag">via exit</span>}
+                            <span className={`rg-status ${o.tone}`}>{o.label}</span>
+                          </div>
+                          <span className="rg-meta">
+                            {by ? `by ${by}` : ''}{by && rr.decidedAt ? ' · ' : ''}{rr.decidedAt ? formatDateTime12(rr.decidedAt) : ''}
+                          </span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           )}
         </>
@@ -1161,15 +1264,10 @@ export default function AdminAssets() {
       {kindForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-1">{kindForm.id ? 'Edit asset' : 'New asset'}</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              {kindForm.id
-                ? 'The asset as a whole. Each person’s own item is edited on their row.'
-                : 'The kind of thing you issue — each person’s own model or configuration is added when you issue it.'}
-            </p>
+            <h2 className="card-title mb-4">{kindForm.id ? 'Edit asset' : 'New asset'}</h2>
             <form onSubmit={saveKind} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+                <label className="prm-label">Name *</label>
                 <input
                   required
                   autoFocus
@@ -1177,57 +1275,54 @@ export default function AdminAssets() {
                   value={kindForm.name}
                   onChange={(e) => setKindName(e.target.value)}
                   placeholder="e.g. Laptop"
-                  className="block w-full border rounded-lg px-3 py-2 text-sm"
+                  className="prm-input block"
                 />
                 <datalist id="asset-kind-names">
                   {nameSuggestions.map((n) => <option key={n} value={n} />)}
                 </datalist>
                 {duplicateKind && (
                   <p className="text-xs text-amber-700 mt-1">
-                    “{duplicateKind.name}” already exists{duplicateKind.assetTag ? ` (${duplicateKind.assetTag})` : ''} — to give one to more people, use Issue on its card instead.
+                    “{duplicateKind.name}” already exists{duplicateKind.assetTag ? ` (${duplicateKind.assetTag})` : ''} — use Issue on its card instead.
                   </p>
                 )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
-                  <select value={kindForm.category} onChange={(e) => setKindForm({ ...kindForm, category: e.target.value, categoryTouched: true })} className="block w-full border rounded-lg px-3 py-2 text-sm">
+                  <label className="prm-label">Category</label>
+                  <select value={kindForm.category} onChange={(e) => setKindForm({ ...kindForm, category: e.target.value, categoryTouched: true })} className="prm-input block">
                     {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
-                  <select value={kindForm.status} onChange={(e) => setKindForm({ ...kindForm, status: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm">
+                  <label className="prm-label">Status</label>
+                  <select value={kindForm.status} onChange={(e) => setKindForm({ ...kindForm, status: e.target.value })} className="prm-input block">
                     {kindForm.status === 'Assigned' && <option value="Assigned">Assigned (old record)</option>}
                     {STATUS.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
                   </select>
                 </div>
               </div>
               {(kindForm.status === 'InRepair' || kindForm.status === 'Retired') && (
-                <p className="text-xs text-gray-500 -mt-1">It can’t be issued while {STATUS_LABEL[kindForm.status].toLowerCase()}. People who already hold one keep it.</p>
+                <p className="text-xs text-gray-500 -mt-1">It can’t be issued while {STATUS_LABEL[kindForm.status].toLowerCase()}.</p>
               )}
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Code (optional)</label>
+                <label className="prm-label">Code (optional)</label>
                 <input
                   value={kindForm.assetTag}
                   onChange={(e) => setKindForm({ ...kindForm, assetTag: e.target.value.toUpperCase() })}
                   placeholder="e.g. LAPTOP"
-                  className="block w-full border rounded-lg px-3 py-2 text-sm font-mono"
+                  className="prm-input block font-mono"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  {kindForm.id ? 'Cleared, it keeps the code it has.' : 'Left blank, one is generated (like AST-2026-00001).'}
-                </p>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                <textarea rows={2} value={kindForm.notes} onChange={(e) => setKindForm({ ...kindForm, notes: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                <label className="prm-label">Notes</label>
+                <textarea rows={2} value={kindForm.notes} onChange={(e) => setKindForm({ ...kindForm, notes: e.target.value })} className="prm-input block" />
               </div>
               {kindErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{kindErr}</div>}
               {/* flex-wrap: three buttons do not fit one line of a 360px panel. */}
               <div className="flex flex-wrap justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setKindForm(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                <button type="button" onClick={() => setKindForm(null)} className="trn-btn">Cancel</button>
                 {kindForm.id ? (
-                  <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+                  <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">{saving ? 'Saving…' : 'Save'}</button>
                 ) : (
                   <>
                     {/* Plain Create comes first in the DOM, so Enter in a field
@@ -1236,12 +1331,12 @@ export default function AdminAssets() {
                         issued), Create is the primary button itself. */}
                     <button type="submit" disabled={saving}
                       className={isIssuable(kindForm)
-                        ? 'px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-60'
-                        : 'px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60'}>
+                        ? 'trn-btn'
+                        : 'trn-btn is-primary accent-bg text-white'}>
                       {saving && !isIssuable(kindForm) ? 'Saving…' : 'Create'}
                     </button>
                     {isIssuable(kindForm) && (
-                      <button type="submit" data-then="issue" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : 'Create & issue'}</button>
+                      <button type="submit" data-then="issue" disabled={saving} className="trn-btn is-primary accent-bg text-white">{saving ? 'Saving…' : 'Create & issue'}</button>
                     )}
                   </>
                 )}
@@ -1255,20 +1350,19 @@ export default function AdminAssets() {
       {issue && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-1">{issue.pickKind ? 'Issue an asset' : `Issue “${issueKind?.name || 'asset'}”`}</h2>
-            <p className="text-xs text-gray-500 mb-4">One row per person, each with the item they actually get — one Laptop can be a MacBook i5 for one person and an Asus i7 for the next.</p>
+            <h2 className="card-title mb-4">{issue.pickKind ? 'Issue an asset' : `Issue “${issueKind?.name || 'asset'}”`}</h2>
             <form onSubmit={submitIssue} className="space-y-4">
               {issue.pickKind && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Asset *</label>
-                  <SearchableSelect required value={issue.kindId} onChange={(e) => patchIssue({ kindId: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm">
+                  <label className="prm-label">Asset *</label>
+                  <SearchableSelect required value={issue.kindId} onChange={(e) => patchIssue({ kindId: e.target.value })} className="prm-input block">
                     <option value="">Select an asset…</option>
                     {issuableKinds.map((k) => (
                       <option key={k._id} value={k._id}>{k.name} · {k.assetTag}{k.holderCount ? ` (${k.holderCount} issued)` : ''}</option>
                     ))}
                   </SearchableSelect>
                   {issuableKinds.length === 0 && (
-                    <p className="text-xs text-amber-700 mt-1">Nothing can be issued yet — create an asset on the Assets tab first (one In repair or Retired has to be set back to Available).</p>
+                    <p className="text-xs text-amber-700 mt-1">Nothing to issue yet — create an asset first.</p>
                   )}
                 </div>
               )}
@@ -1285,37 +1379,37 @@ export default function AdminAssets() {
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <span className="text-xs font-medium text-gray-500">Employee {i + 1}</span>
                         {issue.rows.length > 1 && (
-                          <button type="button" onClick={() => dropRow(r.key)} className="text-red-600 hover:underline">Remove</button>
+                          <button type="button" onClick={() => dropRow(r.key)} className="trn-btn is-danger ast-mini"><FiTrash2 size={13} /> Remove</button>
                         )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="min-w-0">
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Employee *</label>
+                          <label className="prm-label">Employee *</label>
                           <SearchableSelect
                             required
                             value={r.userId}
                             onChange={(e) => patchRow(r.key, { userId: e.target.value })}
                             options={personOptions}
-                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                            className="prm-input block"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Details</label>
+                          <label className="prm-label">Details</label>
                           <input
                             value={r.details}
                             onChange={(e) => patchRow(r.key, { details: e.target.value })}
                             maxLength={300}
                             placeholder="e.g. MacBook i5 / Asus i7, 6GB RAM, 1TB ROM"
-                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                            className="prm-input block"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Serial no. (optional)</label>
-                          <input value={r.serialNumber} maxLength={100} onChange={(e) => patchRow(r.key, { serialNumber: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                          <label className="prm-label">Serial no. (optional)</label>
+                          <input value={r.serialNumber} maxLength={100} onChange={(e) => patchRow(r.key, { serialNumber: e.target.value })} className="prm-input block" />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Sticker / tag (optional)</label>
-                          <input value={r.unitTag} maxLength={60} onChange={(e) => patchRow(r.key, { unitTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+                          <label className="prm-label">Sticker / tag (optional)</label>
+                          <input value={r.unitTag} maxLength={60} onChange={(e) => patchRow(r.key, { unitTag: e.target.value.toUpperCase() })} className="prm-input block font-mono" />
                         </div>
                       </div>
                       {twinAt >= 0 && <p className="text-xs text-amber-700 mt-2">Also picked as employee {twinAt + 1} — they will get two.</p>}
@@ -1327,25 +1421,25 @@ export default function AdminAssets() {
                     </div>
                   );
                 })}
-                <button type="button" onClick={addRow} className="text-blue-600 hover:underline">+ Add another employee</button>
+                <button type="button" onClick={addRow} className="trn-btn ast-mini"><FiPlus size={13} /> Add another employee</button>
                 {users.length === 0 && <p className="text-xs text-amber-700">The employee list did not load — reload the page to pick someone.</p>}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Issue date</label>
-                  <input type="date" required value={issue.date} onChange={(e) => patchIssue({ date: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Issue date</label>
+                  <input type="date" required value={issue.date} onChange={(e) => patchIssue({ date: e.target.value })} className="prm-input block" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional, for every row)</label>
-                  <input value={issue.note} maxLength={500} onChange={(e) => patchIssue({ note: e.target.value })} placeholder="e.g. charger + bag included" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Note (optional, for every row)</label>
+                  <input value={issue.note} maxLength={500} onChange={(e) => patchIssue({ note: e.target.value })} placeholder="e.g. charger + bag included" className="prm-input block" />
                 </div>
               </div>
 
               {issueErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{issueErr.msg}</div>}
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setIssue(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setIssue(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">
                   {saving ? 'Issuing…' : issue.rows.length > 1 ? `Issue to ${issue.rows.length} people` : 'Issue'}
                 </button>
               </div>
@@ -1358,22 +1452,19 @@ export default function AdminAssets() {
       {bundle && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
-            <h2 className="card-title mb-1">
+            <h2 className="card-title mb-4">
               {bundle.pickUser || !bundleUser ? 'Assign assets to an employee' : `Assign assets to ${personName(bundleUser)}`}
             </h2>
-            <p className="text-xs text-gray-500 mb-4">
-              One row per item, each with what they actually get. Every item also shows on its asset’s card — it is the same record.
-            </p>
             <form onSubmit={submitBundle} className="space-y-4">
               {bundle.pickUser && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Employee *</label>
+                  <label className="prm-label">Employee *</label>
                   <SearchableSelect
                     required
                     value={bundle.userId}
                     onChange={(e) => patchBundle({ userId: e.target.value })}
                     options={bundlePersonOptions}
-                    className="block w-full border rounded-lg px-3 py-2 text-sm"
+                    className="prm-input block"
                   />
                   {users.length === 0 && <p className="text-xs text-amber-700 mt-1">The employee list did not load — reload the page to pick someone.</p>}
                   {bundle.userId && bundleHeld.size > 0 && (
@@ -1395,17 +1486,17 @@ export default function AdminAssets() {
                       <div className="flex items-center justify-between gap-2 mb-2">
                         <span className="text-xs font-medium text-gray-500">Item {i + 1}</span>
                         {bundle.rows.length > 1 && (
-                          <button type="button" onClick={() => dropItem(r.key)} className="text-red-600 hover:underline">Remove</button>
+                          <button type="button" onClick={() => dropItem(r.key)} className="trn-btn is-danger ast-mini"><FiTrash2 size={13} /> Remove</button>
                         )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="min-w-0">
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Asset *</label>
+                          <label className="prm-label">Asset *</label>
                           <SearchableSelect
                             required
                             value={r.assetId}
                             onChange={(e) => patchItem(r.key, { assetId: e.target.value })}
-                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                            className="prm-input block"
                           >
                             <option value="">Select an asset…</option>
                             {issuableKinds.map((k) => (
@@ -1414,22 +1505,22 @@ export default function AdminAssets() {
                           </SearchableSelect>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Details</label>
+                          <label className="prm-label">Details</label>
                           <input
                             value={r.details}
                             onChange={(e) => patchItem(r.key, { details: e.target.value })}
                             maxLength={300}
                             placeholder="e.g. MacBook i5 / Samsung A15"
-                            className="block w-full border rounded-lg px-3 py-2 text-sm"
+                            className="prm-input block"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Serial no. (optional)</label>
-                          <input value={r.serialNumber} maxLength={100} onChange={(e) => patchItem(r.key, { serialNumber: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                          <label className="prm-label">Serial no. (optional)</label>
+                          <input value={r.serialNumber} maxLength={100} onChange={(e) => patchItem(r.key, { serialNumber: e.target.value })} className="prm-input block" />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-gray-600 mb-1">Sticker / tag (optional)</label>
-                          <input value={r.unitTag} maxLength={60} onChange={(e) => patchItem(r.key, { unitTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+                          <label className="prm-label">Sticker / tag (optional)</label>
+                          <input value={r.unitTag} maxLength={60} onChange={(e) => patchItem(r.key, { unitTag: e.target.value.toUpperCase() })} className="prm-input block font-mono" />
                         </div>
                       </div>
                       {twinAt >= 0 && <p className="text-xs text-amber-700 mt-2">Also picked as item {twinAt + 1} — they will get two.</p>}
@@ -1441,27 +1532,27 @@ export default function AdminAssets() {
                     </div>
                   );
                 })}
-                <button type="button" onClick={addItem} className="text-blue-600 hover:underline">+ Add another asset</button>
+                <button type="button" onClick={addItem} className="trn-btn ast-mini"><FiPlus size={13} /> Add another asset</button>
                 {issuableKinds.length === 0 && (
-                  <p className="text-xs text-amber-700">Nothing can be issued yet — create an asset on the By asset tab first (one In repair or Retired has to be set back to Available).</p>
+                  <p className="text-xs text-amber-700">Nothing to issue yet — create an asset first.</p>
                 )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Issue date</label>
-                  <input type="date" required value={bundle.date} onChange={(e) => patchBundle({ date: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Issue date</label>
+                  <input type="date" required value={bundle.date} onChange={(e) => patchBundle({ date: e.target.value })} className="prm-input block" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Note (optional, for every item)</label>
-                  <input value={bundle.note} maxLength={500} onChange={(e) => patchBundle({ note: e.target.value })} placeholder="e.g. joining kit" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Note (optional, for every item)</label>
+                  <input value={bundle.note} maxLength={500} onChange={(e) => patchBundle({ note: e.target.value })} placeholder="e.g. joining kit" className="prm-input block" />
                 </div>
               </div>
 
               {bundleErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{bundleErr.msg}</div>}
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setBundle(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setBundle(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">
                   {saving ? 'Issuing…' : bundle.rows.length > 1 ? `Issue ${bundle.rows.length} assets` : 'Issue'}
                 </button>
               </div>
@@ -1481,44 +1572,44 @@ export default function AdminAssets() {
             </p>
             <form onSubmit={saveItemEdit} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Details</label>
-                <input autoFocus value={itemEdit.details} maxLength={300} onChange={(e) => setItemEdit({ ...itemEdit, details: e.target.value })} placeholder="e.g. MacBook i5" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                <label className="prm-label">Details</label>
+                <input autoFocus value={itemEdit.details} maxLength={300} onChange={(e) => setItemEdit({ ...itemEdit, details: e.target.value })} placeholder="e.g. MacBook i5" className="prm-input block" />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Serial no.</label>
-                  <input value={itemEdit.serialNumber} maxLength={100} onChange={(e) => setItemEdit({ ...itemEdit, serialNumber: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Serial no.</label>
+                  <input value={itemEdit.serialNumber} maxLength={100} onChange={(e) => setItemEdit({ ...itemEdit, serialNumber: e.target.value })} className="prm-input block" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Sticker / tag</label>
-                  <input value={itemEdit.unitTag} maxLength={60} onChange={(e) => setItemEdit({ ...itemEdit, unitTag: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 text-sm font-mono" />
+                  <label className="prm-label">Sticker / tag</label>
+                  <input value={itemEdit.unitTag} maxLength={60} onChange={(e) => setItemEdit({ ...itemEdit, unitTag: e.target.value.toUpperCase() })} className="prm-input block font-mono" />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Issue date</label>
+                <label className="prm-label">Issue date</label>
                 <input
                   type="date"
                   required
                   value={itemEdit.date}
                   max={itemEdit.h.returnedAt ? toYMD(itemEdit.h.returnedAt) : undefined}
                   onChange={(e) => setItemEdit({ ...itemEdit, date: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2 text-sm"
+                  className="prm-input block"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Note</label>
-                <input value={itemEdit.note} maxLength={500} onChange={(e) => setItemEdit({ ...itemEdit, note: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                <label className="prm-label">Note</label>
+                <input value={itemEdit.note} maxLength={500} onChange={(e) => setItemEdit({ ...itemEdit, note: e.target.value })} className="prm-input block" />
               </div>
               {itemEdit.h.returnedAt && (
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Condition when returned</label>
-                  <input value={itemEdit.returnNote} maxLength={500} onChange={(e) => setItemEdit({ ...itemEdit, returnNote: e.target.value })} placeholder="e.g. charger missing" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  <label className="prm-label">Condition when returned</label>
+                  <input value={itemEdit.returnNote} maxLength={500} onChange={(e) => setItemEdit({ ...itemEdit, returnNote: e.target.value })} placeholder="e.g. charger missing" className="prm-input block" />
                 </div>
               )}
               {modalErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{modalErr}</div>}
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setItemEdit(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+                <button type="button" onClick={() => setItemEdit(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">{saving ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
           </div>
@@ -1535,24 +1626,24 @@ export default function AdminAssets() {
             </p>
             <form onSubmit={saveTakeBack} className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Return date</label>
+                <label className="prm-label">Return date</label>
                 <input
                   type="date"
                   required
                   value={takeBack.date}
                   min={toYMD(takeBack.h.assignedAt)}
                   onChange={(e) => setTakeBack({ ...takeBack, date: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2 text-sm"
+                  className="prm-input block"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Condition (optional)</label>
-                <input autoFocus value={takeBack.note} maxLength={500} onChange={(e) => setTakeBack({ ...takeBack, note: e.target.value })} placeholder="e.g. charger missing" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                <label className="prm-label">Condition (optional)</label>
+                <input autoFocus value={takeBack.note} maxLength={500} onChange={(e) => setTakeBack({ ...takeBack, note: e.target.value })} placeholder="e.g. charger missing" className="prm-input block" />
               </div>
               {modalErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{modalErr}</div>}
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setTakeBack(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{saving ? 'Saving…' : 'Take back'}</button>
+                <button type="button" onClick={() => setTakeBack(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">{saving ? 'Saving…' : 'Take back'}</button>
               </div>
             </form>
           </div>
@@ -1583,7 +1674,7 @@ export default function AdminAssets() {
                 {accept ? (
                   <>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Received on</label>
+                      <label className="prm-label">Received on</label>
                       <input
                         type="date"
                         required
@@ -1591,18 +1682,17 @@ export default function AdminAssets() {
                         min={toYMD(h.assignedAt)}
                         max={today()}
                         onChange={(e) => setDecide({ ...decide, date: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2 text-sm"
+                        className="prm-input block"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Condition (optional)</label>
-                      <input autoFocus value={decide.note} maxLength={500} onChange={(e) => setDecide({ ...decide, note: e.target.value })} placeholder="e.g. charger missing" className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                      <label className="prm-label">Condition (optional)</label>
+                      <input autoFocus value={decide.note} maxLength={500} onChange={(e) => setDecide({ ...decide, note: e.target.value })} placeholder="e.g. charger missing" className="prm-input block" />
                     </div>
-                    <p className="text-xs text-gray-500">The item comes off {personName(h.employee)}’s asset list and they are told.</p>
                   </>
                 ) : (
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Reason *</label>
+                    <label className="prm-label">Reason *</label>
                     <textarea
                       required
                       autoFocus
@@ -1611,15 +1701,14 @@ export default function AdminAssets() {
                       value={decide.reason}
                       onChange={(e) => setDecide({ ...decide, reason: e.target.value })}
                       placeholder="e.g. Keep it until your replacement joins"
-                      className="block w-full border rounded-lg px-3 py-2 text-sm"
+                      className="prm-input block"
                     />
-                    <p className="text-xs text-gray-500 mt-1">They keep the item and are shown this reason.</p>
                   </div>
                 )}
                 {modalErr && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{modalErr}</div>}
                 <div className="flex justify-end gap-2 pt-2">
-                  <button type="button" onClick={() => setDecide(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                  <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                  <button type="button" onClick={() => setDecide(null)} className="trn-btn">Cancel</button>
+                  <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">
                     {saving ? 'Saving…' : accept ? 'Accept & take back' : 'Decline'}
                   </button>
                 </div>

@@ -1,0 +1,276 @@
+/* ---------------------------------------------------------------------------
+   Employee Profiles (pages/AdminEmployees.jsx) — 2026-10-03 premium pass.
+
+   Builds on the shared primitives in index.css (.trn-kpi, .pb-toolbar,
+   .trn-seg, .trn-search, .trn-select, .trn-btn, .trn-icon-btn, .pb-tag,
+   .rst-status, .prm-avatar, .prm-label). Only what this page adds lives here,
+   every class prefixed `.emp-`. Colours are tokens, and tints mix a fixed hue
+   into --surface, so light, dark and every portal accent hold.
+--------------------------------------------------------------------------- */
+
+/* ── Header: Excel / ZIP / template / import as one joined group ─────────── */
+.emp-tools {
+  display: inline-flex; align-items: stretch; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 0.75rem; overflow: hidden;
+  background-color: var(--surface); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.emp-tool {
+  display: inline-flex; align-items: center; gap: 0.45rem; min-height: 2.35rem; padding: 0.45rem 0.85rem;
+  font-size: 0.8rem; font-weight: 600; white-space: nowrap; color: inherit; background-color: transparent;
+  transition: background-color 0.15s, color 0.15s;
+}
+.emp-tool + .emp-tool { border-left: 1px solid var(--border); }
+.emp-tool svg { flex-shrink: 0; opacity: 0.65; }
+.emp-tool:hover { color: color-mix(in srgb, var(--accent) 85%, currentColor); background-color: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.emp-tool:hover svg { opacity: 1; }
+.emp-tool:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: -2px; }
+
+/* ── KPI strip + the notice / setting row under it ───────────────────────── */
+.emp-kpis { margin-bottom: 1rem; }
+
+.emp-strip { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+.emp-strip > * { flex: 1 1 22rem; min-width: 0; }
+.emp-notice,
+.emp-setting {
+  display: flex; align-items: center; gap: 0.8rem; padding: 0.65rem 0.85rem; border-radius: 1rem;
+  border: 1px solid var(--border); background-color: var(--surface); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.emp-notice { border-color: color-mix(in srgb, #d97706 35%, var(--border)); background-color: color-mix(in srgb, #d97706 7%, var(--surface)); }
+.emp-ico {
+  flex-shrink: 0; width: 2.25rem; height: 2.25rem; border-radius: 0.7rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--hue, var(--accent)) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue, var(--accent)) 13%, var(--surface));
+}
+.emp-notice-text,
+.emp-setting-text { flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 700; line-height: 1.35; }
+.emp-notice-text { color: color-mix(in srgb, #b45309 92%, currentColor); }
+html.dark .emp-notice-text { color: #fcd34d; }
+.emp-amber.trn-btn { color: #fff; background-color: #d97706; border-color: transparent; box-shadow: 0 8px 18px -10px rgba(217, 119, 6, 0.85); }
+.emp-amber.trn-btn:hover:not(:disabled) { border-color: transparent; filter: brightness(1.07); }
+
+/* ── Toolbar: views + search on top, filters + sort under a hairline ─────── */
+.emp-toolbar .pb-toolbar-end { gap: 0.5rem; }
+.emp-search .trn-search { max-width: 26rem; }
+.emp-clear { display: inline-flex; align-items: center; justify-content: center; opacity: 0.5; }
+.emp-clear:hover { opacity: 1; }
+.emp-filters {
+  flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+  padding-top: 0.6rem; border-top: 1px solid var(--border);
+}
+.emp-filters-ico { flex-shrink: 0; opacity: 0.45; margin: 0 0.1rem 0 0.25rem; }
+.emp-filters .trn-select { min-width: 0; }
+.emp-filters-end { margin-left: auto; display: inline-flex; align-items: center; gap: 0.75rem; }
+.emp-clear-btn { font-size: 0.75rem; font-weight: 700; color: color-mix(in srgb, var(--accent) 85%, currentColor); white-space: nowrap; }
+.emp-clear-btn:hover { text-decoration: underline; }
+.emp-count { font-size: 0.75rem; font-weight: 600; opacity: 0.6; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ── The directory ───────────────────────────────────────────────────────────
+   One markup, three layouts picked by the LIST's own width (container queries,
+   so the sidebar's state never matters):
+     narrow  (< 40rem)  a stacked card: who / role / chips / actions
+     medium  (40–74rem) who + role | chips | actions
+     wide    (≥ 74rem)  aligned columns under a sortable header strip
+   Every row is its own grid, so every column that is not a share of the free
+   space has a fixed width — that is what keeps the rows lined up. The actions
+   column is sized from how many icon buttons this viewer's rows can hold
+   (--emp-n, set inline from the page). */
+.emp-wrap {
+  container: emp / inline-size;
+  --emp-ib: 2.25rem;
+  --emp-actw: calc(4.85rem + var(--emp-n, 3) * (var(--emp-ib) + 0.3rem));
+}
+@media (max-width: 640px), (pointer: coarse) { .emp-wrap { --emp-ib: 2.5rem; } }
+
+.emp-list {
+  border-radius: 1rem; overflow: hidden; background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 26px -18px rgba(16, 24, 40, 0.16);
+}
+
+/* Header strip — wide layout only. */
+.emp-head {
+  display: none; align-items: center; gap: 0 0.75rem; padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border); background-color: var(--surface-2);
+  font-size: 0.64rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.emp-h { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.7rem; min-width: 0; }
+.emp-h.is-end { justify-content: flex-end; }
+.emp-h-plain { opacity: 0.6; }
+.emp-sort {
+  display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.25rem 0;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; opacity: 0.6;
+  transition: opacity 0.12s, color 0.12s;
+}
+.emp-sort:hover { opacity: 1; }
+.emp-sort.is-on { opacity: 1; color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.emp-sort-arrow { display: inline-flex; opacity: 0; transition: opacity 0.12s; }
+.emp-sort:hover .emp-sort-arrow { opacity: 0.45; }
+.emp-sort.is-on .emp-sort-arrow { opacity: 1; }
+
+/* Rows — narrow first. */
+.emp-row {
+  display: grid; align-items: center; gap: 0.5rem 0.9rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "who" "role" "recs" "act";
+  padding: 0.85rem 1rem; cursor: pointer; transition: background-color 0.12s;
+}
+.emp-row + .emp-row { border-top: 1px solid var(--border); }
+.emp-row:hover { background-color: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.emp-c { min-width: 0; }
+
+.emp-c-who { grid-area: who; display: flex; align-items: center; gap: 0.7rem; }
+.emp-name { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.emp-name-text { min-width: 0; font-size: 0.88rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 0.12s; }
+.emp-row:hover .emp-name-text { color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.emp-code {
+  flex-shrink: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.64rem; font-weight: 700;
+  padding: 0.08rem 0.4rem; border-radius: 0.4rem; white-space: nowrap;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.emp-mail { font-size: 0.72rem; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 0.1rem; }
+
+/* Designation · department on one line (stacked again on a wide list). */
+.emp-c-role { grid-area: role; display: flex; align-items: baseline; gap: 0 0.35rem; padding-left: 3.05rem; overflow: hidden; }
+.emp-desig { min-width: 0; font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.emp-dept { min-width: 0; font-size: 0.75rem; opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.emp-dept::before { content: '·'; margin-right: 0.35rem; }
+
+/* PAN, documents, bank, status, last update: one wrapping chip row. */
+.emp-recs { grid-area: recs; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; padding-left: 3.05rem; }
+.emp-recs .emp-c { display: inline-flex; align-items: center; }
+.emp-recs .emp-c.is-empty,
+.emp-recs .emp-dash { display: none; }
+.emp-c-when { flex-basis: 100%; font-size: 0.7rem; opacity: 0.6; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.emp-c-when .emp-k { margin-right: 0.3rem; }
+.emp-when-t::before { content: ', '; }
+.emp-k { font-weight: 700; }
+.emp-tag .emp-k { opacity: 0.75; }
+.emp-pan {
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.1rem 0.45rem; border-radius: 0.45rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; letter-spacing: 0.02em; white-space: nowrap;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.emp-pan .emp-k { font-family: inherit; font-size: 0.6rem; letter-spacing: 0.06em; opacity: 0.55; }
+.emp-dash { font-size: 0.78rem; opacity: 0.4; }
+
+.emp-tag { gap: 0.3rem; }
+.emp-tag svg { flex-shrink: 0; }
+.emp-n {
+  min-width: 1.1rem; padding: 0 0.3rem; border-radius: 999px; text-align: center;
+  font-size: 0.62rem; font-weight: 800; line-height: 1.05rem;
+  background-color: color-mix(in srgb, currentColor 14%, transparent);
+}
+.emp-bank-sum { display: none; font-size: 0.68rem; opacity: 0.6; margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.emp-status::before { content: ''; width: 0.38rem; height: 0.38rem; border-radius: 999px; background-color: currentColor; opacity: 0.55; }
+.emp-status.is-on::before { opacity: 1; }
+
+/* Actions: Edit leads, icon buttons after it. */
+.emp-c-act {
+  grid-area: act; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.3rem;
+  padding-top: 0.6rem; border-top: 1px dashed var(--border); cursor: default;
+}
+.emp-edit.trn-btn {
+  min-height: var(--emp-ib); padding: 0.3rem 0.75rem; font-size: 0.78rem;
+  color: color-mix(in srgb, var(--accent) 88%, currentColor);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.emp-edit.trn-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 13%, var(--surface));
+}
+.emp-edit.is-locked,
+.emp-edit.is-locked:hover:not(:disabled) { color: inherit; opacity: 0.45; cursor: not-allowed; border-color: var(--border); background-color: var(--surface-2); }
+.emp-ib.trn-icon-btn { width: var(--emp-ib); height: var(--emp-ib); color: inherit; opacity: 0.7; transition: opacity 0.12s, color 0.12s, background-color 0.12s, border-color 0.12s; }
+.emp-ib.trn-icon-btn:hover { opacity: 1; }
+.emp-ib.is-zip:hover { color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.emp-ib.is-warn:hover { color: #b45309; background-color: color-mix(in srgb, #d97706 10%, var(--surface)); border-color: color-mix(in srgb, #d97706 35%, var(--border)); }
+.emp-ib.is-ok:hover { color: #15803d; background-color: color-mix(in srgb, #16a34a 10%, var(--surface)); border-color: color-mix(in srgb, #16a34a 35%, var(--border)); }
+.emp-ib.is-danger:hover { color: #dc2626; background-color: color-mix(in srgb, #dc2626 8%, var(--surface)); border-color: color-mix(in srgb, #dc2626 35%, var(--border)); }
+html.dark .emp-ib.is-warn:hover { color: #fcd34d; }
+html.dark .emp-ib.is-ok:hover { color: #86efac; }
+html.dark .emp-ib.is-danger:hover { color: #f87171; }
+.emp-ib-ph { flex-shrink: 0; width: var(--emp-ib); }
+
+/* First-load skeleton rows. */
+.emp-skel { display: flex; align-items: center; gap: 0.75rem; padding: 0.9rem 1rem; }
+.emp-skel + .emp-skel { border-top: 1px solid var(--border); }
+.emp-skel-av { flex-shrink: 0; width: 2.35rem; height: 2.35rem; border-radius: 999px; }
+.emp-skel-lines { flex: 1; min-width: 0; display: grid; gap: 0.45rem; }
+.emp-skel-l1 { display: block; height: 0.8rem; width: 38%; border-radius: 0.35rem; }
+.emp-skel-l2 { display: block; height: 0.65rem; width: 55%; border-radius: 0.35rem; }
+.emp-skel-chip { flex-shrink: 0; width: 6rem; height: 1.4rem; border-radius: 0.5rem; }
+
+/* Medium: who + role | chips | actions. */
+@container emp (min-width: 40rem) {
+  .emp-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) var(--emp-actw);
+    grid-template-areas: "who recs act" "role recs act";
+    row-gap: 0.15rem;
+  }
+  .emp-recs { padding-left: 0; }
+  .emp-c-act { padding-top: 0; border-top: 0; flex-wrap: nowrap; }
+}
+
+/* Wide: aligned columns under the header strip. */
+@container emp (min-width: 74rem) {
+  .emp-head { display: grid; }
+  .emp-head,
+  .emp-row {
+    grid-template-columns:
+      minmax(0, 2fr) minmax(0, 1.3fr) 5.75rem 7.5rem 8.75rem 5.25rem 6.75rem var(--emp-actw);
+    grid-template-areas: none;
+    gap: 0 0.75rem;
+  }
+  .emp-row { padding: 0.7rem 1rem; }
+  .emp-c-who, .emp-c-role, .emp-c-act { grid-area: auto; }
+  .emp-c-role { display: block; padding-left: 0; }
+  .emp-desig, .emp-dept { display: block; }
+  .emp-dept { margin-top: 0.1rem; font-size: 0.72rem; }
+  .emp-dept::before { content: none; }
+  .emp-recs { display: contents; }
+  .emp-recs .emp-c { display: block; }
+  .emp-recs .emp-c.is-empty { display: block; }
+  .emp-recs .emp-dash { display: inline; }
+  .emp-k { display: none; }
+  .emp-pan { padding: 0; border: 0; background-color: transparent; font-size: 0.72rem; }
+  .emp-bank-sum { display: block; }
+  .emp-c-when { font-size: 0.72rem; line-height: 1.35; }
+  .emp-when-d, .emp-when-t { display: block; }
+  .emp-when-t { opacity: 0.75; }
+  .emp-when-t::before { content: none; }
+}
+
+/* ── Modals: chrome only ─────────────────────────────────────────────────── */
+.emp-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.emp-modal-foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; padding-top: 0.75rem; }
+.emp-form .prm-label { margin-bottom: 0; }
+.emp-label-note { text-transform: none; letter-spacing: normal; font-weight: 500; opacity: 0.75; }
+.emp-sec {
+  display: flex; align-items: center; gap: 0.5rem; padding-top: 1rem; margin-top: 0.25rem;
+  border-top: 1px dashed var(--border);
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+}
+.emp-sec svg { flex-shrink: 0; color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.emp-doclink {
+  padding: 0.75rem 0.85rem; border-radius: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+.emp-doclink-title { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.82rem; font-weight: 700; }
+.emp-doclink-title svg { color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.emp-btn-sm.trn-btn { min-height: 2rem; padding: 0.3rem 0.7rem; font-size: 0.75rem; }
+
+/* ── Phones ──────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .emp-tools { flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem; border: 0; border-radius: 0; overflow: visible; background-color: transparent; box-shadow: none; }
+  .emp-tool,
+  .emp-tool + .emp-tool { border: 1px solid var(--border); border-radius: 0.75rem; background-color: var(--surface); }
+  .emp-search .trn-search { max-width: none; }
+  .emp-filters-ico { display: none; }
+  .emp-filters .trn-select { flex: 1 1 9.5rem; }
+  .emp-filters-end { flex-basis: 100%; margin-left: 0; justify-content: space-between; }
+  .emp-notice, .emp-setting { padding: 0.6rem 0.7rem; gap: 0.65rem; }
+  .emp-notice { flex-wrap: wrap; }
+  .emp-c-role, .emp-recs { padding-left: 0; }
+}

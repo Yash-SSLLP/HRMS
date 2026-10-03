@@ -9,14 +9,20 @@
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiPlus, FiUsers, FiUserCheck, FiUserX, FiShield, FiSearch, FiX, FiEdit2, FiSliders, FiTrash2, FiLock,
+  FiEye, FiEyeOff,
+} from 'react-icons/fi';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import { PersonAvatar, RoleChip } from '../components/permissions/permUi';
 import { useTabParam } from '../hooks/useTabParam';
 import { hasLeft } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
 import { toYMD } from '../utils/time';
 import { confirmDialog } from '../components/dialogs';
+import '../styles/pages/people-admin.css';
 
 const blankForm = {
   email: '',
@@ -40,6 +46,11 @@ const EXEC_ROLES = ['CEO', 'MD'];
 
 /** ISO date (or blank) → the yyyy-mm-dd an <input type="date"> wants. */
 const dateInput = (v) => (v ? String(v).slice(0, 10) : '');
+
+// Roles counted by the "Admin roles" figure (presentation only).
+const ADMIN_ROLES = ['SuperAdmin', 'HRManager', 'CEO', 'MD', 'Manager', 'LDManager', 'AccountsManager'];
+// Role chips follow the order of ROLES; anything unknown sorts last.
+const roleRank = (r) => { const i = ROLES.indexOf(r); return i < 0 ? ROLES.length : i; };
 
 // Whether the current viewer is allowed to manage a given user row.
 // SuperAdmin manages everyone; HR Managers can only manage Employee accounts.
@@ -123,6 +134,8 @@ export default function AdminDashboard() {
   // for everyone, so they can still be picked as an interviewer or as someone's
   // reporting manager.)
   const [q, setQ] = useState('');
+  // Role chip in the toolbar ('' = every role). A view filter only.
+  const [roleFilter, setRoleFilter] = useState('');
 
   /**
    * WORKING vs EXITED (user decision, 2026-09-22).
@@ -145,6 +158,33 @@ export default function AdminDashboard() {
       if (!needle) return true;
       return `${u.firstName} ${u.lastName} ${u.email} ${roleLabel(u.role)}`.toLowerCase().includes(needle);
     });
+
+  // ----- Presentation only (2026-10-03 redesign): figures + role chips -----
+  const tabUsers = inScope.filter((u) => hasLeft(u) === (tab === 'exited'));
+  const roleCounts = Object.entries(tabUsers.reduce((acc, u) => {
+    acc[u.role] = (acc[u.role] || 0) + 1;
+    return acc;
+  }, {})).sort(([a], [b]) => roleRank(a) - roleRank(b));
+  // A chip picked on one tab is ignored on a tab where that role has nobody.
+  const activeRole = roleCounts.some(([r]) => r === roleFilter) ? roleFilter : '';
+  const shownUsers = activeRole ? visibleUsers.filter((u) => u.role === activeRole) : visibleUsers;
+  const workingCount = inScope.length - exitedCount;
+  const workingUsers = inScope.filter((u) => !hasLeft(u));
+  const adminCount = workingUsers.filter((u) => ADMIN_ROLES.includes(u.role)).length;
+  const deactivatedCount = inScope.filter((u) => u.isActive === false).length;
+  const roleKinds = new Set(inScope.map((u) => u.role)).size;
+  const pctOf = (n) => (inScope.length ? Math.round((n / inScope.length) * 100) : 0);
+  const KPIS = [
+    { key: 'all', label: 'Accounts', value: inScope.length, icon: FiUsers, hue: '#64748b',
+      sub: `${roleKinds} ${roleKinds === 1 ? 'role' : 'roles'}` },
+    { key: 'working', label: 'Working', value: workingCount, icon: FiUserCheck, hue: '#16a34a',
+      sub: `${pctOf(workingCount)}% of accounts` },
+    { key: 'admin', label: 'Admin roles', value: adminCount, icon: FiShield, hue: '#8b5cf6',
+      sub: `${workingUsers.filter((u) => u.role === 'Employee').length} employees`,
+      title: 'Working Super Admin, HR, CEO/MD and manager accounts' },
+    { key: 'exited', label: 'Exited', value: exitedCount, icon: FiUserX, hue: '#dc2626',
+      sub: `${deactivatedCount} deactivated` },
+  ];
 
   const load = async () => {
     setLoading(true);
@@ -291,36 +331,73 @@ This cannot be undone.`,
   return (
     <div>
       <PageHeader title="User Accounts" subtitle={`${users.length} user(s)`}>
-        <button
-          onClick={openCreate}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
-        >
-          + Add User
+        <button type="button" onClick={openCreate} className="trn-btn is-primary accent-bg text-white">
+          <FiPlus size={15} /> Add User
         </button>
       </PageHeader>
 
-      {/* ── Working · Exited ────────────────────────────────── */}
-      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-gray-200">
-        {[
-          ['working', 'Working', inScope.length - exitedCount],
-          ['exited', 'Exited', exitedCount],
-        ].map(([key, label, count]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className={`min-h-[40px] -mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
-              tab === key
-                ? 'accent-border accent-text'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {label}
-            <span className="rounded-lg bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
-              {count}
-            </span>
-          </button>
-        ))}
+      {/* ── Figures ─────────────────────────────────────────── */}
+      <div className="trn-kpis usr-kpis">
+        {KPIS.map((k) => {
+          const Icon = k.icon;
+          return (
+            <div key={k.key} className="trn-kpi" style={{ '--kpi-hue': k.hue }} title={k.title}>
+              <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>
+              <span className="min-w-0">
+                <span className="trn-kpi-value block">{loading ? '—' : k.value}</span>
+                <span className="trn-kpi-label block">{k.label}</span>
+                <span className="trn-kpi-sub block">{loading ? '' : k.sub}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Toolbar: Working · Exited, search, role chips ───── */}
+      <div className="pb-toolbar">
+        <div className="trn-seg" role="tablist" aria-label="Accounts">
+          {[
+            ['working', 'Working', workingCount, FiUserCheck],
+            ['exited', 'Exited', exitedCount, FiUserX],
+          ].map(([key, label, count, Icon]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`trn-seg-btn${tab === key ? ' is-on' : ''}`}
+            >
+              <Icon size={14} /> {label} <span className="trn-seg-count">{count}</span>
+            </button>
+          ))}
+        </div>
+        <div className="pb-toolbar-end">
+          {!loading && <span className="usr-count">{shownUsers.length} of {tabUsers.length}</span>}
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" />
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, email or role…" aria-label="Search accounts" />
+            {q && (
+              <button type="button" onClick={() => setQ('')} aria-label="Clear search" className="opacity-50 hover:opacity-100">
+                <FiX size={14} />
+              </button>
+            )}
+          </label>
+        </div>
+        {roleCounts.length > 1 && (
+          <div className="prm-chips usr-chips">
+            <button type="button" onClick={() => setRoleFilter('')} className={`prm-chip${!activeRole ? ' is-on' : ''}`}>
+              All <span className="prm-chip-count">{tabUsers.length}</span>
+            </button>
+            {roleCounts.map(([role, n]) => (
+              <button key={role} type="button" onClick={() => setRoleFilter(activeRole === role ? '' : role)}
+                className={`prm-chip${activeRole === role ? ' is-on' : ''}`}>
+                {roleLabel(role)} <span className="prm-chip-count">{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {error && (
@@ -329,180 +406,179 @@ This cannot be undone.`,
         </div>
       )}
 
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        {/* Inside the table card so the global `:has(> table)` rule pins it
-            while the table scrolls sideways — same shape as the Permissions
-            page's toolbar. */}
-        <div className="p-3 border-b border-gray-100">
-          <input value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, email or role…"
-            className="border rounded-lg px-3 py-2 text-sm w-full max-w-sm" />
+      {/* ── Accounts ────────────────────────────────────────── */}
+      {loading ? (
+        <div className="prm-list usr-list">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="usr-row">
+              <div className="prm-who usr-who">
+                <span className="prm-avatar skeleton" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="skeleton h-3.5 rounded w-36 max-w-full" />
+                  <div className="skeleton h-3 rounded w-48 max-w-full" />
+                </div>
+              </div>
+              <div className="usr-role"><div className="skeleton h-5 rounded-md w-20" /></div>
+              <div className="usr-status"><div className="skeleton h-5 rounded-full w-14" /></div>
+              <div className="usr-actions"><div className="skeleton h-8 rounded-lg w-28" /></div>
+            </div>
+          ))}
         </div>
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Email</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Role</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : visibleUsers.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No users</td></tr>
-            ) : visibleUsers.map((u) => (
-              <tr key={u._id || u.id}>
-                <td className="px-4 py-3">{u.firstName} {u.lastName}</td>
-                <td className="px-4 py-3">{u.email}</td>
-                <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 rounded-lg">{roleLabel(u.role)}</span>
-                </td>
-                <td className="px-4 py-3">
+      ) : shownUsers.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiUsers size={24} /></span>
+            <p className="text-sm font-semibold">No users</p>
+          </div>
+        </div>
+      ) : (
+        <div className="prm-list usr-list">
+          <div className="usr-head" aria-hidden="true">
+            <span>Account</span><span>Role</span><span>Status</span><span>Actions</span>
+          </div>
+          {shownUsers.map((u) => {
+            const isMe = String(u._id || u.id) === myId;
+            const name = `${u.firstName} ${u.lastName}`;
+            return (
+              <div key={u._id || u.id} className={`usr-row${hasLeft(u) ? ' is-gone' : ''}`}>
+                <div className="prm-who usr-who">
+                  <PersonAvatar user={u} />
+                  <div className="prm-who-text">
+                    <div className="usr-name">
+                      <span className="prm-who-name">{u.firstName} {u.lastName}</span>
+                      {isMe && <span className="usr-you">You</span>}
+                    </div>
+                    <div className="prm-who-mail">{u.email}</div>
+                  </div>
+                </div>
+                <div className="usr-role"><RoleChip role={u.role} /></div>
+                <div className="usr-status">
                   {/* Nobody may see their own active status — hide it on your own row. */}
-                  {String(u._id || u.id) === myId ? (
-                    <span className="text-xs text-gray-400">-</span>
+                  {isMe ? (
+                    <span className="usr-dash">-</span>
                   ) : (
-                    <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${
-                      u.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'
-                    }`}>
+                    <span className={`rst-status${u.isActive ? ' is-on' : ''}`}>
                       {u.isActive ? 'Active' : 'Inactive'}
                     </span>
                   )}
-                </td>
-                {/* One line, always — as inline buttons the cell wrapped its last
-                    button onto a line of its own. The 20rem cell cap is lifted so
-                    the column takes the room four buttons need. */}
-                <td className="px-4 py-3 !max-w-none">
-                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                </div>
+                <div className="usr-actions">
                   {canManage(me?.role, u.role) ? (
                     <>
-                      <button onClick={() => openEdit(u)} className="text-blue-600 hover:underline">Edit</button>
+                      {/* Only SuperAdmin may change an account's active status (never their own). */}
+                      {isSuperAdmin && !isMe && (
+                        <button type="button" onClick={() => onToggleActive(u)}
+                          className={`trn-btn usr-toggle ${u.isActive ? 'is-off' : 'is-on'}`}>
+                          {u.isActive ? <FiUserX size={13} /> : <FiUserCheck size={13} />}
+                          {u.isActive ? 'Deactivate' : 'Activate'}
+                        </button>
+                      )}
+                      <button type="button" onClick={() => openEdit(u)} className="trn-icon-btn"
+                        aria-label={`Edit ${name}`} title="Edit">
+                        <FiEdit2 size={15} />
+                      </button>
                       {/* SuperAdmin controls each HR Manager's granular admin access. */}
                       {isSuperAdmin && u.role === 'HRManager' && (
-                        <button onClick={() => openPerms(u)} className="text-indigo-600 hover:underline">Permissions</button>
-                      )}
-                      {/* Only SuperAdmin may change an account's active status (never their own). */}
-                      {isSuperAdmin && String(u._id || u.id) !== myId && (
-                        <button onClick={() => onToggleActive(u)} className="text-amber-600 hover:underline">
-                          {u.isActive ? 'Deactivate' : 'Activate'}
+                        <button type="button" onClick={() => openPerms(u)} className="trn-icon-btn"
+                          aria-label={`Permissions for ${name}`} title="Permissions">
+                          <FiSliders size={15} />
                         </button>
                       )}
                     </>
                   ) : (
-                    <span className="text-xs text-gray-400 italic">Restricted</span>
+                    <span className="usr-restricted"><FiLock size={12} /> Restricted</span>
                   )}
                   {isSuperAdmin && (
-                    <button onClick={() => onDelete(u)} className="text-red-600 hover:underline">Delete</button>
+                    <button type="button" onClick={() => onDelete(u)} className="trn-icon-btn usr-del"
+                      aria-label={`Delete ${name}`} title="Delete">
+                      <FiTrash2 size={15} />
+                    </button>
                   )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="card-title mb-4">
-              {editingId ? 'Edit User' : 'Add User'}
-            </h2>
-            <form onSubmit={onSave} className="space-y-3">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h2 className="card-title">
+                {editingId ? 'Edit User' : 'Add User'}
+              </h2>
+              <button type="button" onClick={closeModal} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
+            <form onSubmit={onSave} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">
+                  <label className="prm-label">
                     {form.role === 'HRConsultancy' ? 'Consultancy name' : 'First name'}
                   </label>
                   <input required value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })}
-                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                    className="prm-input" />
                   {/* An HR consultancy has no employee code: it signs in with
                       this name (utils/loginIdentity on the server), so say so
                       while it is being typed. */}
                   {form.role === 'HRConsultancy' && (
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="usr-field-note">
                       {form.firstName.trim()
-                        ? <>They sign in with <span className="font-mono font-medium text-gray-700">{form.firstName.trim().toLowerCase()}</span> (any case).</>
+                        ? <>They sign in with <span className="font-mono font-semibold">{form.firstName.trim().toLowerCase()}</span> (any case).</>
                         : 'They sign in with this name, in any case.'}
                     </p>
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Last name</label>
+                  <label className="prm-label">Last name</label>
                   <input required value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })}
-                    className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                    className="prm-input" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700">Email</label>
+                <label className="prm-label">Email</label>
                 {/* On an existing account only a Super Admin may change it —
                     for any user, their own included. */}
                 <input type="email" required disabled={!!editingId && !isSuperAdmin} value={form.email}
                   onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100" />
-                {editingId && (
-                  <p className={`text-xs mt-1 ${isSuperAdmin ? 'text-amber-700' : 'text-gray-500'}`}>
-                    {isSuperAdmin
-                      ? 'Changing this changes the address they sign in with. A notice goes to the new address.'
-                      : 'Only a Super Admin can change an email.'}
-                  </p>
+                  title={editingId && !isSuperAdmin ? 'Only a Super Admin can change an email.' : undefined}
+                  className="prm-input disabled:opacity-60" />
+                {editingId && isSuperAdmin && (
+                  <p className="usr-field-note is-warn">Changes their sign-in address.</p>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700">
+                <label className="prm-label">
                   {editingId ? 'New password (leave blank to keep)' : 'Password'}
                 </label>
-                <div className="relative mt-1">
+                <div className="usr-pw">
                   <input type={showPassword ? 'text' : 'password'} required={!editingId} minLength={editingId ? 0 : 8}
                     value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2 pr-16" />
+                    className="prm-input" />
                   <button type="button" onClick={() => setShowPassword((s) => !s)}
-                    className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-700"
+                    className="usr-pw-eye"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                     title={showPassword ? 'Hide password' : 'Show password'}>
-                    {showPassword ? (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                      </svg>
-                    ) : (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    )}
+                    {showPassword ? <FiEyeOff size={18} aria-hidden="true" /> : <FiEye size={18} aria-hidden="true" />}
                   </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm text-gray-700">
+                <label className="prm-label">
                   {editingId ? 'Confirm new password' : 'Confirm password'}
                 </label>
-                <div className="relative mt-1">
+                <div className="usr-pw">
                   <input type={showConfirm ? 'text' : 'password'} required={!editingId} minLength={editingId ? 0 : 8}
                     value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="block w-full border rounded-lg px-3 py-2 pr-16" />
+                    className="prm-input" />
                   <button type="button" onClick={() => setShowConfirm((s) => !s)}
-                    className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-700"
+                    className="usr-pw-eye"
                     aria-label={showConfirm ? 'Hide password' : 'Show password'}
                     title={showConfirm ? 'Hide password' : 'Show password'}>
-                    {showConfirm ? (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                      </svg>
-                    ) : (
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    )}
+                    {showConfirm ? <FiEyeOff size={18} aria-hidden="true" /> : <FiEye size={18} aria-hidden="true" />}
                   </button>
                 </div>
                 {confirmPassword && form.password !== confirmPassword && (
@@ -512,25 +588,21 @@ This cannot be undone.`,
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">Role</label>
+                  <label className="prm-label">Role</label>
                   <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-                    className="mt-1 block w-full border rounded-lg px-3 py-2">
+                    title={!isSuperAdmin ? 'HR Managers can only create Employee accounts.' : undefined}
+                    className="prm-input">
                     {/* Only show roles the viewer can actually create. Non-admins
                         (HR) can only create Employees — and never see other roles. */}
                     {(isSuperAdmin ? ROLES : ['Employee']).map((r) => (
                       <option key={r} value={r}>{roleLabel(r)}</option>
                     ))}
                   </select>
-                  {!isSuperAdmin && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      HR Managers can only create Employee accounts.
-                    </p>
-                  )}
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Phone</label>
+                  <label className="prm-label">Phone</label>
                   <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    placeholder="+91XXXXXXXXXX" className="mt-1 block w-full border rounded-lg px-3 py-2" />
+                    placeholder="+91XXXXXXXXXX" className="prm-input" />
                 </div>
               </div>
 
@@ -541,36 +613,32 @@ This cannot be undone.`,
                   the only place they can be recorded; leave one blank and that
                   occasion simply never shows. */}
               {EXEC_ROLES.includes(form.role) && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
-                  <p className="text-sm font-medium text-gray-800">Celebrations</p>
-                  <p className="text-xs text-gray-500 mt-0.5 mb-3">
-                    Shown to everyone in this executive&apos;s companies, on the calendar and the
-                    celebrations card — the same as an employee&apos;s. Optional.
-                  </p>
+                <div className="usr-sub">
+                  <p className="usr-sub-title">Celebrations (optional)</p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Date of birth</label>
+                      <label className="prm-label">Date of birth</label>
                       <input type="date" value={form.dateOfBirth} max={toYMD(new Date())}
                         onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2" />
+                        className="prm-input" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Date of joining</label>
+                      <label className="prm-label">Date of joining</label>
                       <input type="date" value={form.dateOfJoining}
                         onChange={(e) => setForm({ ...form, dateOfJoining: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2" />
+                        className="prm-input" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Wedding anniversary</label>
+                      <label className="prm-label">Wedding anniversary</label>
                       <input type="date" value={form.dateOfMarriage}
                         onChange={(e) => setForm({ ...form, dateOfMarriage: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2" />
+                        className="prm-input" />
                     </div>
                   </div>
                 </div>
               )}
 
-              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+              <label className="usr-check">
                 <input type="checkbox" checked={form.isActive}
                   onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
                 Active
@@ -581,10 +649,8 @@ This cannot be undone.`,
               )}
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={closeModal}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={closeModal} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={saving} className="trn-btn is-primary accent-bg text-white">
                   {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
@@ -595,41 +661,56 @@ This cannot be undone.`,
 
       {permUser && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="card-title mb-1">Admin permissions</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              {permUser.firstName} {permUser.lastName} · choose which admin capabilities this HR Manager has.
-            </p>
-            <div className="flex gap-2 mb-4">
-              <button type="button" onClick={() => setPermSel(new Set(allKeys))}
-                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Select all</button>
-              <button type="button" onClick={() => setPermSel(new Set())}
-                className="text-xs px-3 py-1.5 rounded-lg border hover:bg-gray-50">Clear all</button>
-              <span className="text-xs text-gray-400 self-center ml-auto">{permSel.size}/{allKeys.length} granted</span>
-            </div>
-
-            <div className="space-y-4">
-              {Object.entries(permGroups).map(([group, items]) => (
-                <div key={group}>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1.5">{group}</div>
-                  <div className="grid sm:grid-cols-2 gap-1.5">
-                    {items.map((p) => (
-                      <label key={p.key} className="flex items-center gap-2 text-sm text-gray-700 py-1">
-                        <input type="checkbox" checked={permSel.has(p.key)} onChange={() => togglePerm(p.key)}
-                          className="rounded border-gray-300" />
-                        {p.label}
-                      </label>
-                    ))}
-                  </div>
+          <div className="bg-white rounded-2xl shadow-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <PersonAvatar user={permUser} />
+                <div className="min-w-0">
+                  <h2 className="card-title">Admin permissions</h2>
+                  <p className="text-xs text-gray-500 mt-0.5 truncate">
+                    {permUser.firstName} {permUser.lastName}
+                  </p>
                 </div>
-              ))}
+              </div>
+              <button type="button" onClick={() => setPermUser(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
             </div>
 
-            <div className="flex justify-end gap-2 pt-5">
-              <button type="button" onClick={() => setPermUser(null)}
-                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-              <button type="button" onClick={savePerms} disabled={permSaving}
-                className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+            <div className="px-6 py-4 overflow-y-auto">
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <button type="button" onClick={() => setPermSel(new Set(allKeys))} className="trn-btn">Select all</button>
+                <button type="button" onClick={() => setPermSel(new Set())} className="trn-btn">Clear all</button>
+                <span className="text-xs text-gray-500 ml-auto">
+                  <strong className="accent-text">{permSel.size}</strong>/{allKeys.length} granted
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {Object.entries(permGroups).map(([group, items]) => {
+                  const on = items.filter((p) => permSel.has(p.key)).length;
+                  return (
+                    <div key={group} className="prm-sec">
+                      <div className="prm-sec-head">
+                        <span className="prm-sec-title uppercase tracking-wide text-xs">{group}</span>
+                        <span className={`prm-sec-count${on ? ' is-on' : ''}`}>{on}/{items.length}</span>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-x-4 p-2">
+                        {items.map((p) => (
+                          <label key={p.key} className="usr-perm-item">
+                            <input type="checkbox" checked={permSel.has(p.key)} onChange={() => togglePerm(p.key)}
+                              className="rounded border-gray-300" />
+                            {p.label}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
+              <button type="button" onClick={() => setPermUser(null)} className="trn-btn">Cancel</button>
+              <button type="button" onClick={savePerms} disabled={permSaving} className="trn-btn is-primary accent-bg text-white">
                 {permSaving ? 'Saving…' : 'Save permissions'}
               </button>
             </div>

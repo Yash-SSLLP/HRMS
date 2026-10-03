@@ -13,6 +13,9 @@ const {
   upsertAward,
   announceAward,
   deleteAward,
+  listCategories,
+  createCategory,
+  deleteCategory,
 } = require('../controllers/rnrController');
 const { protect, requirePermission } = require('../middleware/authMiddleware');
 
@@ -29,6 +32,10 @@ router.post('/:id/dismiss', dismissBanner);
 // HR/Admin only: manage the monthly awards (requires 'announcements.manage').
 router.use(requirePermission('announcements.manage'));
 // GET / — list awards; protected, requires 'announcements.manage'.
+// Award categories (Best Employee first) — registered before the /:id routes.
+router.get('/categories', listCategories);
+router.post('/categories', createCategory);
+router.delete('/categories/:id', deleteCategory);
 router.get('/', listAwards);
 // GET /people — list award-eligible people; protected, requires 'announcements.manage'.
 router.get('/people', listPeople);

@@ -27,12 +27,12 @@ import { formatTime12, formatHours, formatDuration } from '../utils/time';
 // for exactly that one; the other field is hidden and cleared, and an empty
 // requested time leaves that punch untouched when HR approves.
 const TYPE_FIELDS = {
-  'Missing Punch': { in: true, out: true, hint: 'Fill in whichever punch is missing.' },
-  'Wrong Time': { in: true, out: true, hint: 'Enter the correct times for this day.' },
-  'Forgot Check-in': { in: true, out: false, hint: 'Enter the time you actually started.' },
-  'Forgot Check-out': { in: false, out: true, hint: 'Enter the time you actually left.' },
-  'On Duty': { in: true, out: true, hint: 'Enter the hours you worked off-site.' },
-  'Other': { in: true, out: true, hint: '' },
+  'Missing Punch': { in: true, out: true },
+  'Wrong Time': { in: true, out: true },
+  'Forgot Check-in': { in: true, out: false },
+  'Forgot Check-out': { in: false, out: true },
+  'On Duty': { in: true, out: true },
+  'Other': { in: true, out: true },
 };
 
 const TYPES = Object.keys(TYPE_FIELDS);
@@ -109,7 +109,7 @@ function DaySummary({ day }) {
     if (day.off) {
       return (
         <div className="mt-2 text-sm px-3 py-2 rounded-lg border adp-offnote">
-          {day.off} — nothing recorded, so there is usually nothing to regularize.
+          {day.off} — nothing recorded.
         </div>
       );
     }
@@ -264,7 +264,6 @@ export default function EmployeeRegularizations() {
     <div>
       <PageHeader
         title="Attendance Regularization"
-        subtitle="Request a correction for a missing or wrong attendance punch."
       >
         {/* Nothing at all where no cap is set, which is what an untouched org
             carries. A limit of 0 is not "none left" — that account was never
@@ -381,7 +380,6 @@ export default function EmployeeRegularizations() {
                     </div>
                   )}
                 </div>
-                {fields.hint && <p className="mt-1 text-xs text-gray-500">{fields.hint}</p>}
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Reason *</label>

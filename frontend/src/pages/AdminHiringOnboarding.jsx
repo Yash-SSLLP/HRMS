@@ -329,7 +329,7 @@ export default function AdminHiringOnboarding() {
 
   return (
     <div>
-      <PageHeader title="Onboarding" subtitle="Candidates who cleared interviews & received an offer · set joining details and release the appointment letter" />
+      <PageHeader title="Onboarding" />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
       {info && <div className="mb-4 text-sm text-green-800 bg-green-50 border border-green-200 px-3 py-2 rounded-lg">{info}</div>}
 
@@ -337,7 +337,7 @@ export default function AdminHiringOnboarding() {
         <div className="text-gray-500">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
-          No candidates in onboarding yet. In <span className="font-medium">Recruitment</span>, generate an offer letter and click <span className="font-medium">Onboard</span>.
+          No candidates in onboarding yet.
         </div>
       ) : (
         <div className="space-y-4">
@@ -459,11 +459,7 @@ export default function AdminHiringOnboarding() {
                   </p>
                 ) : codeState === 'free' ? (
                   <p className="text-[11px] text-green-700 mt-1">Available.</p>
-                ) : (
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    Printed on the letter, the acceptance stub and the salary annexure.
-                  </p>
-                )}
+                ) : null}
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Reporting manager</label>
@@ -543,7 +539,6 @@ export default function AdminHiringOnboarding() {
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-600 mb-1">Working hours / shift</label>
                 <ShiftHoursSelect value={apptForm.workingHours} onChange={(v) => setApptForm({ ...apptForm, workingHours: v })} className="block w-full border rounded-lg px-3 py-2 bg-white" />
-                <p className="text-[11px] text-gray-400 mt-1">Pick a shift or choose “＋ Add another shift…” to save a new one.</p>
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Joining date</label>
@@ -622,9 +617,7 @@ export default function AdminHiringOnboarding() {
                     className="block w-full border rounded-lg px-3 py-2"
                   />
                   <p className="text-[11px] text-gray-400 mt-1">
-                    Annual ₹ · {side === 'deduction'
-                      ? 'deducted from the salary'
-                      : 'a benefit on top of it (counts towards CTC)'}
+                    Annual ₹ · {side === 'deduction' ? 'deduction' : 'benefit'}
                   </p>
                 </div>
               ))}
@@ -678,7 +671,7 @@ export default function AdminHiringOnboarding() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${apptCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={apptEmail && !!apptCand.email} disabled={!apptCand.email} onChange={(e) => setApptEmail(e.target.checked)} />
-                Email the appointment letter to the candidate · an editable preview opens after generating{!apptCand.email && ' (no email on file)'}
+                Email the appointment letter to the candidate{!apptCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

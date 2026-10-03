@@ -17,6 +17,7 @@
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import { FiAlertTriangle, FiChevronDown } from 'react-icons/fi';
 import api from '../../api/client';
 import ListEditor, { rowsOf } from '../ListEditor';
 
@@ -84,76 +85,88 @@ export default function CashOutCategories() {
     }).replace(/\b(am|pm)\b/i, (p) => p.toUpperCase())}.`
     : '';
 
+  // What a save would keep: the first spelling of each, in order.
+  const kept = filled.filter((c, i) => filled.findIndex((x) => x.toLowerCase() === c.toLowerCase()) === i);
+
   return (
     <div>
-      <p className="text-sm text-gray-500 max-w-4xl mb-4">
-        The <strong>Category</strong> list an employee chooses from when they record an expense in My Cashbook
-        (<strong>Cash Out → Record an expense</strong>). The order here is the order of the dropdown:
-        <strong> priority 1</strong> is at the top — use the arrows to move a category up or down.
-      </p>
-
-      <div className="bg-white shadow rounded-lg p-4 sm:p-5 max-w-3xl">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
-          {/* What a save would keep — a repeat is dropped, so it is not counted. */}
-          <h2 className="card-title">
-            Cash Out categories <span className="text-gray-400 font-normal">({filled.length - repeats.length})</span>
-          </h2>
-          <span className="text-xs text-gray-500">Priority order · first is shown first</span>
-        </div>
-
-        {loading ? (
-          <div className="space-y-2">
-            {[0, 1, 2].map((i) => <div key={i} className="skeleton h-9 rounded-lg" />)}
+      <div className="prm-cat-grid">
+        <section className="prm-card">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3">
+            {/* What a save would keep — a repeat is dropped, so it is not counted. */}
+            <h2 className="prm-card-title">
+              Categories <span className="opacity-50 font-semibold">({kept.length})</span>
+            </h2>
+            <span className="text-xs opacity-60">Top = first in the dropdown</span>
           </div>
-        ) : (
-          <ListEditor
-            rows={rows}
-            onChange={setRows}
-            numbered
-            maxLength={config?.maxLength || 60}
-            maxItems={config?.maxCategories || 40}
-            placeholder="e.g. Fuel"
-            itemName="category"
-            fullText={`That is the most the dropdown takes (${config?.maxCategories || 40}).`}
-            empty={(
-              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                No categories yet. Until you add one, employees are not asked for a category and every expense
-                is recorded as &quot;Expense&quot;.
-              </p>
+
+          {loading ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => <div key={i} className="skeleton h-9 rounded-lg" />)}
+            </div>
+          ) : (
+            <ListEditor
+              rows={rows}
+              onChange={setRows}
+              numbered
+              maxLength={config?.maxLength || 60}
+              maxItems={config?.maxCategories || 40}
+              placeholder="e.g. Fuel"
+              itemName="category"
+              fullText={`That is the most the dropdown takes (${config?.maxCategories || 40}).`}
+              empty={(
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  No categories yet — expenses are recorded as &quot;Expense&quot;.
+                </p>
+              )}
+            />
+          )}
+
+          {repeats.length > 0 && (
+            <div className="prm-notice is-warn">
+              <FiAlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                {repeats.map((r) => `"${r}"`).join(', ')} {repeats.length === 1 ? 'is' : 'are'} a repeat — only the first is kept.
+              </span>
+            </div>
+          )}
+          {error && (
+            <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-4 mt-4 border-t border-dashed" style={{ borderColor: 'var(--border)' }}>
+            {dirty && <span className="prm-dirty mr-auto">Unsaved changes</span>}
+            {!dirty && updated && <span className="text-xs opacity-50 mr-auto">{updated}</span>}
+            <button type="button" onClick={() => setRows(rowsOf(saved))} disabled={!dirty || saving || loading} className="trn-btn">
+              Discard changes
+            </button>
+            <button type="button" onClick={save} disabled={!dirty || saving || loading} className="trn-btn is-primary accent-bg text-white">
+              {saving ? 'Saving…' : 'Save categories'}
+            </button>
+          </div>
+        </section>
+
+        {/* What an employee will see — drawn from the list as typed, so the
+            effect of a move is visible before it is saved. */}
+        <aside className="prm-card">
+          <h2 className="prm-card-title">What employees see</h2>
+          <div className="prm-dd" aria-label="Dropdown preview">
+            <div className="prm-dd-field">
+              <span className={kept.length ? '' : 'opacity-50'}>{kept.length ? 'Choose a category' : 'No category asked'}</span>
+              <FiChevronDown size={15} className="opacity-50" />
+            </div>
+            {kept.length > 0 && (
+              <div className="prm-dd-list">
+                {kept.map((c, i) => (
+                  <div key={`${c}-${i}`} className="prm-dd-item">
+                    <span className="prm-dd-no">{i + 1}</span>
+                    <span className="min-w-0 truncate">{c}</span>
+                  </div>
+                ))}
+              </div>
             )}
-          />
-        )}
-
-        {repeats.length > 0 && (
-          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
-            {repeats.map((r) => `"${r}"`).join(', ')} {repeats.length === 1 ? 'is' : 'are'} already on the
-            list higher up. Only the first one is kept when you save.
-          </p>
-        )}
-
-        <ul className="text-xs text-gray-500 mt-4 space-y-1 list-disc pl-4">
-          <li>Once there is at least one category, every new expense must pick one.</li>
-          <li>
-            Renaming or removing a category changes what is offered from now on. An expense already filed keeps
-            the category it was filed under.
-          </li>
-        </ul>
-
-        {updated && <p className="text-xs text-gray-400 mt-4">{updated}</p>}
-        {error && (
-          <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
-        )}
-
-        <div className="flex flex-wrap justify-end gap-2 pt-4">
-          <button type="button" onClick={() => setRows(rowsOf(saved))} disabled={!dirty || saving || loading}
-            className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">
-            Discard changes
-          </button>
-          <button type="button" onClick={save} disabled={!dirty || saving || loading}
-            className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save categories'}
-          </button>
-        </div>
+          </div>
+        </aside>
       </div>
     </div>
   );

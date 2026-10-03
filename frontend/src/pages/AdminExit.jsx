@@ -410,7 +410,7 @@ export default function AdminExit() {
       title: 'Exit feedback email',
       link: mailData.feedbackUrl,
       sendLabel: 'Send email',
-      note: "Review and edit the message below · it's emailed to the employee from the company mailbox.",
+      note: "Review and edit the message before it is sent.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
       // Anyone else to copy — a manager, accounts. The sender is copied anyway.
@@ -530,7 +530,7 @@ export default function AdminExit() {
         title: 'Email relieving letter',
         link: data.link,
         sendLabel: 'Send letter',
-        note: "Review and edit the message below · it's emailed from the company mailbox with the letter attached.",
+        note: "Review and edit the message before it is sent.",
         defaultSubject: data.subject,
         defaultBody: data.body,
         attachedNames: data.attachments || [],
@@ -732,7 +732,7 @@ export default function AdminExit() {
                     return <p className="text-xs text-gray-500 mt-1">This employee&apos;s HR partner has left · defaulting to you.</p>;
                   }
                   return sel?.hrPartner
-                    ? <p className="text-xs text-gray-500 mt-1">Handled By prefilled from this employee's HR partner.</p>
+                    ? null
                     : <p className="text-xs text-gray-500 mt-1">No permanent HR partner set · defaulting to you.</p>;
                 })()}
                 {/* What they hold, before the exit is raised — the same list
@@ -755,7 +755,6 @@ export default function AdminExit() {
                           </li>
                         ))}
                       </ul>
-                      <p className="text-xs text-amber-700 mt-2">Once the exit is saved you can mark each one returned from it.</p>
                     </div>
                   ) : (
                     <p className="text-xs text-gray-500 mt-2">No company assets on record.</p>
@@ -791,7 +790,6 @@ export default function AdminExit() {
                       setNewForm({ ...newForm, noticePeriodDays: n, lastWorkingDay: addDays(today0(), n) });
                     }}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-400 mt-1">Synced with the last working day.</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Handled By (HR)</label>
@@ -888,7 +886,6 @@ export default function AdminExit() {
                     setDetail({ ...detail, noticePeriodDays: n, lastWorkingDay: addDays(anchor, n) });
                   }}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm disabled:bg-gray-100" />
-                <p className="text-xs text-gray-400 mt-1">Synced with the last working day (from the resignation date).</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-500">Handled By (HR)</label>
@@ -903,7 +900,6 @@ export default function AdminExit() {
                     { keep: [detail.handledBy?._id || detail.handledBy] },
                   )}
                 </SearchableSelect>
-                <p className="text-xs text-gray-500 mt-1">This person's name signs the exit email; replies route to their address.</p>
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-500">Reason / notes</label>
@@ -919,7 +915,7 @@ export default function AdminExit() {
                 <h3 className="text-sm font-semibold mb-2">Approval progress</h3>
                 <ChainProgress chain={detail.approvalChain} />
                 {detail.status === 'Pending' && (
-                  <p className="text-xs text-gray-500 mt-2">Awaiting the reporting hierarchy. It enters clearance once fully approved.</p>
+                  <p className="text-xs text-gray-500 mt-2">Awaiting the reporting hierarchy.</p>
                 )}
               </div>
             )}
@@ -994,9 +990,6 @@ export default function AdminExit() {
                     )
                   )}
                 </div>
-                {detail.status === 'Pending' && (
-                  <p className="text-xs text-gray-500 mb-2">Assign a manager to each section now — they can tick items once the resignation is approved and the notice period begins.</p>
-                )}
                 <div className="space-y-3">
                   {detail.clearanceSections.map((s) => {
                     const assignedId = s.assignedTo?._id || s.assignedTo || '';
@@ -1086,8 +1079,7 @@ export default function AdminExit() {
             {!isFinal && detail.lastWorkingDay
               && new Date().toLocaleDateString('en-CA') < String(detail.lastWorkingDay).slice(0, 10) && (
               <p className="text-[11px] text-gray-500 mb-2">
-                ℹ️ Access stays active until the last working day ({fmtDate(detail.lastWorkingDay)}) and is
-                released automatically after it. “Complete Exit” before then will ask you to confirm early release.
+                ℹ️ Access stays active until the last working day ({fmtDate(detail.lastWorkingDay)}).
               </p>
             )}
 
@@ -1169,8 +1161,7 @@ export default function AdminExit() {
                 </h2>
                 <p className="text-sm text-gray-600 mt-1">
                   Collect {exitAssets.held.length === 1 ? 'it' : 'them'} before the last working day
-                  {detail.lastWorkingDay ? ` (${fmtDate(detail.lastWorkingDay)})` : ''}. Mark each one returned as
-                  it comes back · the date and its condition go on the asset register.
+                  {detail.lastWorkingDay ? ` (${fmtDate(detail.lastWorkingDay)})` : ''}.
                 </p>
               </div>
             </div>

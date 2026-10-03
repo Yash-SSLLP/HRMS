@@ -110,7 +110,7 @@ export default function AdminWorkLocations() {
 
   return (
     <div>
-      <PageHeader title="Work Locations" subtitle="Named sites with their own check-in geofence">
+      <PageHeader title="Work Locations">
         {canManage && (
           <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Location</button>
         )}
@@ -122,7 +122,7 @@ export default function AdminWorkLocations() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : locations.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-10 text-center text-gray-500">
-          No work locations yet. Employees without one are measured against the default office.
+          No work locations yet.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

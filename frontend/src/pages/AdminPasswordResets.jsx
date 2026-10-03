@@ -138,7 +138,7 @@ function RequestCard({ r, onResolved }) {
             </div>
           )}
           <p className="text-[11px] text-gray-400">
-            “Set new password” changes the employee's password here and resolves the request (they're logged out everywhere). Or reset it under Users and just mark it resolved.
+            Setting a new password logs the employee out everywhere.
           </p>
         </div>
       ) : (

@@ -38,7 +38,6 @@ export default function MailComposeModal({
   attachedNames = [],
   link,
   title = 'Send email',
-  note,
   sendLabel,
   onSend,
   onSent,
@@ -92,9 +91,6 @@ export default function MailComposeModal({
           <button onClick={onClose} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
         <p className="text-sm text-gray-500 mb-4">
-          {note || (onSend
-            ? 'Review and edit the message below · it is sent from the company mailbox, with a copy to you in Cc.'
-            : 'Review and edit the message, then open it in your email to send.')}{' '}
           {to ? <>To: <span className="font-medium text-gray-700">{to}</span></> : null}
         </p>
 
@@ -109,7 +105,6 @@ export default function MailComposeModal({
                 placeholder="Add more emails, comma-separated"
                 className="block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-gray-300"
               />
-              <p className="text-[11px] text-gray-400 mt-1">You are copied automatically · a mistyped address stops the send so it can be fixed.</p>
             </div>
           )}
           <div>
@@ -141,12 +136,6 @@ export default function MailComposeModal({
               <button onClick={copyLink} className="shrink-0 px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-white">
                 {copied ? 'Copied' : 'Copy'}
               </button>
-            </div>
-          )}
-
-          {attachments.length > 0 && (
-            <div className="text-[11px] text-gray-500">
-              {attachments.length} attachment{attachments.length > 1 ? 's' : ''} will download so you can attach {attachments.length > 1 ? 'them' : 'it'} in the compose window.
             </div>
           )}
 

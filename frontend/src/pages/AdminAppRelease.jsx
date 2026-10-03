@@ -133,7 +133,7 @@ export default function AdminAppRelease() {
 
   return (
     <div>
-      <PageHeader title="App Release" subtitle="The Android build every phone is offered">
+      <PageHeader title="App Release">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
       </PageHeader>
 
@@ -146,7 +146,7 @@ export default function AdminAppRelease() {
           <div className="text-gray-500">Loading…</div>
         ) : !release ? (
           <div className="text-gray-500">
-            Nothing has been published yet, so no phone is being offered an update.
+            Nothing published yet.
           </div>
         ) : (
           <dl className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -201,10 +201,7 @@ export default function AdminAppRelease() {
       {!loading && store?.mode === 'upload' && (
         <form onSubmit={publish} className="bg-white shadow rounded-lg p-6">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">Publish a new build</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            This replaces the current build and its file. The version must be higher than the
-            published one — Android refuses to install anything lower over it.
-          </p>
+          <p className="text-sm text-gray-500 mb-4">Replaces the current build; the version must be higher.</p>
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
@@ -275,15 +272,7 @@ export default function AdminAppRelease() {
       {!loading && store?.mode === 'repo' && (
         <div className="bg-white shadow rounded-lg p-6 text-sm text-gray-600">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Publishing</h2>
-          <p>
-            This server serves whatever APK sits in the repository&apos;s
-            {' '}<code className="bg-gray-100 px-1 rounded">Mobile App</code> folder
-            {store.dir && <> (<code className="bg-gray-100 px-1 rounded">{store.dir}</code>)</>}, so
-            <strong> git is the publisher</strong> — there is nothing to upload here. To release a new build:
-            bump the version, build the APK, drop it in that folder as
-            {' '}<code className="bg-gray-100 px-1 rounded">hrms-&lt;version&gt;-&lt;code&gt;.apk</code>, commit, push,
-            and deploy. Phones are offered it on their next check.
-          </p>
+          <p>Publishing is by git — there is nothing to upload here.</p>
         </div>
       )}
 
@@ -291,17 +280,15 @@ export default function AdminAppRelease() {
         <div className="bg-white shadow rounded-lg p-6 text-sm text-gray-600">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Publishing</h2>
           <p>
-            This server keeps only a pointer to the APK — the file itself lives on
-            {' '}<span className="font-medium text-gray-900">{store.repo || 'the mobile repository'}</span>, so a ~70 MB
-            upload never has to travel through the API. New builds are published by pushing a version
-            bump to the mobile repository, or by running <code className="bg-gray-100 px-1 rounded">npm run release -- --publish</code> there.
+            Builds live on{' '}
+            <span className="font-medium text-gray-900">{store.repo || 'the mobile repository'}</span> — publish by pushing a version bump there.
           </p>
         </div>
       )}
 
       {!loading && store && !store.configured && (
         <div className="mt-4 rounded-lg bg-amber-50 text-amber-800 px-4 py-3 text-sm">
-          The release store is not fully configured on the server, so publishing will be refused.
+          The release store is not configured; publishing will be refused.
         </div>
       )}
     </div>

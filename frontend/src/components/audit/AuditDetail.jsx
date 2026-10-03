@@ -192,7 +192,7 @@ export default function AuditDetail({ entryId, preview, onClose, onDelete, delet
                 <FiInfo size={14} className="mt-0.5 shrink-0" />
                 <span>
                   {e?.entityId
-                    ? 'This record no longer exists — it was deleted after this change was logged. The entry stays as the trail of what happened to it.'
+                    ? 'This record no longer exists.'
                     : 'This entry does not point at a single record.'}
                 </span>
               </div>
@@ -219,7 +219,7 @@ export default function AuditDetail({ entryId, preview, onClose, onDelete, delet
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-500">Its details are private (pay, identity or bank fields), so none are shown.</p>
+                  <p className="text-sm text-gray-500">Details are private.</p>
                 )}
               </>
             )}
@@ -228,7 +228,6 @@ export default function AuditDetail({ entryId, preview, onClose, onDelete, delet
           {data && (
             <section className="aud-sec">
               <div className="trn-label text-gray-600">History of this record · {history.length} {history.length === 1 ? 'change' : 'changes'}</div>
-              {history.length <= 1 && <p className="text-xs text-gray-500 mb-2">This is the only change logged for this record.</p>}
               <ol className="aud-tl">
                 {history.map((h) => (
                   <li key={h._id} className={`aud-tl-item is-${h.badge?.tone || 'neutral'} ${h.current ? 'is-current' : ''}`}>

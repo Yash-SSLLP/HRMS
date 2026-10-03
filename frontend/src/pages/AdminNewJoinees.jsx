@@ -71,7 +71,7 @@ export default function AdminNewJoinees() {
         title: `Send ${label}`,
         link: data.link,
         sendLabel: `Send ${label.toLowerCase()}`,
-        note: `Review and edit the message below · it's emailed from the company mailbox with the ${label.toLowerCase()} PDF attached.`,
+        note: `Review and edit the message before it is sent.`,
         defaultSubject: data.subject,
         defaultBody: data.body,
         attachedNames: data.attachments || [],
@@ -144,7 +144,7 @@ export default function AdminNewJoinees() {
         <div className="text-gray-500">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
-          No new joinees yet. In <span className="font-medium">Onboarding</span>, release a candidate's appointment letter to move them here.
+          No new joinees yet.
         </div>
       ) : (
         <div className="space-y-4">
@@ -228,7 +228,7 @@ export default function AdminNewJoinees() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-xl p-6">
             <h2 className="card-title mb-1">Make Employee &amp; User</h2>
-            <p className="text-sm text-gray-500 mb-4">Creates a login account and employee profile for <span className="font-medium text-gray-700">{cand.name}</span>.</p>
+            <p className="text-sm text-gray-500 mb-4">For <span className="font-medium text-gray-700">{cand.name}</span></p>
             <form onSubmit={saveConvert} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-600 mb-1">Login email *</label>
@@ -271,7 +271,6 @@ export default function AdminNewJoinees() {
               <div className="sm:col-span-2">
                 <label className="block text-xs text-gray-600 mb-1">Initial password</label>
                 <input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-                <p className="text-[11px] text-gray-400 mt-1">The joinee should change this after their first login.</p>
               </div>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}

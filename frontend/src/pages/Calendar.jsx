@@ -55,6 +55,11 @@ const TYPE_META = {
   reminder:    { label: 'My reminder',          color: '#10b981', fg: '#06281f' },
   task:        { label: 'Task deadline',        color: '#06b6d4', fg: '#062a30' },
 };
+// For an event's "Added by" line (Super Admin only): role in words, 12-hour stamp.
+const ROLE_WORDS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', LDManager: 'HR L&D', AccountsManager: 'Accounts Manager' };
+const stampText = (d) => (d ? new Date(d).toLocaleString('en-IN', {
+  day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hourCycle: 'h12',
+}) : '');
 // Chips drawn in a cell before collapsing the rest into "+N more".
 const MAX_TILES = 3;
 const TYPE_ORDER = Object.keys(TYPE_META);
@@ -222,6 +227,10 @@ export default function Calendar() {
       if (m.time) rows.push(['Time', m.time]);
       if (m.location) rows.push(['Location', m.location]);
       if (m.description) rows.push(['Details', m.description]);
+      // Only a Super Admin's calendar carries these (the server leaves them out
+      // for everyone else).
+      if (m.addedBy) rows.push(['Added by', [m.addedBy, ROLE_WORDS[m.addedByRole] || m.addedByRole, stampText(m.addedAt)].filter(Boolean).join(' · ')]);
+      if (m.editedBy) rows.push(['Edited by', [m.editedBy, stampText(m.editedAt)].filter(Boolean).join(' · ')]);
     } else if (e.type === 'interview') {
       if (m.time) rows.push(['Time', m.time]);
       if (m.durationMinutes) rows.push(['Duration', m.durationMinutes < 60 ? `${m.durationMinutes} min` : `${m.durationMinutes / 60} hr`]);
@@ -542,7 +551,7 @@ export default function Calendar() {
                 <p className="text-sm" style={{ color: 'var(--cal-ink-dim)' }}>Loading…</p>
               ) : events.length === 0 ? (
                 <p className="text-sm" style={{ color: 'var(--cal-ink-dim)' }}>
-                  Nothing on the calendar this month. Use “Reminder” or the + on any day to add one.
+                  Nothing on the calendar this month.
                 </p>
               ) : (
                 <div className="cal-legend-grid">
@@ -736,11 +745,6 @@ export default function Calendar() {
             <div className="px-5 pt-5 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">{form.id ? 'Edit reminder' : 'New reminder'}</h2>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {canBroadcast
-                    ? 'Keep it to yourself, or send it to people, a department, or everyone.'
-                    : 'Personal reminder — only you will see it.'}
-                </p>
               </div>
               <button type="button" onClick={() => setForm(null)}
                 className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100">

@@ -131,9 +131,6 @@ export default function DocumentSubmitForm() {
         <p className="docform-sub text-sm font-medium mt-1">
           {info.candidate.name}{info.candidate.jobTitle ? ` · ${info.candidate.jobTitle}` : ''}
         </p>
-        <p className="text-sm text-gray-600 mt-3">
-          Attach each document below. You can preview every file before sending it.
-        </p>
       </div>
 
       {needsRedo.length > 0 && (
@@ -212,7 +209,7 @@ export default function DocumentSubmitForm() {
             {submitting ? 'Submitting…' : 'Submit documents'}
           </button>
           <p className="text-[11px] text-center text-gray-500 mt-1.5">
-            Sent straight to our HR team. You will not be able to edit them afterwards.
+            You cannot edit them after submitting.
           </p>
         </div>
       </form>

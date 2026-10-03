@@ -135,7 +135,7 @@ export default function AdminAnalytics() {
       <div>
         <PageHeader title="Analytics & Reports" subtitle="Headcount, attrition & demographics" />
         <div className="bg-white shadow rounded-lg p-8 text-center">
-          <p className="text-sm text-gray-400 italic">No employees yet · analytics will appear once profiles exist.</p>
+          <p className="text-sm text-gray-400 italic">No employees yet.</p>
         </div>
       </div>
     );
@@ -231,7 +231,7 @@ export default function AdminAnalytics() {
             empty={(d.newHiresLast12mo ?? 0) === 0 && (d.exitsLast12mo ?? 0) === 0}
           >
             <p className="text-xs text-gray-400 -mt-2 mb-1 text-center">
-              {d.newHiresLast12mo ?? 0} joined, {d.exitsLast12mo ?? 0} left · click a dot to see who.
+              {d.newHiresLast12mo ?? 0} joined, {d.exitsLast12mo ?? 0} left
             </p>
             <LineChart series={hireExitSeries} onPointClick={openPoint} />
           </ChartCard>

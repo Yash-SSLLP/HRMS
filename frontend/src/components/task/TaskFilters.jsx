@@ -79,10 +79,9 @@ const naturalDir = (sorts, key) => (sorts.find((s) => s.key === key)?.dir
 function Section({ icon: Icon, title, hint, children }) {
   return (
     <section className="py-4 first:pt-1">
-      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-500" title={hint || undefined}>
         <Icon size={13} className="text-gray-400" /> {title}
       </h3>
-      {hint && <p className="mt-0.5 text-[11px] text-gray-400">{hint}</p>}
       <div className="mt-2.5">{children}</div>
     </section>
   );

@@ -106,7 +106,6 @@ export default function AdminSessions() {
     <div>
       <PageHeader
         title="Signed in"
-        subtitle="Who is using the portal right now, and signing them out of it"
       />
 
       <div className="bg-white shadow rounded-lg p-5">
@@ -129,9 +128,7 @@ export default function AdminSessions() {
         {/* Said plainly: this is inferred from activity, not a session table, and
             somebody who closed their laptop still counts until the window passes. */}
         <p className="text-xs text-gray-500 mb-4">
-          Anyone whose last request was within {meta.activeWindowMinutes} minutes counts as active.
-          Signing someone out ends their session on every device; they are not notified and can sign
-          back in immediately.
+          Active means a request in the last {meta.activeWindowMinutes} minutes.
         </p>
 
         {error && (

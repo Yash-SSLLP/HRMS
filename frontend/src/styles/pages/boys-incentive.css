@@ -1,0 +1,328 @@
+/* ---------------------------------------------------------------------------
+   Boys Incentive (2026-10-03 redesign) — pages/AdminBoysIncentive.jsx.
+   Built on the shared .trn-* / .pb-* / .rst-* / .prm-* primitives in index.css;
+   everything page-specific is .bi-*. One card per team-day (or QC day) grouped
+   under .rst-day headings; a day still waiting on its sheet count wears an
+   amber edge. Hues mix into --surface so dark mode holds.
+--------------------------------------------------------------------------- */
+
+/* Toolbar extras */
+.bi-refresh {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; flex-shrink: 0;
+  opacity: 0; transition: opacity 0.15s; color: color-mix(in srgb, var(--accent) 80%, currentColor);
+}
+.bi-refresh.is-on { opacity: 0.85; }
+.trn-select.bi-month { flex: 0 0 auto; min-height: 2.35rem; }
+@media (max-width: 640px) {
+  .trn-select.bi-month { flex: 1 1 9rem; }
+}
+
+/* KPI strip (4 cards, or 5 on Per employee) */
+.bi-kpis { display: grid; gap: 0.75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 1rem; }
+@media (min-width: 1024px) { .bi-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.bi-kpis.is-5 > :last-child { grid-column: 1 / -1; }
+@media (min-width: 768px) {
+  .bi-kpis.is-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .bi-kpis.is-5 > :last-child { grid-column: auto; }
+}
+@media (min-width: 1280px) { .bi-kpis.is-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.trn-kpi-sub.bi-kpi-sub { opacity: 1; font-weight: 700; margin-top: 0.1rem; }
+.trn-kpi-sub.bi-kpi-sub.is-amber { color: color-mix(in srgb, #d97706 90%, currentColor); }
+.trn-kpi-sub.bi-kpi-sub.is-green { color: color-mix(in srgb, #16a34a 85%, currentColor); }
+@media (max-width: 640px) {
+  .trn-kpi-sub.bi-kpi-sub { white-space: normal; }
+}
+
+/* Small shared bits */
+.bi-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.66rem; font-weight: 700; white-space: nowrap;
+  padding: 0.05rem 0.4rem; border-radius: 0.4rem; background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.bi-tag {
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+  padding: 0.08rem 0.45rem; border-radius: 999px;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 11%, var(--surface));
+}
+.bi-await {
+  display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap;
+  padding: 0.08rem 0.5rem; border-radius: 999px; font-size: 0.66rem; font-weight: 800;
+  color: color-mix(in srgb, #d97706 90%, currentColor);
+  background-color: color-mix(in srgb, #d97706 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, #d97706 30%, var(--border));
+}
+.bi-note { font-size: 0.74rem; opacity: 0.65; margin-top: 0.35rem; overflow-wrap: anywhere; }
+.prm-head.bi-head { margin-top: 0.25rem; }
+
+/* The day log */
+.rst-day-head.bi-day-head { flex-wrap: wrap; row-gap: 0.3rem; }
+.bi-list { display: grid; gap: 0.6rem; }
+.bi-day {
+  --tone: var(--accent);
+  position: relative; overflow: hidden; min-width: 0;
+  display: grid; gap: 0.75rem 1.25rem; align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "who act" "crew crew" "figs figs";
+  padding: 0.9rem 1rem 0.9rem 1.15rem; border-radius: 1rem;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.bi-day::before {
+  content: ''; position: absolute; inset: 0 auto 0 0; width: 4px;
+  background-color: color-mix(in srgb, var(--tone) 70%, transparent);
+}
+.bi-day:hover {
+  border-color: color-mix(in srgb, var(--tone) 35%, var(--border));
+  box-shadow: 0 14px 30px -24px color-mix(in srgb, var(--tone) 70%, transparent);
+}
+.bi-day.is-awaiting {
+  --tone: #d97706;
+  border-color: color-mix(in srgb, #d97706 30%, var(--border));
+  background: linear-gradient(165deg, color-mix(in srgb, #f59e0b 6%, var(--surface)) 0%, var(--surface) 55%);
+}
+.bi-day.is-qc { --tone: #8b5cf6; grid-template-areas: "who act" "figs figs"; }
+.bi-day.is-qc.is-awaiting { --tone: #d97706; }
+
+/* Who: the picker (or, on QC, the people doing it) */
+.bi-who { grid-area: who; display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.bi-name { font-size: 0.92rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bi-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.4rem; margin-top: 0.25rem; }
+.bi-meta .bi-note { margin-top: 0; }
+.bi-team-name { font-size: 0.72rem; font-weight: 600; opacity: 0.7; }
+.bi-qc-icon {
+  flex-shrink: 0; width: 2.35rem; height: 2.35rem; border-radius: 0.8rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, #8b5cf6 85%, currentColor);
+  background-color: color-mix(in srgb, #8b5cf6 13%, var(--surface));
+}
+.bi-people { display: flex; flex-wrap: wrap; gap: 0.35rem; min-width: 0; }
+
+/* A person as a chip: avatar, name, code */
+.bi-person {
+  display: inline-flex; align-items: center; gap: 0.45rem; min-width: 0; max-width: 100%;
+  padding: 0.2rem 0.6rem 0.2rem 0.25rem; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 600;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.bi-person.is-picker {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.bi-person-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Crew: the avatar stack that opens the team list */
+.bi-crew { grid-area: crew; min-width: 0; }
+.bi-crew-btn {
+  display: inline-flex; align-items: center; gap: 0.6rem; max-width: 100%; min-width: 0;
+  padding: 0.3rem 0.65rem 0.3rem 0.35rem; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 600;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.bi-crew-btn:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.bi-crew-btn[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.bi-crew-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+.bi-stack { display: inline-flex; align-items: center; flex-shrink: 0; padding-left: 0.4rem; }
+.bi-stack > * { margin-left: -0.4rem; box-shadow: 0 0 0 2px var(--surface-2); }
+.bi-crew-btn[aria-expanded="true"] .bi-stack > * { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.bi-stack-more {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 999px;
+  font-size: 0.6rem; font-weight: 800; background-color: var(--surface-3); border: 1px solid var(--border);
+}
+.bi-crew-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bi-chev { flex-shrink: 0; opacity: 0.55; transition: transform 0.15s; }
+.bi-crew-btn[aria-expanded="true"] .bi-chev { transform: rotate(180deg); }
+
+/* The expanded team list */
+.bi-roster {
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.4rem;
+  padding-top: 0.75rem; border-top: 1px dashed var(--border);
+}
+
+/* Figures: sheets | points | each */
+.bi-figs {
+  grid-area: figs; display: grid; gap: 0.75rem; grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 0.75rem; border-top: 1px dashed var(--border);
+}
+.bi-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem; min-width: 0; }
+.bi-stat-label { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; white-space: nowrap; }
+.bi-stat-value { font-size: 1.15rem; font-weight: 800; line-height: 1.25; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.bi-stat-value.is-muted { opacity: 0.35; }
+.bi-stat-line { font-size: 0.7rem; opacity: 0.6; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.bi-each-value {
+  display: inline-flex; align-items: baseline; padding: 0.1rem 0.55rem; border-radius: 0.6rem;
+  font-size: 1.15rem; font-weight: 800; line-height: 1.25; letter-spacing: -0.01em; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--accent) 88%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+.bi-each-value.is-muted { color: inherit; opacity: 0.35; background-color: transparent; border-color: transparent; }
+
+/* The evening job: the sheet count typed into the card */
+.bi-fill { display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.1rem; }
+.bi-fill-input {
+  width: 5rem; padding: 0.35rem 0.55rem; border-radius: 0.6rem; text-align: right;
+  font-size: 0.9rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  background-color: var(--surface); border: 1px solid color-mix(in srgb, #d97706 45%, var(--border));
+}
+.bi-fill-input:focus {
+  outline: none; border-color: color-mix(in srgb, #d97706 70%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d97706 18%, transparent);
+}
+.trn-btn.bi-fill-save { min-width: 3.5rem; min-height: 2.1rem; padding: 0.3rem 0.7rem; font-size: 0.76rem; }
+
+/* Row actions */
+.bi-actions { grid-area: act; display: flex; align-items: center; gap: 0.15rem; justify-self: end; }
+.bi-del:hover { color: #dc2626; }
+html.dark .bi-del:hover { color: #f87171; }
+.bi-saved {
+  display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; cursor: help;
+  padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; opacity: 0.6;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+
+@media (max-width: 540px) {
+  /* The count box and its Save button need a whole row on a phone. */
+  .bi-stat.is-fill { grid-column: 1 / -1; }
+  .bi-stat-label { white-space: normal; }
+}
+@media (min-width: 900px) {
+  .bi-day { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "who figs act" "crew figs act"; }
+  .bi-day.is-qc { grid-template-areas: "who figs act"; }
+  .bi-who { align-self: end; }
+  .bi-crew { align-self: start; }
+  .bi-day.is-qc .bi-who { align-self: center; }
+  .bi-figs {
+    grid-template-columns: 9rem 8.5rem 6.5rem; gap: 1rem;
+    padding: 0 0 0 1.25rem; border-top: 0; border-left: 1px dashed var(--border);
+  }
+  .bi-stat { align-items: flex-end; text-align: right; }
+}
+@media (min-width: 1440px) {
+  .bi-day { grid-template-columns: minmax(0, 17rem) minmax(0, 1fr) auto auto; grid-template-areas: "who crew figs act"; }
+  .bi-day.is-qc { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "who figs act"; }
+  .bi-who, .bi-crew { align-self: center; }
+}
+
+/* Per employee table */
+.bi-emp { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.bi-emp-name { font-weight: 700; }
+.bi-emp-code { font-size: 0.7rem; opacity: 0.55; }
+.bi-dept {
+  display: inline-block; white-space: nowrap; font-size: 0.7rem; font-weight: 600;
+  padding: 0.1rem 0.5rem; border-radius: 0.45rem; background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.bi-strong { font-weight: 800; }
+.bi-paid { font-weight: 600; color: color-mix(in srgb, #16a34a 85%, currentColor); }
+.bi-owed { font-weight: 800; color: color-mix(in srgb, #d97706 90%, currentColor); }
+.bi-owed.is-zero { font-weight: 500; color: inherit; opacity: 0.5; }
+.trn-btn.bi-pay-btn {
+  color: color-mix(in srgb, #16a34a 85%, currentColor);
+  border-color: color-mix(in srgb, #16a34a 35%, var(--border));
+  background-color: color-mix(in srgb, #16a34a 8%, var(--surface));
+}
+.trn-btn.bi-pay-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, #16a34a 60%, var(--border));
+  background-color: color-mix(in srgb, #16a34a 14%, var(--surface));
+}
+.trn-btn.bi-pay-btn.is-sm { min-height: 2rem; padding: 0.3rem 0.8rem; font-size: 0.76rem; }
+.bi-settled {
+  display: inline-flex; align-items: center; gap: 0.25rem; white-space: nowrap;
+  font-size: 0.72rem; font-weight: 700; color: color-mix(in srgb, #16a34a 80%, currentColor);
+}
+
+/* Points per sheet: one card per figure */
+.bi-rates { display: grid; gap: 0.85rem; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 768px) { .bi-rates { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.bi-rate {
+  --hue: var(--accent);
+  position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 0.9rem; min-width: 0;
+  padding: 1.05rem 1.15rem 1.1rem; border-radius: 1.05rem;
+  background: linear-gradient(165deg, color-mix(in srgb, var(--hue) 7%, var(--surface)) 0%, var(--surface) 55%);
+  border: 1px solid color-mix(in srgb, var(--hue) 20%, var(--border));
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.bi-rate-head { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.bi-rate-icon {
+  flex-shrink: 0; width: 2.4rem; height: 2.4rem; border-radius: 0.8rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 14%, var(--surface));
+}
+.bi-rate-title { font-size: 0.92rem; font-weight: 800; letter-spacing: -0.01em; }
+.bi-rate-body { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 0.75rem; }
+.bi-rate-value { font-size: 2.1rem; font-weight: 800; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.bi-rate-unit { font-size: 0.74rem; opacity: 0.6; margin-top: 0.35rem; }
+
+/* "Also apply it to the days already recorded" */
+.bi-apply { padding: 0.7rem 0.8rem; border-radius: 0.8rem; background-color: var(--surface-2); border: 1px solid var(--border); }
+.bi-apply-check { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.84rem; font-weight: 600; cursor: pointer; }
+.bi-apply-check input { margin-top: 0.2rem; }
+.bi-apply-from { margin-top: 0.65rem; padding-left: 1.55rem; }
+.bi-hint { font-size: 0.72rem; opacity: 0.6; margin-top: 0.3rem; }
+
+/* Modals */
+.bi-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
+.prm-input.bi-readonly { background-color: var(--surface-2); opacity: 0.85; }
+.bi-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
+.bi-chip {
+  display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.15rem 0.2rem 0.15rem 0.55rem; border-radius: 0.55rem;
+  font-size: 0.74rem; font-weight: 600;
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.bi-chip-x { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem; min-height: 1.4rem; border-radius: 0.4rem; opacity: 0.55; }
+.bi-chip-x:hover { opacity: 1; color: #dc2626; background-color: color-mix(in srgb, #dc2626 10%, var(--surface)); }
+html.dark .bi-chip-x:hover { color: #f87171; }
+.bi-per-sheet { font-size: 0.76rem; opacity: 0.7; }
+.bi-per-sheet strong { font-weight: 800; opacity: 1; }
+.bi-preview {
+  padding: 0.65rem 0.8rem; border-radius: 0.8rem; font-size: 0.82rem; line-height: 1.55;
+  background-color: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.bi-preview strong { font-weight: 800; }
+
+/* Pay one person: earned / paid / owed */
+.bi-paysum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; margin-bottom: 1rem; }
+.bi-paysum > div { min-width: 0; padding: 0.55rem 0.65rem; border-radius: 0.75rem; background-color: var(--surface-2); border: 1px solid var(--border); }
+.bi-paysum-label { display: block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.6; }
+.bi-paysum-value { display: block; margin-top: 0.15rem; font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.bi-paysum-unit { font-size: 0.66rem; font-weight: 600; opacity: 0.6; margin-left: 0.2rem; }
+.bi-paysum > .is-owed { border-color: color-mix(in srgb, #d97706 35%, var(--border)); background-color: color-mix(in srgb, #d97706 8%, var(--surface)); }
+.bi-paysum > .is-owed .bi-paysum-value { color: color-mix(in srgb, #d97706 90%, currentColor); }
+
+/* Import results */
+.bi-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; text-align: center; }
+.bi-tile { padding: 0.6rem 0.5rem; border-radius: 0.8rem; border: 1px solid var(--border); }
+.bi-tile.is-ok {
+  color: color-mix(in srgb, #16a34a 85%, currentColor);
+  background-color: color-mix(in srgb, #16a34a 8%, var(--surface));
+  border-color: color-mix(in srgb, #16a34a 28%, var(--border));
+}
+.bi-tile.is-bad {
+  color: color-mix(in srgb, #dc2626 85%, currentColor);
+  background-color: color-mix(in srgb, #dc2626 8%, var(--surface));
+  border-color: color-mix(in srgb, #dc2626 28%, var(--border));
+}
+.bi-tile-value { font-size: 1.2rem; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.bi-tile-label { font-size: 0.72rem; font-weight: 600; opacity: 0.85; }
+.bi-details { padding: 0.55rem 0.8rem; border-radius: 0.8rem; font-size: 0.84rem; border: 1px solid var(--border); }
+.bi-details summary { cursor: pointer; font-weight: 700; }
+.bi-details ul { display: grid; gap: 0.15rem; margin-top: 0.35rem; font-size: 0.75rem; }
+.bi-details.is-amber {
+  color: color-mix(in srgb, #d97706 90%, currentColor);
+  background-color: color-mix(in srgb, #d97706 8%, var(--surface));
+  border-color: color-mix(in srgb, #d97706 30%, var(--border));
+}
+.bi-details.is-red {
+  color: color-mix(in srgb, #dc2626 85%, currentColor);
+  background-color: color-mix(in srgb, #dc2626 7%, var(--surface));
+  border-color: color-mix(in srgb, #dc2626 28%, var(--border));
+}
+.bi-link { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; font-weight: 700; color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.bi-link:hover { text-decoration: underline; }

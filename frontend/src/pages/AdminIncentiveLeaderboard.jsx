@@ -32,8 +32,8 @@
  * about the comparison.
  *
  * A viewer's OWN department is always readable to them, so a rule only ever has
- * to name the others; the grid shows it as ticked and disabled rather than
- * letting somebody untick something that would have no effect.
+ * to name the others; the grid shows that cell as locked rather than letting
+ * somebody untick something that would have no effect.
  *
  * THE DIFFERENCE BETWEEN NO RULE AND AN EMPTY RULE is the thing to hold on to:
  * no rule means "follow the default", which may be the whole company; an empty
@@ -44,12 +44,20 @@
  * (mobile/src/screens/admin/IncentiveLeaderboardScreen.js).
  *
  * Backend: GET/PUT /incentives/leaderboard/settings
+ *
+ * 2026-10-03 redesign (presentation only): setting cards with a switch and a
+ * segmented default, and the rules as a matrix with a sticky department column,
+ * locked own-department cells and a short Result chip (the full sentence is its
+ * tooltip). Styling: styles/pages/cashbook-leaderboard.css (`.lba-*`).
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import { FiSave, FiAward, FiSliders, FiGrid, FiLock, FiUser, FiGlobe, FiEyeOff, FiRotateCcw, FiUsers } from 'react-icons/fi';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PageHeader from '../components/PageHeader';
+import ToggleSwitch from '../components/ToggleSwitch';
+import '../styles/pages/cashbook-leaderboard.css';
 
 // What a department with no rule of its own sees. Named rather than a boolean
 // because "nothing" and "only your own team" are different answers and both are
@@ -59,6 +67,7 @@ const SCOPES = [
   ['all', 'Everyone', 'A department with no rule below sees the whole company.'],
   ['none', 'Nobody', 'A department with no rule below gets no leaderboard at all.'],
 ];
+const SCOPE_ICONS = { own: FiUser, all: FiGlobe, none: FiEyeOff };
 
 export default function AdminIncentiveLeaderboard() {
   const me = useAuthStore((st) => st.user);
@@ -154,159 +163,190 @@ export default function AdminIncentiveLeaderboard() {
     return others.length ? `${dept} + ${others.join(', ')}` : `${dept} only`;
   };
 
+  /** The Result column's chip: a few words, with summarise() as its tooltip. */
+  const shortResult = (dept) => {
+    const set = rules[dept];
+    if (!set) {
+      if (defaultScope === 'all') return { text: 'Everyone', cls: 'is-default' };
+      if (defaultScope === 'none') return { text: 'No board', cls: 'is-default is-none' };
+      return { text: 'Own only', cls: 'is-default' };
+    }
+    const others = [...set].filter((d) => d !== dept);
+    const everyone = departments.length > 1 && departments.every((d) => d === dept || set.has(d));
+    return { text: everyone ? 'Everyone' : others.length ? `Own + ${others.length}` : 'Own only', cls: 'is-rule' };
+  };
+
   if (!isSuperAdmin) {
     return (
       <div>
         <PageHeader title="Leaderboard Access" />
-        <div className="bg-white shadow rounded-xl p-6 text-sm text-gray-500">
-          Super Admins only. Deciding what one department learns about another&apos;s earnings is not
-          part of running an incentive.
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiLock size={24} /></span>
+            <p className="text-sm font-semibold">Super Admins only.</p>
+          </div>
         </div>
       </div>
     );
   }
 
+  const ruleCount = departments.filter((d) => rules[d]).length;
+
   return (
     <div>
-      <PageHeader
-        title="Leaderboard Access"
-        subtitle="Which departments each department can see on the employee incentive leaderboard."
-      >
+      <PageHeader title="Leaderboard Access">
         <button
+          type="button"
           onClick={save}
           disabled={saving}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm disabled:opacity-60"
+          className="trn-btn is-primary accent-bg text-white"
         >
-          {saving ? 'Saving…' : 'Save rules'}
+          <FiSave size={15} /> {saving ? 'Saving…' : 'Save rules'}
         </button>
       </PageHeader>
 
-      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
+      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{error}</div>}
 
       {loading ? (
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="lba-stack">
+          <div className="skeleton h-20 rounded-2xl" />
+          <div className="skeleton h-20 rounded-2xl" />
+          <div className="skeleton h-64 rounded-2xl" />
+        </div>
       ) : (
-        <div className="space-y-4 max-w-5xl">
-          <div className="bg-white shadow rounded-xl p-6">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-                className="rounded mt-1"
-              />
-              <span>
-                <span className="block font-medium text-gray-900">Show the leaderboard to employees</span>
-                <span className="block text-sm text-gray-500 mt-0.5">
-                  The ranking tab on every employee&apos;s My Incentive page. Their own points are never
-                  hidden by this — only the comparison with everyone else.
-                </span>
-              </span>
-            </label>
-
-            {/* WHAT A TICK ON THIS PAGE DISCLOSES, in the place where it is
-                being decided. The board carries two figures now and the gap
-                between them is what somebody has been paid; nobody should have
-                to open the board to find that out. Outside the label above on
-                purpose — reading it should not toggle the setting. */}
-            <p className="text-sm text-gray-500 mt-4 pt-4 border-t border-gray-100">
-              The board lists name and SSL code, department, designation, current points and total
-              points. Both figures count every month since a person started: total is everything
-              they have earned, current is what is left after everything they have redeemed — so the
-              gap between the two is what they have been paid. The company decided on
-              16 September 2026 that a standing is what you have left as well as what you earned;
-              until then the board carried the total alone, for exactly that reason. Rupees, a paid
-              figure on its own, and where anybody&apos;s points came from stay on the Points
-              Dashboard.
-            </p>
-          </div>
+        <div className="lba-stack">
+          {/* WHAT A TICK ON THIS PAGE DISCLOSES — both current and total points,
+              never rupees — now rides on the matrix heading's tooltip (the
+              no-helper-text rule), where the ticks are made. */}
+          <section className={`prm-set lba-set${enabled ? ' is-on' : ''}`}>
+            <div className="prm-set-head">
+              <span className="prm-set-icon" aria-hidden="true"><FiAward size={18} /></span>
+              <div className="prm-set-main">
+                <div className="prm-set-title">Show the leaderboard to employees</div>
+              </div>
+              <div className="prm-set-ctrl">
+                <span className={`prm-state${enabled ? ' is-on' : ''}`}>{enabled ? 'On' : 'Off'}</span>
+                <ToggleSwitch
+                  checked={enabled}
+                  onChange={() => setEnabled((v) => !v)}
+                  label="Show the leaderboard to employees"
+                />
+              </div>
+            </div>
+          </section>
 
           {enabled && (
             <>
-              <div className="bg-white shadow rounded-xl p-6">
-                <h2 className="card-title mb-1">Departments with no rule</h2>
-                <p className="text-sm text-gray-500 mb-4">
-                  What somebody sees when their department is not listed below.
-                </p>
-                <div className="space-y-2">
-                  {SCOPES.map(([key, label, hint]) => (
-                    <label key={key} className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="defaultScope"
-                        checked={defaultScope === key}
-                        onChange={() => setDefaultScope(key)}
-                        className="mt-1"
-                      />
-                      <span>
-                        <span className="block text-sm font-medium text-gray-900">{label}</span>
-                        <span className="block text-xs text-gray-500">{hint}</span>
-                      </span>
-                    </label>
-                  ))}
+              <section className="prm-set lba-set">
+                <div className="lba-set-row">
+                  <div className="prm-set-head">
+                    <span className="prm-set-icon" aria-hidden="true"><FiSliders size={18} /></span>
+                    <div className="prm-set-main">
+                      <div className="prm-set-title" title="What somebody sees when their department is not listed below.">Departments with no rule</div>
+                    </div>
+                  </div>
+                  <div className="trn-seg" role="radiogroup" aria-label="Departments with no rule">
+                    {SCOPES.map(([key, label, hint]) => {
+                      const Icon = SCOPE_ICONS[key];
+                      const on = defaultScope === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          title={hint}
+                          onClick={() => setDefaultScope(key)}
+                          className={`trn-seg-btn${on ? ' is-on' : ''}`}
+                        >
+                          <Icon size={14} /> {label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              </section>
 
-              <div className="bg-white shadow rounded-xl overflow-hidden">
-                <div className="px-6 pt-6 pb-3">
-                  <h2 className="card-title mb-1">Per department</h2>
-                  <p className="text-sm text-gray-500">
-                    A row is a VIEWING department; the ticks are what its people can see. Their own
-                    department is always included and cannot be unticked. Ticking anything in a row
-                    gives that department a rule of its own and stops it following the default —
-                    unticking everything again leaves it on &ldquo;own department only&rdquo;, which is
-                    not the same thing. Use Clear to put it back on the default.
-                  </p>
+              <section className="lba-card">
+                <div className="lba-card-head">
+                  <div
+                    className="lba-card-title"
+                    title="A row is a viewing department; the ticks are what its people can see. Their own department is always included. Use Clear to put a row back on the default. Ticks share both current and total points, never rupees."
+                  >
+                    <span className="prm-set-icon" aria-hidden="true"><FiGrid size={17} /></span>
+                    Per department
+                  </div>
+                  {departments.length > 0 && (
+                    <span className="lba-card-sub">
+                      {departments.length} {departments.length === 1 ? 'department' : 'departments'} · {ruleCount} with a rule
+                    </span>
+                  )}
                 </div>
                 {departments.length === 0 ? (
-                  <p className="px-6 pb-6 text-sm text-gray-500">
-                    Departments appear here once employees are assigned to them.
-                  </p>
+                  <div className="trn-empty">
+                    <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                    <p className="text-sm font-semibold">Departments appear here once employees are assigned to them.</p>
+                  </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-gray-50 text-gray-500">
+                  <div className="lba-scroll">
+                    <table className="lba-grid">
+                      <thead>
                         <tr>
-                          <th className="px-4 py-3 text-left font-medium sticky left-0 bg-gray-50 z-10">Can see →</th>
+                          <th scope="col" className="lba-viewer">Can see →</th>
                           {departments.map((d) => (
-                            <th key={d} className="px-3 py-3 text-center font-medium whitespace-nowrap">{d}</th>
+                            <th key={d} scope="col">{d}</th>
                           ))}
-                          <th className="px-4 py-3 text-left font-medium">Result</th>
-                          <th className="px-4 py-3" />
+                          <th scope="col" className="lba-res-h">Result</th>
+                          <th scope="col"><span className="sr-only">Clear</span></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody>
                         {departments.map((viewer) => {
                           const hasRule = !!rules[viewer];
+                          const res = shortResult(viewer);
                           return (
-                            <tr key={viewer} className="hover:bg-gray-50">
-                              <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap sticky left-0 bg-white z-10">
-                                {viewer}
-                              </td>
+                            <tr key={viewer}>
+                              <th scope="row" className="lba-viewer">{viewer}</th>
                               {departments.map((target) => {
                                 const own = target === viewer;
                                 const on = own || !!rules[viewer]?.has(target);
+                                if (own) {
+                                  return (
+                                    <td key={target} className="lba-cell is-own" title="Own department — always included">
+                                      <span className="lba-lock" role="img" aria-label={`${viewer} can see ${target} (own department, always on)`}>
+                                        <FiLock size={12} />
+                                      </span>
+                                    </td>
+                                  );
+                                }
                                 return (
-                                  <td key={target} className="px-3 py-3 text-center">
-                                    <input
-                                      type="checkbox"
-                                      checked={on}
-                                      disabled={own}
-                                      onChange={() => toggle(viewer, target)}
-                                      className="rounded disabled:opacity-50"
-                                      aria-label={`${viewer} can see ${target}`}
-                                    />
+                                  <td key={target} className={`lba-cell${on ? ' is-on' : ''}`}>
+                                    <label className="lba-hit" title={`${viewer} can see ${target}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={on}
+                                        onChange={() => toggle(viewer, target)}
+                                        aria-label={`${viewer} can see ${target}`}
+                                      />
+                                    </label>
                                   </td>
                                 );
                               })}
-                              <td className="px-4 py-3 text-gray-600">{summarise(viewer)}</td>
-                              <td className="px-4 py-3 text-right">
+                              <td className="lba-res">
+                                <span className={`lba-result ${res.cls}`} title={summarise(viewer)}>
+                                  {res.text}
+                                  {!hasRule && <span className="lba-result-tag">Default</span>}
+                                </span>
+                              </td>
+                              <td className="lba-act">
                                 {hasRule && (
                                   <button
+                                    type="button"
                                     onClick={() => clearRule(viewer)}
-                                    className="text-xs text-gray-500 hover:text-gray-900 underline"
+                                    className="trn-btn lba-clear"
+                                    title="Put this row back on the default"
                                   >
-                                    Clear
+                                    <FiRotateCcw size={13} /> Clear
                                   </button>
                                 )}
                               </td>
@@ -317,7 +357,7 @@ export default function AdminIncentiveLeaderboard() {
                     </table>
                   </div>
                 )}
-              </div>
+              </section>
             </>
           )}
         </div>

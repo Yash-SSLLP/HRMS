@@ -87,10 +87,7 @@ export default function AdminIncentivePoints() {
 
   return (
     <div>
-      <PageHeader
-        title="Point Rate"
-        subtitle="What a point is worth. Every incentive is paid in points and converted here."
-      />
+      <PageHeader title="Point Rate" />
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
@@ -103,9 +100,7 @@ export default function AdminIncentivePoints() {
               <>
                 <h2 className="card-title mb-1">Rupees per point</h2>
                 <p className="text-sm text-gray-500 mb-4">
-                  Company-wide. Change it and every incentive follows — but only from now on: a day
-                  already recorded keeps the value it was saved with, so nothing already earned is
-                  restated.
+                  Applies from now on; recorded days keep their value.
                 </p>
                 <div className="text-3xl font-semibold text-gray-900">{money(settings.rupeePerPoint)}</div>
                 <div className="text-xs text-gray-500 mt-1">per point</div>
@@ -127,7 +122,6 @@ export default function AdminIncentivePoints() {
                   <input autoFocus required type="number" min="0" step="0.01" value={form.rupeePerPoint}
                     onChange={(e) => setForm({ ...form, rupeePerPoint: e.target.value })}
                     className="block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-400 mt-1">Used by every incentive.</p>
                 </div>
                 <div className="flex justify-end gap-2 pt-1">
                   <button type="button" onClick={() => setForm(null)}
@@ -143,11 +137,7 @@ export default function AdminIncentivePoints() {
 
           {example && (
             <div className="bg-white shadow rounded-xl p-6">
-              <h2 className="card-title mb-1">What that pays</h2>
-              <p className="text-sm text-gray-500 mb-4">
-                A worked day at {form ? 'the rate you are typing' : 'the current figures'}. Points per
-                sheet is set under <strong>Boys Incentive → Points per sheet</strong>.
-              </p>
+              <h2 className="card-title mb-4">What that pays</h2>
               <ol className="space-y-3 text-sm">
                 <li className="flex justify-between gap-4">
                   <span className="text-gray-500">A team of {example.heads} rolls</span>

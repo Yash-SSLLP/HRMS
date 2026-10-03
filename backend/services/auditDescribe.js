@@ -64,6 +64,10 @@ const MODULES = {
   DocumentChangeRequest: { label: 'Document replacement', noun: 'document replacement request', link: '/admin/documents' },
   EmployeeProfile: { label: 'Employee record', noun: 'employee record', person: true, link: '/admin/employees' },
   Enrollment: { label: 'Course enrolment', noun: 'course enrolment', person: true, link: '/admin/courses' },
+  Event: {
+    label: 'Event', noun: 'event', link: '/admin/events',
+    about: 'A company event on the shared calendar — creating, moving or cancelling one notifies every employee.',
+  },
   ExitRequest: { label: 'Resignation', noun: 'resignation', person: true, link: '/admin/exits' },
   Expense: { label: 'Expense claim', noun: 'expense claim', person: true },
   Goal: { label: 'Goal', noun: 'goal', link: '/admin/performance' },
@@ -81,6 +85,7 @@ const MODULES = {
   Project: { label: 'Project', noun: 'project', link: '/admin/projects' },
   Regularization: { label: 'Regularization', noun: 'attendance regularization', person: true, link: '/admin/regularizations' },
   Review: { label: 'Performance review', noun: 'performance review', person: true, link: '/admin/review-cycles' },
+  RnrCategory: { label: 'Award category', noun: 'award category', link: '/admin/rnr' },
   SalaryChangeRequest: { label: 'Salary change', noun: 'salary change request', person: true, link: '/admin/approvals' },
   Task: { label: 'Task', noun: 'task', link: '/admin/tasks' },
   TaskTemplate: { label: 'Task template', noun: 'task template', link: '/admin/tasks' },
@@ -225,6 +230,8 @@ function describe(e, resolvedType) {
       : `${who} moved ${req} from ${human(from)} to ${human(verdict)}${reason}.`;
   }
   if (field === 'payslipLock') return `${who} overrode the lock on ${what}${step}.`;
+  // A record with no status of its own (an Event) logs its birth as "Created".
+  if (!from && lc(to) === 'created') return `${who} ${mod.made || 'created'} ${what}.`;
 
   if (STATUS_FIELDS.has(field)) {
     // Born carrying the status — a creation, not a decision. Saying "approved"
@@ -246,9 +253,10 @@ function describe(e, resolvedType) {
   const on = mod.key === 'Attendance' && which ? ` on ${which}` : '';
   const target = PERSON_FIELDS.has(mod.key) && whose ? `${whose} ${fieldWords}${on}`
     : `the ${fieldWords} of ${what}`;
-  if (!from || from === '—') return `${who} set ${target} to ${human(to)}.`;
-  if (!to || to === '—') return `${who} cleared ${target} (it was ${human(from)}).`;
-  return `${who} changed ${target} from ${human(from)} to ${human(to)}.`;
+  const val = (v) => niceDay(human(v));
+  if (!from || from === '—') return `${who} set ${target} to ${val(to)}.`;
+  if (!to || to === '—') return `${who} cleared ${target} (it was ${val(from)}).`;
+  return `${who} changed ${target} from ${val(from)} to ${val(to)}.`;
 }
 
 // ─── the badge and the field, for the screens ─────────────────────────────
@@ -304,7 +312,7 @@ function badgeFor(e, resolvedType) {
 function valueText(v, field) {
   const t = String(v ?? '').trim();
   if (field === 'isActive' || field === 'active') return lc(t) === 'true' ? 'On' : lc(t) === 'false' ? 'Off' : t;
-  return human(t);
+  return niceDay(human(t));
 }
 
 /** What the changed field is called, in words ("Status", "Check-in time", "Round 2 (Technical)"). */
@@ -490,6 +498,7 @@ const PRIORITY = {
   ChangeRequest: ['targetUser', 'fieldLabel', 'currentValue', 'requestedValue', 'reason', 'status', 'decisionNote'],
   Complaint: ['subject', 'description', 'status', 'resolutionNote'],
   Training: ['title', 'category', 'trainer', 'startDate', 'endDate', 'status'],
+  Event: ['title', 'date', 'time', 'location', 'description', 'createdBy', 'updatedBy'],
   Job: ['title', 'department', 'location', 'employmentType', 'openings', 'status'],
 };
 
@@ -502,7 +511,7 @@ const KEY_WORDS = {
   dateOfExit: 'Left', isActive: 'Active', createdAt: 'Created', updatedAt: 'Last changed', lastWorkingDay: 'Last working day',
   noticePeriodDays: 'Notice (days)', resignationDate: 'Resigned on', expenseDate: 'Date', paymentMode: 'Paid by',
   expenseBook: 'Book', confirmedByCompany: 'Checked by the company', confirmedAt: 'Checked on', movement: 'Kind',
-  checkIn: 'Check in', checkOut: 'Check out', reversalOf: 'Reverses', reversedBy: 'Reversed by', createdBy: 'Created by',
+  checkIn: 'Check in', checkOut: 'Check out', reversalOf: 'Reverses', reversedBy: 'Reversed by', createdBy: 'Created by', updatedBy: 'Last edited by',
 };
 const keyLabel = (k) => KEY_WORDS[k] || capital(human(k.replace(/Id$/, '')));
 

@@ -326,9 +326,7 @@ export default function LeaveApprovalsInbox({ onCount }) {
       {tab === 'pending' && (
         <div>
           {pending.length === 0 ? (
-            <ApprovalsEmpty hint={isExec
-              ? 'Every leave request in your company appears here while it is undecided — including the ones waiting on someone else.'
-              : 'Leave requests appear here when someone in your reporting line applies.'} />
+            <ApprovalsEmpty />
           ) : (
             <ul className="divide-y divide-gray-100">
               {pending.map((r) => (
@@ -389,14 +387,9 @@ export default function LeaveApprovalsInbox({ onCount }) {
           because it already happened. */}
       {tab === 'emergency' && (
         <div>
-          <p className="text-xs text-gray-500 mb-3 max-w-2xl">
-            Emergency leave is granted the moment it is filed — nobody is asked first, which is the point of it.
-            These are the ones you were told about and nobody has ruled on yet. <strong>Confirm</strong> the ones
-            that stand; <strong>reject</strong> one that should not, which takes those days off the calendar and
-            counts them as absence instead.
-          </p>
+          <p className="text-xs text-gray-500 mb-3">Rejecting counts the days as absence.</p>
           {emergency.length === 0 ? (
-            <ApprovalsEmpty hint="Emergency leave taken by anyone in your reporting line appears here, already granted, for you to confirm or reject." />
+            <ApprovalsEmpty />
           ) : (
             <ul className="divide-y divide-gray-100">
               {emergency.map((r) => (

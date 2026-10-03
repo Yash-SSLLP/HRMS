@@ -9,13 +9,15 @@
  * decision, and every access decision in this portal is made in one place.
  * Deciding regularizations stays on the Regularization page; only the setup moved.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { FiArrowRight, FiCheck, FiCornerDownRight, FiGitMerge, FiHash, FiSearch, FiUsers } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 import api from '../../api/client';
 import SearchableSelect from '../SearchableSelect';
 import { hasLeft } from '../../utils/peopleOptions';
 import { useAuthStore } from '../../store/authStore';
 import { hasExplicitPermission } from '../../config/permissions';
+import { PersonAvatar } from './permUi';
 
 // Who signs off each employee's regularizations: 1 step minimum, 2 maximum, in
 // order. Deliberately NOT the org chart — an attendance correction is often
@@ -225,201 +227,211 @@ function RegularizationApprovalSetup() {
     }
   };
 
-  const unsetCount = profiles.filter((p) => p.user && chainOf(p).length === 0).length;
+  const unsetCount = profiles.filter((p) => p.user && !hasLeft(p) && chainOf(p).length === 0).length;
+  const totalCount = profiles.filter((p) => p.user && !hasLeft(p)).length;
+  const overrideCount = profiles.filter((p) => p.user && !hasLeft(p) && p.regularizationMonthlyLimit != null).length;
+  const userById = new Map(users.map((u) => [String(u._id), u]));
+  const pickerClass = 'block w-full rounded-lg px-2 py-1.5 text-sm';
 
   return (
     <div>
-      <p className="text-sm text-gray-500 max-w-4xl mb-4">
-        Choose who approves each employee&apos;s attendance regularizations. <strong>Step 1</strong> decides
-        first; add a <strong>Step 2</strong> only if it needs a second sign-off (two steps maximum). Leave
-        Step 1 empty to keep the default, where any HR reviewer decides it from the Requests tab. Approvers
-        need no special permission — the request lands in their Approvals inbox.
-      </p>
-
-      {/* Org-wide cap. Sits above the table because it is the number every blank
-          row below follows — the column there only exists to depart from it. */}
-      <div className="bg-white shadow rounded-lg p-4 mb-4">
-        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
-          <span className="font-medium">Monthly limit</span>
-          <input
-            type="number"
-            min="0"
-            max="31"
-            value={orgDraft}
-            onChange={(e) => setOrgDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') saveOrgLimit(); }}
-            disabled={!canEdit || savingOrg}
-            className="border rounded-lg px-2 py-1.5 w-20 text-sm"
-          />
-          <span>regularizations per employee per month</span>
-          {canEdit && (
-            <button
-              type="button"
-              onClick={saveOrgLimit}
-              disabled={savingOrg || String(orgLimit) === orgDraft.trim()}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm disabled:opacity-40"
-            >
-              {savingOrg ? 'Saving…' : 'Save'}
-            </button>
-          )}
-        </div>
-        <p className="text-xs text-gray-500 mt-1.5">
-          <strong>0 here means unlimited</strong> — no cap for anybody. Counted against the month being
-          corrected, so filing late for last month does not spend this month&apos;s allowance, and a rejected
-          request costs nothing. HR can still raise a correction for someone who has run out.
-        </p>
+      <div className="prm-flow" style={{ marginTop: 0 }} aria-label="How a regularization travels">
+        <span className="prm-flow-chip">Step 1 decides first</span>
+        <span className="prm-flow-arrow"><FiArrowRight size={13} /></span>
+        <span className="prm-flow-chip">Step 2 confirms (optional)</span>
+        <span className="prm-flow-arrow"><FiArrowRight size={13} /></span>
+        <span className="prm-flow-chip is-final"><FiCheck size={12} /> HR</span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <input
-          type="search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search name, code, department…"
-          className="border rounded-lg px-3 py-2 text-sm w-64"
-        />
-        <label className="flex items-center gap-2 text-sm text-gray-700 select-none cursor-pointer">
-          <input type="checkbox" checked={onlyUnset} onChange={(e) => setOnlyUnset(e.target.checked)} />
-          Only employees with no approvers ({unsetCount})
-        </label>
-        {!canEdit && (
-          <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-            Read-only — ask a Super Admin for the regularization approval permission.
-          </span>
-        )}
+      {/* Org-wide cap — the number every blank row below follows. */}
+      <section className="prm-set mt-4" style={{ '--hue': '#0ea5e9' }}>
+        <div className="prm-set-head">
+          <span className="prm-set-icon" aria-hidden="true"><FiHash size={19} /></span>
+          <div className="prm-set-main">
+            <h3 className="prm-set-title">Monthly limit for everyone</h3>
+            <p className="prm-set-summary">
+              {orgLimit ? `${orgLimit} per employee per month` : 'No limit'} · <strong>0 = unlimited</strong>
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <input
+                type="number" min="0" max="31" value={orgDraft}
+                onChange={(e) => setOrgDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveOrgLimit(); }}
+                disabled={!canEdit || savingOrg}
+                aria-label="Monthly limit for everyone"
+                className="prm-num"
+              />
+              <span className="text-sm opacity-70">per employee per month</span>
+              {canEdit && (
+                <button type="button" onClick={saveOrgLimit}
+                  disabled={savingOrg || String(orgLimit) === orgDraft.trim()}
+                  className="trn-btn is-primary accent-bg text-white">
+                  {savingOrg ? 'Saving…' : 'Save limit'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="trn-kpis mt-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))' }}>
+        <div className="trn-kpi">
+          <span className="trn-kpi-icon" aria-hidden="true"><FiUsers size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : totalCount}</div><div className="trn-kpi-label">Employees</div></div>
+        </div>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#16a34a' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiGitMerge size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : totalCount - unsetCount}</div><div className="trn-kpi-label">Own approvers</div></div>
+        </div>
+        <button type="button" className={`trn-kpi${onlyUnset ? ' is-on' : ''}`} style={{ '--kpi-hue': '#d97706' }}
+          onClick={() => setOnlyUnset((v) => !v)} aria-pressed={onlyUnset}
+          title={onlyUnset ? 'Show everyone again' : 'Show only the employees decided by any HR reviewer'}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiCornerDownRight size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : unsetCount}</div><div className="trn-kpi-label">Any HR reviewer</div></div>
+        </button>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#0ea5e9' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiHash size={18} /></span>
+          <div className="min-w-0"><div className="trn-kpi-value">{loading ? '—' : overrideCount}</div><div className="trn-kpi-label">Own monthly limit</div></div>
+        </div>
+      </div>
+
+      <div className="prm-card mt-4" style={{ padding: '0.8rem' }}>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, code, department…" aria-label="Search employees" />
+          </label>
+          <div className="trn-seg" role="tablist" aria-label="Show">
+            <button type="button" role="tab" aria-selected={!onlyUnset} onClick={() => setOnlyUnset(false)}
+              className={`trn-seg-btn${!onlyUnset ? ' is-on' : ''}`}>Everyone</button>
+            <button type="button" role="tab" aria-selected={onlyUnset} onClick={() => setOnlyUnset(true)}
+              className={`trn-seg-btn${onlyUnset ? ' is-on' : ''}`}>No approvers <span className="trn-seg-count">{unsetCount}</span></button>
+          </div>
+          {!canEdit && (
+            <span className="ml-auto text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              Read-only — ask a Super Admin for the regularization approval permission.
+            </span>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+        <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
       )}
 
-      <p className="text-xs text-gray-500 mb-2">
-        <strong>Limit / month</strong>: leave blank to follow the company number above. A number here applies
-        to that employee alone — <strong>0 stops them raising any request</strong>, and 31 is one a day.
-      </p>
+      <div className="prm-ladders mt-4">
+        {loading ? (
+          [0, 1, 2].map((i) => <div key={i} className="skeleton h-24 rounded-2xl" />)
+        ) : rows.length === 0 ? (
+          <div className="prm-list">
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiUsers size={24} /></span>
+              <p className="text-sm font-semibold">No employees match</p>
+              <p className="text-xs opacity-60">Try a different search{onlyUnset ? ', or show everyone' : ''}.</p>
+            </div>
+          </div>
+        ) : rows.map((p) => {
+          const chain = chainOf(p);
+          const busy = savingId === p._id;
+          const person = userById.get(String(p.user?._id || p.user)) || p.user;
+          const own = p.regularizationMonthlyLimit;
+          return (
+            <div key={p._id} className={`prm-ladder${busy ? ' is-busy' : ''}`}>
+              <div className="prm-who">
+                <PersonAvatar user={person} />
+                <div className="prm-who-text">
+                  <div className="prm-who-name">{nameOf(p.user)}</div>
+                  <div className="prm-who-mail">{[p.employeeCode, p.department].filter(Boolean).join(' · ') || p.user?.email}</div>
+                  <div className="prm-ladder-meta">
+                    {chain.length
+                      ? <span className="prm-hold"><FiCheck size={11} />{chain.length} step{chain.length === 1 ? '' : 's'}</span>
+                      : <span className="prm-hold is-muted">Any HR reviewer</span>}
+                    {own === 0 && <span className="prm-hold is-amber">Blocked</span>}
+                  </div>
+                </div>
+              </div>
 
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Department</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Step 1 — decides first</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Step 2 — confirms (optional)</th>
-              <th
-                className="px-4 py-3 text-left font-medium text-gray-700 whitespace-nowrap"
-                title="Blank follows the company limit. 0 stops this employee raising any request. 31 is one a day — effectively unlimited."
-              >
-                Limit / month
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No employees match.</td></tr>
-            ) : rows.map((p) => {
-              const chain = chainOf(p);
-              const busy = savingId === p._id;
-              return (
-                <tr key={p._id} className={busy ? 'opacity-60' : undefined}>
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{nameOf(p.user)}</div>
-                    <div className="text-xs text-gray-500">{p.employeeCode || p.user?.email}</div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{p.department || '-'}</td>
-                  {[0, 1].map((idx) => (
-                    <td className="px-4 py-3 align-top" key={idx}>
-                      {/* Step 2 stays hidden until step 1 is set, so a ladder can
-                          never be saved with a gap in it. */}
-                      {idx === 1 && !chain[0] ? (
-                        <span className="text-xs text-gray-400">Set Step 1 first</span>
-                      ) : canEdit ? (
-                        <SearchableSelect
-                          value={chain[idx] || ''}
-                          onChange={(e) => setStep(p, idx, e.target.value)}
-                          disabled={busy}
-                          className="block w-full border rounded-lg px-2 py-1.5 text-sm"
-                        >
-                          <option value="">{idx === 0 ? 'None — any HR reviewer' : 'None — one step only'}</option>
-                          {(() => {
-                            const o = optionsFor(p, chain, idx);
-                            const opt = (u) => (
-                              <option key={u._id} value={u._id}>
-                                {nameOf(u)} ({u.role}) · {u.email}
-                              </option>
-                            );
-                            return (
-                              <>
-                                {o.sameDept.length > 0 && (
-                                  <optgroup label={`${o.dept} · most senior first`}>{o.sameDept.map(opt)}</optgroup>
-                                )}
-                                {o.executives.length > 0 && (
-                                  <optgroup label="Executive">{o.executives.map(opt)}</optgroup>
-                                )}
-                                {/* Hidden until the operator types — same
-                                    searchOnly treatment the reporting-manager
-                                    picker uses, so the default list stays the
-                                    likely approvers rather than the whole company. */}
-                                {o.others.length > 0 && (
-                                  <optgroup label="Other departments · search by name" searchOnly>
-                                    {o.others.map(opt)}
-                                  </optgroup>
-                                )}
-                                {o.current && (
-                                  <optgroup label="Currently assigned">{opt(o.current)}</optgroup>
-                                )}
-                              </>
-                            );
-                          })()}
-                        </SearchableSelect>
-                      ) : (
-                        <span className="text-gray-700">
-                          {(() => {
-                            const u = users.find((x) => String(x._id) === String(chain[idx]));
-                            return u ? nameOf(u) : '-';
-                          })()}
-                        </span>
-                      )}
-                    </td>
-                  ))}
-                  {/* Blank = follow the company number, which is what the
-                      placeholder shows; a typed 0 is a real block. Saved on blur
-                      or Enter rather than per keystroke — a half-typed "1" from
-                      "12" is a cap somebody would otherwise be held to. */}
-                  <td className="px-4 py-3 align-top">
-                    {canEdit ? (
-                      <input
-                        type="number"
-                        min="0"
-                        max="31"
-                        value={limitDrafts[p._id] ?? (p.regularizationMonthlyLimit ?? '')}
-                        placeholder={orgLimit ? String(orgLimit) : '∞'}
-                        title={p.regularizationMonthlyLimit == null
-                          ? `Follows the company limit (${orgLimit || 'unlimited'})`
-                          : p.regularizationMonthlyLimit === 0
-                            ? 'Blocked — this employee cannot raise any request'
-                            : 'This employee only'}
-                        onChange={(e) => setLimitDrafts((d) => ({ ...d, [p._id]: e.target.value }))}
-                        onBlur={() => { if (limitDrafts[p._id] !== undefined) saveRowLimit(p); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                        disabled={busy}
-                        className="border rounded-lg px-2 py-1.5 w-20 text-sm"
-                      />
-                    ) : (
-                      <span className="text-gray-700">
-                        {p.regularizationMonthlyLimit === 0
-                          ? 'Blocked'
-                          : (p.regularizationMonthlyLimit ?? (orgLimit || '∞'))}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              <div className="grid gap-2.5 min-w-0">
+                <div className="prm-chain">
+                  {[0, 1].map((idx) => {
+                    // Step 2 stays hidden until step 1 is set, so a ladder can
+                    // never be saved with a gap in it.
+                    if (idx === 1 && !chain[0]) return null;
+                    if (!canEdit && !chain[idx]) {
+                      return idx === 0 ? (
+                        <div key={idx} className="prm-step"><span className="prm-step-no">1</span>
+                          <span className="prm-step-name opacity-70">Any HR reviewer (default)</span></div>
+                      ) : null;
+                    }
+                    const o = optionsFor(p, chain, idx);
+                    const opt = (u) => <option key={u._id} value={u._id}>{nameOf(u)} ({u.role}) · {u.email}</option>;
+                    return (
+                      <Fragment key={idx}>
+                        {idx > 0 && <span className="prm-step-arrow" aria-hidden="true"><FiArrowRight size={14} /></span>}
+                        <div className={`prm-step${chain[idx] ? ' is-set' : ''}`}>
+                          <span className="prm-step-no">{idx + 1}</span>
+                          {!canEdit ? (
+                            <span className="prm-step-name">{nameOf(userById.get(String(chain[idx]))) || '—'}</span>
+                          ) : (
+                            <SearchableSelect
+                              value={chain[idx] || ''}
+                              onChange={(e) => setStep(p, idx, e.target.value)}
+                              disabled={busy}
+                              className={pickerClass}
+                            >
+                              <option value="">{idx === 0 ? 'Default — any HR reviewer' : 'Add a second step…'}</option>
+                              {o.sameDept.length > 0 && (
+                                <optgroup label={`${o.dept} · most senior first`}>{o.sameDept.map(opt)}</optgroup>
+                              )}
+                              {o.executives.length > 0 && <optgroup label="Executive">{o.executives.map(opt)}</optgroup>}
+                              {/* Hidden until the operator types. */}
+                              {o.others.length > 0 && (
+                                <optgroup label="Other departments · search by name" searchOnly>{o.others.map(opt)}</optgroup>
+                              )}
+                              {o.current && <optgroup label="Currently assigned">{opt(o.current)}</optgroup>}
+                            </SearchableSelect>
+                          )}
+                        </div>
+                      </Fragment>
+                    );
+                  })}
+                  <span className="prm-step-arrow" aria-hidden="true"><FiArrowRight size={14} /></span>
+                  <div className="prm-step is-final" title="HR closes every regularization.">
+                    <span className="prm-step-no"><FiCheck size={12} /></span>
+                    <span className="prm-step-name">HR</span>
+                  </div>
+                </div>
+
+                {/* Blank = follow the company number (the placeholder shows it);
+                    a typed 0 is a real block. Saved on blur or Enter, never per
+                    keystroke — a half-typed "1" from "12" is not a cap. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="prm-label" style={{ marginBottom: 0 }}>Limit / month</span>
+                  {canEdit ? (
+                    <input
+                      type="number" min="0" max="31"
+                      value={limitDrafts[p._id] ?? (own ?? '')}
+                      placeholder={orgLimit ? String(orgLimit) : '∞'}
+                      aria-label={`Monthly limit for ${nameOf(p.user)}`}
+                      onChange={(e) => setLimitDrafts((d) => ({ ...d, [p._id]: e.target.value }))}
+                      onBlur={() => { if (limitDrafts[p._id] !== undefined) saveRowLimit(p); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                      disabled={busy}
+                      className="prm-num"
+                    />
+                  ) : (
+                    <span className="text-sm font-semibold">{own === 0 ? 'Blocked' : (own ?? (orgLimit || '∞'))}</span>
+                  )}
+                  <span className="text-xs opacity-60">
+                    {own == null ? `Company limit (${orgLimit || 'unlimited'})`
+                      : own === 0 ? 'Blocked'
+                        : 'Own limit · blank = company'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

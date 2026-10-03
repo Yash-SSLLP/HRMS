@@ -55,7 +55,7 @@ export function ProofPicker({ files, onChange }) {
           <FiPaperclip size={14} /> {files.length ? 'Add another' : 'Attach a photo or PDF'}
         </button>
       )}
-      <p className="text-[11px] text-gray-400 mt-1">Up to {PROOF_MAX} files, {PROOF_MAX_MB} MB each — e.g. a gate pass or a site photo.</p>
+      <p className="text-[11px] text-gray-400 mt-1">Up to {PROOF_MAX} files, {PROOF_MAX_MB} MB each.</p>
     </div>
   );
 }

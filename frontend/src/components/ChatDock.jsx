@@ -656,7 +656,7 @@ export default function ChatDock() {
           {/* Composer — blocked when the other person has left the organization */}
           {active.resigned ? (
             <div className="p-3 text-center text-xs" style={{ background: wa.composerBg, color: wa.sub }}>
-              This person has resigned and left the organization. You can no longer send them messages.
+              This person has left the organization — messaging is closed.
             </div>
           ) : (
             <form onSubmit={send} className="flex items-center gap-2 p-2" style={{ background: wa.composerBg }}>
@@ -749,7 +749,7 @@ export default function ChatDock() {
 
                 {connections.length === 0 && groups.length === 0 ? (
                   <div className="p-6 text-center text-xs" style={{ color: wa.sub }}>
-                    No chats yet. Use the icons above to start a chat or create a group.
+                    No chats yet.
                   </div>
                 ) : (
                   <>
@@ -862,7 +862,7 @@ export default function ChatDock() {
               className="w-full rounded-lg px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
             <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search people to invite…"
               className="w-full rounded-full px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
-            <div className="text-[11px] mb-2" style={{ color: wa.sub }}>{groupPick.length} selected · invitees must accept to join</div>
+            <div className="text-[11px] mb-2" style={{ color: wa.sub }}>{groupPick.length} selected</div>
             {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 px-2 py-1 rounded mb-2">{error}</div>}
             <div className="max-h-72 overflow-y-auto mb-3">
               {filteredDir.map((p) => (
@@ -1011,7 +1011,7 @@ export default function ChatDock() {
               </div>
               <input value={dirSearch} onChange={(e) => setDirSearch(e.target.value)} placeholder="Search people to add…"
                 className="w-full rounded-full px-4 py-2 text-sm mb-2 outline-none" style={{ background: wa.inputBg, color: wa.text, border: `1px solid ${wa.border}` }} />
-              <div className="text-[11px] mb-2" style={{ color: wa.sub }}>{addPick.length} selected · they must accept to join</div>
+              <div className="text-[11px] mb-2" style={{ color: wa.sub }}>{addPick.length} selected</div>
               <div className="max-h-72 overflow-y-auto mb-3">
                 {addable.map((p) => (
                   <label key={p._id} className="flex items-center gap-3 py-2 cursor-pointer" style={{ borderBottom: `1px solid ${wa.border}` }}>

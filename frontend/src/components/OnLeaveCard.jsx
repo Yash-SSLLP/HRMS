@@ -153,7 +153,6 @@ export default function OnLeaveCard() {
           <p className="text-sm text-gray-500">
             {result.offDay.kind === 'sunday' ? 'Sunday — a weekly off.' : `Holiday — ${result.offDay.label}.`}
           </p>
-          <p className="text-xs text-gray-400 mt-0.5">Nobody is scheduled to work.</p>
         </div>
       ) : people.length === 0 ? (
         <div className="text-center py-6">

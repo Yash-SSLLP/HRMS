@@ -213,8 +213,7 @@ function LeadForm({ token, course, onRegistered }) {
 
   return (
     <div className="bg-white rounded-xl shadow-sm p-6">
-      <h2 className="text-lg font-semibold text-gray-900">Watch “{course.title}”</h2>
-      <p className="text-sm text-gray-500 mt-1 mb-4">Tell us a little about yourself to start the course. It’s free.</p>
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">Watch “{course.title}”</h2>
       <form onSubmit={submit} className="space-y-3">
         <Field label="Full name *"><input required value={form.name} onChange={set('name')} className="block w-full border rounded-lg px-3 py-2 text-sm" /></Field>
         <Field label="Phone number *"><input required type="tel" value={form.phone} onChange={set('phone')} className="block w-full border rounded-lg px-3 py-2 text-sm" /></Field>

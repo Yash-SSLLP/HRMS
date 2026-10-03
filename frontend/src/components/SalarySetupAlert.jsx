@@ -43,7 +43,7 @@ export default function SalarySetupAlert() {
 
   return (
     <div className="salert mb-4">
-      <div className="flex items-center gap-2.5 flex-wrap mb-2">
+      <div className="flex items-center gap-2.5 flex-wrap mb-3">
         <span className="salert-icon shrink-0"><FiAlertTriangle size={16} /></span>
         <span className="salert-title font-semibold tracking-tight">
           {employees.length} employee{employees.length === 1 ? '' : 's'} {employees.length === 1 ? 'has' : 'have'} no salary set up
@@ -52,10 +52,6 @@ export default function SalarySetupAlert() {
           Payroll will be ₹0
         </span>
       </div>
-      <p className="salert-body text-xs mb-3 max-w-3xl">
-        Payroll can&apos;t be calculated without a salary structure <em>and</em> an annual CTC.
-        Pick a name below to assign both, then re-run the month.
-      </p>
       <div className="space-y-1.5">
         {listed.map((e) => (
           // On a phone the "No salary structure or CTC" tag left the name ~80px,

@@ -22,9 +22,7 @@ export default function AdminApprovals() {
     <div>
       <PageHeader
         title="Approvals"
-        subtitle={seesAll
-          ? 'Every open request across the organisation, whoever it is addressed to. Deciding one here overrides the rungs that have not had their turn, and tells them so.'
-          : 'Leave and resignation requests climbing the reporting hierarchy that are waiting on you, plus those you sit above.'}
+        subtitle={seesAll ? 'Every open request' : 'Waiting on you'}
       />
 
       <ApprovalsBoard />

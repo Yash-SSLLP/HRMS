@@ -8,10 +8,22 @@ import { toast } from 'react-toastify';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { confirmDialog } from '../components/dialogs';
+import { useAuthStore } from '../store/authStore';
 
 const blank = { title: '', date: '', time: '', location: '', description: '' };
 
+const ROLE_WORDS = { SuperAdmin: 'Super Admin', HRManager: 'HR Manager', LDManager: 'HR L&D', AccountsManager: 'Accounts Manager' };
+const personName = (u) => (u ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '');
+// "3 Oct, 11:20 AM" — 12-hour, as every time-of-day in the portal is.
+const stamp = (d) => (d ? new Date(d).toLocaleString('en-IN', {
+  day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hourCycle: 'h12',
+}) : '');
+
 export default function AdminEvents() {
+  // The server only sends createdBy/updatedBy to a Super Admin; the column is
+  // gated here too so nobody else sees an empty "Added by" heading.
+  const isSuperAdmin = useAuthStore((s) => s.user?.role) === 'SuperAdmin';
+  const cols = isSuperAdmin ? 5 : 4;
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [events, setEvents] = useState([]);
@@ -98,7 +110,7 @@ export default function AdminEvents() {
 
   return (
     <div>
-      <PageHeader title="Events" subtitle="Creating an event notifies every employee and adds it to the shared calendar.">
+      <PageHeader title="Events">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <select value={year} onChange={(e) => setYear(Number(e.target.value))}
           className="border rounded-lg px-3 py-2 text-sm">
@@ -124,14 +136,15 @@ export default function AdminEvents() {
               <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">Title</th>
               <th className="px-4 py-3 text-left font-medium text-gray-700">When / Where</th>
+              {isSuperAdmin && <th className="px-4 py-3 text-left font-medium text-gray-700">Added by</th>}
               <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
+              <tr><td colSpan={cols} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : events.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No events for {year}</td></tr>
+              <tr><td colSpan={cols} className="px-4 py-6 text-center text-gray-500">No events for {year}</td></tr>
             ) : events.map((ev) => (
               <tr key={ev._id}>
                 <td className="px-4 py-3 whitespace-nowrap">
@@ -144,6 +157,17 @@ export default function AdminEvents() {
                 <td className="px-4 py-3 text-gray-600">
                   {[ev.time, ev.location].filter(Boolean).join(' · ') || '-'}
                 </td>
+                {isSuperAdmin && (
+                  <td className="px-4 py-3">
+                    <div className="text-gray-900">{personName(ev.createdBy) || 'Unknown'}</div>
+                    <div className="text-xs text-gray-500">
+                      {[ROLE_WORDS[ev.createdBy?.role] || ev.createdBy?.role, stamp(ev.createdAt)].filter(Boolean).join(' · ')}
+                    </div>
+                    {personName(ev.updatedBy) && (
+                      <div className="text-xs text-gray-500">Edited by {personName(ev.updatedBy)} · {stamp(ev.updatedAt)}</div>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-right space-x-2">
                   <button onClick={() => openEdit(ev)} className="text-blue-600 hover:underline">Edit</button>
                   <button onClick={() => remove(ev)} className="text-red-600 hover:underline">Delete</button>

@@ -930,10 +930,7 @@ export default function AdminPayroll() {
                 change is written to the audit log against this account. */}
             {editingPaid && (
               <div className="mb-3 text-sm bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 rounded-lg">
-                This payslip is already <strong>{editingPaid}</strong>. Correcting it does not move any
-                money — the payment has happened. Its day counts are left exactly as they were paid on
-                rather than re-derived from today&apos;s attendance. If it was released to the employee
-                they lose access until it is finalised again, and this edit is logged against your account.
+                Already <strong>{editingPaid}</strong>. Editing moves no money; employee access is pulled until finalised.
               </div>
             )}
             <form onSubmit={onSave} className="space-y-3">
@@ -1023,11 +1020,6 @@ export default function AdminPayroll() {
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 -mt-1">
-                Auto-filled from attendance (after LOP &amp; leave-quota normalization) · editable.
-                Half/Late/Additional days are printed on the slip only — the LOP amount is the
-                <span className="font-medium"> LOP / unpaid days</span> deduction below.
-              </p>
 
               {/* Salary structure → derive earnings + statutory deductions */}
               <div className="pt-3 border-t">
@@ -1071,9 +1063,7 @@ export default function AdminPayroll() {
                 </div>
                 {salaryInfo && !salaryInfo.needsSetup && (
                   <p className="text-[11px] text-gray-400 mt-1">
-                    Earnings are the full monthly value (Basic is never prorated); the {form.workingDays - form.paidDays} unpaid
-                    day(s) out of {form.workingDays} are recovered as the LOP deduction ·
-                    PF/EPF &amp; ESI not deducted (₹0), PT ₹200 — all editable below.
+                    {form.workingDays - form.paidDays} unpaid day(s) out of {form.workingDays} are recovered as LOP.
                   </p>
                 )}
               </div>
@@ -1190,9 +1180,7 @@ export default function AdminPayroll() {
                 <button type="button" aria-label="Close" title="Close" onClick={() => setRunModal(null)} className="topbar-icon-btn shrink-0">×</button>
               </div>
               <p className="text-sm text-gray-500 mb-4">
-                Creates a Draft payslip for every active employee for the selected month. Payslips that already exist
-                are skipped unless you tick them to re-generate — those are recomputed from the salary structure and
-                the current attendance. Paid payslips can never be overwritten.
+                Creates Draft payslips for every active employee; paid ones are never overwritten.
               </p>
 
               <div className="flex flex-wrap items-end gap-3 mb-4">

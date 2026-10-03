@@ -26,9 +26,21 @@
  *   4. Downloading the ledger to a spreadsheet is a per-person grant only a
  *      SuperAdmin can give (User.khataExportAccess). The Export buttons are
  *      hidden without it; see config/permissions.js → canExportKhata.
+ *
+ * 2026-10-03 premium redesign (presentation only): toned money KPIs, a wrapping
+ * tab strip that keeps the red counts, queue and ledger rows with faces and a
+ * large direction-toned amount, the ledger grouped under day headings. Styling:
+ * styles/pages/khata.css (`.kh-*`) on top of index.css's shared primitives.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiAlertTriangle, FiArrowDownLeft, FiArrowLeft, FiArrowUpRight, FiBell, FiBook, FiBookOpen, FiCalendar,
+  FiCheck, FiCheckCircle, FiCheckSquare, FiChevronRight, FiClock, FiCreditCard, FiDownload, FiEdit2, FiFileText,
+  FiGrid, FiInbox, FiList, FiMapPin, FiPaperclip, FiPlus, FiRotateCcw, FiSearch, FiSettings, FiShield,
+  FiTrendingDown, FiTrendingUp, FiUsers, FiX,
+} from 'react-icons/fi';
+import '../styles/pages/khata.css';
 import api from '../api/client';
 import { useTabParam } from '../hooks/useTabParam';
 import PageHeader from '../components/PageHeader';
@@ -40,6 +52,7 @@ import AdvanceReportModal from '../components/AdvanceReportModal';
 // matters here: `entries` is refetched whenever a server-side filter changes
 // and the toggle must not fight the fetched order.
 import { DateSortButton, useDateSort } from '../components/DateSort';
+import { PersonAvatar } from '../components/permissions/permUi';
 
 // NOTE ON THE GROUP LABEL: SearchableSelect searches `group + label`, so the
 // optgroup's own words are matchable. "Admin logins (not employees)" therefore
@@ -96,15 +109,55 @@ const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-di
 const today = () => toYMD(new Date());
 const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v != null));
 
-const STATUS_STYLES = {
-  AwaitingApproval: 'bg-violet-100 text-violet-800',
-  Pending: 'bg-amber-100 text-amber-800',
-  Approved: 'bg-green-100 text-green-800',
-  Rejected: 'bg-red-100 text-red-800',
-  Reversed: 'bg-gray-200 text-gray-700',
-};
+// The status pill's tone lives in khata.css (`.kh-status.is-<Status>`); a status
+// with no rule there (Reversed) falls back to the neutral slate pill.
 // 'AwaitingApproval' is accurate and unreadable; say who it is actually with.
 const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
+
+/**
+ * PersonAvatar reads firstName/lastName for its initials and photo + _id for the
+ * picture; the cashbook's rows carry one `name` string instead. Presentation
+ * only — a bare id (an unpopulated employee) gives the "?" avatar.
+ */
+const avatarUser = (p) => {
+  if (!p || typeof p !== 'object') return null;
+  const parts = String(p.name || '').trim().split(/\s+/).filter(Boolean);
+  return { _id: p._id, photo: p.photo, firstName: parts[0] || '', lastName: parts.length > 1 ? parts[parts.length - 1] : '' };
+};
+
+/** "Friday, 3 Oct 2026" plus a Today / Yesterday marker — a ledger day heading. */
+const dayHeading = (ymd) => {
+  const label = new Date(`${ymd}T00:00:00`).toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'short', year: 'numeric',
+  });
+  const rel = ymd === toYMD(new Date()) ? 'Today'
+    : ymd === toYMD(new Date(Date.now() - 86400000)) ? 'Yesterday' : '';
+  return { label, rel };
+};
+
+/**
+ * Consecutive rows that share a calendar day, in the order given. Runs rather
+ * than buckets, so the list is never reordered — the caller's sort stands.
+ */
+const groupByDay = (list) => {
+  const out = [];
+  list.forEach((e) => {
+    const ymd = e.date ? toYMD(new Date(e.date)) : '';
+    const last = out[out.length - 1];
+    if (last && last.ymd === ymd) last.list.push(e);
+    else out.push({ ymd, list: [e] });
+  });
+  return out;
+};
+
+/** The kind-of-entry chip's hue on a queue row. */
+const typeHue = (e) => {
+  if (e.type === 'reimbursement') return 'is-violet';
+  if (e.type === 'advance') return 'is-sky';
+  if (e.type === 'refund') return 'is-teal';
+  if (e.type === 'expense') return 'is-amber';
+  return '';
+};
 
 /**
  * THE TABS (2026-09-27), in the user's order for the queues: *"Reimburse,
@@ -130,6 +183,16 @@ const TABS = [
   ['accounts', 'Accounts'],
 ];
 const TAB_ALIASES = { sanctions: 'advance', approvals: 'approval' };
+// The glyph beside each tab's label — decoration only, the ids above are the API.
+const TAB_ICONS = {
+  overview: FiGrid,
+  reimburse: FiRotateCcw,
+  advance: FiArrowUpRight,
+  approval: FiCheckSquare,
+  people: FiUsers,
+  ledger: FiList,
+  accounts: FiCreditCard,
+};
 
 const ENTRY_TYPES = [
   ['advance', 'Advance given'],
@@ -215,8 +278,9 @@ function FiledFrom({ location }) {
       href={`https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`}
       target="_blank" rel="noopener noreferrer"
       title="Where the employee was when they filed this. Visible to Super Admins only."
-      className="text-xs text-sky-700 hover:text-sky-900 underline">
-      📍 Filed from {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
+      className="inline-flex items-center gap-1 text-xs text-sky-700 hover:text-sky-900 underline">
+      <FiMapPin size={12} className="shrink-0" aria-hidden="true" />
+      Filed from {location.lat.toFixed(5)}, {location.lng.toFixed(5)}
       {location.accuracy != null ? ` (±${Math.round(location.accuracy)} m)` : ''}
     </a>
   );
@@ -265,19 +329,21 @@ function SharedPill({ khata }) {
   );
 }
 
-/** Small stat card used across the overview. */
-function Stat({ label, value, tone = 'gray', hint }) {
-  const tones = {
-    rose: 'border-rose-200 bg-rose-50 text-rose-700',
-    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    amber: 'border-amber-200 bg-amber-50 text-amber-800',
-    gray: 'border-gray-200 bg-white text-gray-800',
-  };
+/** The KPI hue for each tone a figure can take (khata.css tones the value). */
+const TONE_HUES = { emerald: '#16a34a', rose: '#dc2626', amber: '#d97706', gray: '#64748b' };
+/** The net tile's glyph follows the direction it names. */
+const NET_ICONS = { emerald: FiTrendingUp, rose: FiTrendingDown, gray: FiCheckCircle };
+
+/** One money KPI on the overview (`.trn-kpi`, toned green / red / amber). */
+function Stat({ label, value, tone = 'gray', hint, icon: Icon }) {
   return (
-    <div className={`border rounded-xl p-4 ${tones[tone]}`}>
-      <p className="text-xs font-medium opacity-80">{label}</p>
-      <p className="text-2xl font-semibold mt-1">{value}</p>
-      {hint && <p className="text-xs opacity-70 mt-1">{hint}</p>}
+    <div className={`trn-kpi kh-kpi is-${tone}`} style={{ '--kpi-hue': TONE_HUES[tone] || TONE_HUES.gray }}>
+      {Icon && <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>}
+      <span className="min-w-0 flex-1">
+        <span className="trn-kpi-value block">{value}</span>
+        <span className="trn-kpi-label block">{label}</span>
+        {hint && <span className="trn-kpi-sub block">{hint}</span>}
+      </span>
     </div>
   );
 }
@@ -289,17 +355,17 @@ function Stat({ label, value, tone = 'gray', hint }) {
  */
 function netStat(ov) {
   const net = Number(ov?.net) || 0;
-  const across = `across ${ov?.peopleWithKhatas || 0} people`;
+  const across = `Across ${ov?.peopleWithKhatas || 0} people`;
   // Signed, like every wallet figure on this page: negative means the money is
   // owed BY the company, and the tile's label agrees with the sign.
   const value = money(net);
   if (net > 0) {
-    return { label: 'Net — you will get', tone: 'emerald', value, hint: `Staff owe the company this much more than it owes them, ${across}` };
+    return { label: 'Net — you will get', tone: 'emerald', value, hint: across };
   }
   if (net < 0) {
-    return { label: 'Net — you will give', tone: 'rose', value, hint: `The company owes staff this much more than they owe it, ${across}` };
+    return { label: 'Net — you will give', tone: 'rose', value, hint: across };
   }
-  return { label: 'Net position', tone: 'gray', value, hint: `All square, ${across}` };
+  return { label: 'Net position', tone: 'gray', value, hint: 'All square' };
 }
 
 /** The "you will get / you will give" chip, worded from the company's side. */
@@ -310,12 +376,12 @@ function BalanceChip({ display }) {
   const tone = display.direction === 'get' ? 'text-emerald-700'
     : display.direction === 'give' ? 'text-rose-700' : 'text-gray-500';
   return (
-    <div className="text-right">
+    <div className="kh-bal">
       {/* The signed figure, not the absolute: when the company owes the
           employee (they spent or returned past the advance) the number itself
           reads negative — the label alone was too easy to skim past. */}
-      <p className={`font-semibold ${tone}`}>{money(display.signed ?? display.amount)}</p>
-      <p className="text-xs text-gray-500">{display.label}</p>
+      <p className={`kh-bal-value ${tone}`}>{money(display.signed ?? display.amount)}</p>
+      <p className="kh-bal-label">{display.label}</p>
     </div>
   );
 }
@@ -359,12 +425,12 @@ const sumOf = (rows) => rows.reduce((total, e) => total + (Number(e.amount) || 0
 function SelectionBar({ sel, total, children }) {
   const n = sel.selected.length;
   return (
-    <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-gray-100 bg-gray-50">
-      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+    <div className={`kh-selbar${n ? ' is-active' : ''}`}>
+      <label className="kh-selbar-label">
         <input type="checkbox" checked={sel.allOn} onChange={sel.toggleAll} />
         {n ? `${n} of ${total} selected · ${money(sumOf(sel.selected))}` : 'Select all'}
       </label>
-      {n > 0 && <div className="ml-auto flex flex-wrap justify-end gap-2">{children}</div>}
+      {n > 0 && <div className="kh-selbar-actions">{children}</div>}
     </div>
   );
 }
@@ -372,7 +438,7 @@ function SelectionBar({ sel, total, children }) {
 /** A row's tick box, with a hit area bigger than the box itself. */
 function PickBox({ sel, entry }) {
   return (
-    <label className="shrink-0 -m-2 p-2 cursor-pointer" title="Select">
+    <label className="kh-pick shrink-0" title="Select">
       <input type="checkbox" checked={sel.isOn(entry._id)} onChange={() => sel.toggle(entry._id)}
         aria-label={`Select ${entry.code || 'this entry'}`} />
     </label>
@@ -751,11 +817,11 @@ export default function AdminKhata() {
    * on its own through `pendingPick`, which follows the tab.
    */
   const renderPayouts = (list, empty) => (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
+    <div className="prm-list">
       {list.length === 0 ? (
-        <div className="px-4 py-10 text-center">
-          <p className="text-gray-700 font-medium">{empty.title}</p>
-          <p className="text-gray-500 text-xs mt-1">{empty.hint}</p>
+        <div className="trn-empty">
+          <span className="trn-empty-icon"><FiInbox size={24} /></span>
+          <p className="text-sm font-semibold">{empty.title}</p>
         </div>
       ) : (
         <>
@@ -768,58 +834,70 @@ export default function AdminKhata() {
                   ? accounts.find((a) => a.canApprove)._id : '',
                 note: '',
               })}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+              className="trn-btn kh-mini rg-approve">
+              <FiCheck size={14} aria-hidden="true" />
               {tab === 'reimburse' ? 'Pay back' : 'Approve'} {pendingPick.selected.length}
             </button>
             <button type="button" onClick={declineTicked} disabled={saving}
-              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
+              className="trn-btn kh-mini">
               Decline {pendingPick.selected.length}
             </button>
           </SelectionBar>
         )}
-        <ul className="divide-y divide-gray-100">
+        <ul>
           {list.map((e) => (
-            <li key={e._id} className="px-4 py-3">
-              <div className="flex flex-wrap justify-between items-start gap-3">
-                {!viewOnly && <PickBox sel={pendingPick} entry={e} />}
-                <div className="min-w-0 grow basis-64">
-                  <p className="font-medium text-gray-900">
-                    {e.employee?.name || 'Employee'} · {money(e.amount)}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {e.khataName ? `${e.khataName} · ` : ''}
+            <li key={e._id}
+              className={`kh-q${viewOnly ? '' : ' has-pick'}${!viewOnly && pendingPick.isOn(e._id) ? ' is-picked' : ''}`}>
+              {!viewOnly && <PickBox sel={pendingPick} entry={e} />}
+              <span className="kh-lead"><PersonAvatar user={avatarUser(e.employee)} /></span>
+              <div className="min-w-0">
+                <p className="kh-name">{e.employee?.name || 'Employee'}</p>
+                <div className="kh-tags">
+                  <span className={`kh-type ${typeHue(e)}`}>
                     {e.direction === 'to_employee'
                       ? (e.type === 'reimbursement' ? 'Claim to pay back'
                         : e.type === 'refund' ? 'Refund to confirm' : 'Advance to pay out')
                       : e.type === 'expense' ? 'Expense to confirm' : 'Cash back to confirm'}
-                    {e.raisedByEmployee ? ' · they raised it' : ' · above the operator limit'}
-                    {' · '}{fmtDate(e.date)}
-                  </p>
-                  {/* Sanctioned already: say so, or an operator has no way to
-                      tell an approved advance from an unvetted one. */}
-                  {e.execApprovedAt && (
-                    <p className="text-xs text-violet-700 mt-0.5">
+                  </span>
+                </div>
+                <div className="kh-meta">
+                  {e.khataName && <span><FiBook size={12} aria-hidden="true" />{e.khataName}</span>}
+                  <span>{e.raisedByEmployee ? 'They raised it' : 'Above the operator limit'}</span>
+                  <span><FiCalendar size={12} aria-hidden="true" />{fmtDate(e.date)}</span>
+                  <span className="kh-code">{e.code}</span>
+                </div>
+                {/* Sanctioned already: say so, or an operator has no way to
+                    tell an approved advance from an unvetted one. */}
+                {e.execApprovedAt && (
+                  <p className="kh-note">
+                    <FiCheckCircle size={13} aria-hidden="true" />
+                    <span>
                       Approved by {e.execApprovedBy?.name || 'an executive'}
                       {e.execApprovedBy?.role ? ` (${e.execApprovedBy.role})` : ''} on {fmtDate(e.execApprovedAt)}
                       {e.execNote ? ` — ${e.execNote}` : ''}
-                    </p>
-                  )}
-                  {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
-                  <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
-                </div>
-                {!viewOnly && (
-                <div className="ml-auto flex gap-2 shrink-0">
+                    </span>
+                  </p>
+                )}
+                {e.purpose && <p className="kh-purpose">{e.purpose}</p>}
+              </div>
+              <div className="kh-amt" title={e.direction === 'to_employee' ? 'Company → employee' : 'Employee → company'}>
+                <span className={`kh-amt-value ${e.direction === 'to_employee' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  {money(e.amount)}
+                </span>
+              </div>
+              {!viewOnly && (
+                <div className="kh-row-actions">
                   <button onClick={() => setApproveModal({ entry: e, cashAccount: e.cashAccount || '', note: '' })}
-                    className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
+                    className="trn-btn kh-mini rg-approve">
+                    <FiCheck size={14} aria-hidden="true" />
                     {e.type === 'reimbursement' ? 'Pay back' : 'Approve'}
                   </button>
                   <button onClick={() => reject(e)}
-                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+                    className="trn-btn kh-mini">
                     Decline
                   </button>
                 </div>
-                )}
-              </div>
+              )}
             </li>
           ))}
         </ul>
@@ -1192,40 +1270,26 @@ export default function AdminKhata() {
       <PageHeader title="Employee Cashbook">
         {!viewOnly && (
           <button onClick={() => openEntry('')}
-            className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-            + New entry
+            className="trn-btn is-primary accent-bg text-white">
+            <FiPlus size={15} aria-hidden="true" /> New entry
           </button>
         )}
       </PageHeader>
 
-      <p className="text-sm text-gray-500 mb-4">
-        Every rupee moving between the company and its people. Each person has one wallet that advances are paid
-        into, and as many books as they need to record what they spent it on. Money movements also post to the
-        cashbook, so the company&apos;s cash and each person&apos;s wallet can never disagree.
-      </p>
-
-      {/* font-medium and border-b-2 live on the base, never on the active
-          branch: bolding only the selected tab would re-measure its label and
-          slide every tab to its right across on each click. Selection is
-          colour alone. */}
-      {/* `topbar-scroll` is index.css's hidden-scrollbar helper, and it is
-          load-bearing here rather than cosmetic. `overflow-x: auto` forces the
-          OTHER axis to `auto` as well — CSS will not scroll one axis and leave
-          the other visible — and every tab carries `-mb-px`, so the strip's
-          content is exactly 1px taller than its box (measured: scrollHeight 38,
-          clientHeight 37). Windows drew a full 15px-wide vertical scrollbar,
-          trough and arrow buttons and all, for that one pixel, hard against the
-          right-hand end of the tab row. Hiding the scrollbar removes it and
-          gives the 15px back, while leaving the strip able to scroll sideways
-          on a phone — which is why this is the same helper ApprovalsBoard's tab
-          strip and Layout's top bar already carry. */}
-      <div className="topbar-scroll flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
+      {/* One rounded bar of tabs that WRAPS on a phone rather than scrolling
+          sideways. Weight, border width and padding live on the base, never on
+          the active branch: selection is paint alone (tint, ring, ink), so no
+          tab ever re-measures and slides its neighbours across. */}
+      <div className="kh-tabs" role="tablist" aria-label="Cashbook sections">
         {TABS
           .filter(([k]) => (k !== 'accounts' || isSuperAdmin) && (k !== 'approval' || !execView))
-          .map(([key, label]) => (
+          .map(([key, label]) => {
+            const TabIcon = TAB_ICONS[key];
+            return (
             <button key={key} onClick={() => setTab(key)}
-              className={`inline-flex items-center px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${
-                tab === key ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+              role="tab" aria-selected={tab === key}
+              className={`kh-tab${tab === key ? ' is-on' : ''}`}>
+              {TabIcon && <TabIcon size={15} className="kh-tab-icon" aria-hidden="true" />}
               {label}
               {/* A RED count on every queue with something in it (2026-09-27) —
                   the same signal as the sidebar and the top bar. */}
@@ -1235,78 +1299,95 @@ export default function AdminKhata() {
                 </span>
               )}
             </button>
-          ))}
+            );
+          })}
       </div>
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
-        loading ? <div className="skeleton h-40 rounded-xl" /> : (
+        loading ? (
           <div className="space-y-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <Stat label="Advance in staff hands" tone="emerald" value={money(ov?.totalReceivable)}
-                hint="Paid out and not yet accounted for" />
-              <Stat label="You will give" tone="rose"
-                value={money(ov?.totalPayable ? -ov.totalPayable : 0)}
-                hint="Staff who have spent past their advance" />
+            <div className="kh-kpis">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}</div>
+            <div className="kh-acct-grid">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-36 rounded-2xl" />)}</div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="kh-kpis">
+              <Stat label="Advance in staff hands" tone="emerald" icon={FiArrowUpRight}
+                value={money(ov?.totalReceivable)} />
+              <Stat label="You will give" tone="rose" icon={FiArrowDownLeft}
+                value={money(ov?.totalPayable ? -ov.totalPayable : 0)} />
               {/* The tile names the direction AND keeps the sign — a negative
                   figure is money the company owes, same as every row below. */}
-              <Stat {...netStat(ov)} />
+              <Stat {...netStat(ov)} icon={NET_ICONS[netStat(ov).tone]} />
               {/* The two queues are two different people's work, so they are two
                   tiles — one number covering both would be actionable by nobody. */}
-              <Stat label="Waiting" tone={(ov?.pendingCount || ov?.awaitingApprovalCount) ? 'amber' : 'gray'}
+              <Stat label="Waiting" icon={FiClock}
+                tone={(ov?.pendingCount || ov?.awaitingApprovalCount) ? 'amber' : 'gray'}
                 value={`${ov?.awaitingApprovalCount || 0} + ${ov?.pendingCount || 0}`}
-                hint="With the CEO/MD + with accounts. No cash has moved for either." />
+                hint="CEO/MD + accounts" />
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="kh-actions">
               {mayExport && (
-                <button onClick={exportXlsx}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                  Export to Excel
+                <button onClick={exportXlsx} className="trn-btn">
+                  <FiDownload size={14} aria-hidden="true" /> Export to Excel
                 </button>
               )}
               {/* Same download grant as the export: it is a file of the ledger. */}
               {mayExport && (
-                <button onClick={() => setAdvanceReportOpen(true)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                  Advance report
+                <button onClick={() => setAdvanceReportOpen(true)} className="trn-btn">
+                  <FiFileText size={14} aria-hidden="true" /> Advance report
                 </button>
               )}
               {!viewOnly && (
-                <button onClick={remindEveryone} disabled={!ov?.totalReceivable}
-                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50">
-                  Remind everyone holding cash
+                <button onClick={remindEveryone} disabled={!ov?.totalReceivable} className="trn-btn">
+                  <FiBell size={14} aria-hidden="true" /> Remind everyone holding cash
                 </button>
               )}
             </div>
 
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Accounts you can pay from</h3>
+              <div className="prm-head kh-head-first">
+                <span className="prm-head-title">Accounts you can pay from</span>
+                {accounts.length > 0 && <span className="prm-head-sub">{accounts.length}</span>}
+              </div>
               {accounts.length === 0 ? (
-                <div className="bg-white shadow rounded-lg px-4 py-8 text-center">
-                  <p className="text-gray-700 font-medium">You are not an operator on any cash account</p>
-                  <p className="text-gray-500 text-xs mt-1">
-                    A Super Admin has to add you to an account before you can hand out company money.
-                  </p>
+                <div className="prm-list">
+                  <div className="trn-empty">
+                    <span className="trn-empty-icon"><FiCreditCard size={24} /></span>
+                    <p className="text-sm font-semibold">You are not an operator on any cash account</p>
+                  </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="kh-acct-grid">
                   {accounts.map((a) => (
-                    <div key={a._id} className="bg-white shadow rounded-lg p-4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="font-medium text-gray-900">{a.name}</p>
-                          <p className="text-xs text-gray-500">{a.type}</p>
+                    <div key={a._id} className="kh-acct">
+                      <div className="kh-acct-head">
+                        <span className="kh-acct-icon" aria-hidden="true"><FiCreditCard size={18} /></span>
+                        <div className="min-w-0">
+                          <p className="kh-acct-name">{a.name}</p>
+                          {a.type && <span className="kh-acct-type">{a.type}</span>}
                         </div>
-                        <p className="font-semibold text-gray-800">{money(a.currentBalance)}</p>
                       </div>
-                      <p className="text-xs text-gray-500 mt-3">
-                        {!a.canDisburse
-                          ? 'You can record entries here, but every one needs approval.'
-                          : a.threshold > 0
-                            ? `You can pay up to ${money(a.threshold)} directly. Above that it goes for approval.`
-                            : 'You can pay any amount directly.'}
-                      </p>
+                      <div>
+                        <p className={`kh-acct-bal${Number(a.currentBalance) < 0 ? ' text-rose-700' : ''}`}>
+                          {money(a.currentBalance)}
+                        </p>
+                        <p className="kh-acct-cap">Balance</p>
+                      </div>
+                      <div className="kh-acct-foot">
+                        <span className={`kh-rule${!a.canDisburse ? ' is-amber' : a.threshold > 0 ? '' : ' is-green'}`}>
+                          {!a.canDisburse
+                            ? <FiShield size={13} aria-hidden="true" />
+                            : <FiCheckCircle size={13} aria-hidden="true" />}
+                          {!a.canDisburse
+                            ? 'Entries here need approval.'
+                            : a.threshold > 0
+                              ? `Pay up to ${money(a.threshold)} directly.`
+                              : 'Pay any amount directly.'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1319,35 +1400,47 @@ export default function AdminKhata() {
       {/* ---------------- People ---------------- */}
       {tab === 'people' && !detail && (
         <div>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {/* Bound to the typed value, not the applied one — the debounce
-                above is what turns a burst of typing into one request. */}
-            <input type="search" placeholder="Search by name or email"
-              value={peopleSearch}
-              onChange={(e) => setPeopleSearch(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
-            <select value={peopleFilter.filter}
-              onChange={(e) => setPeopleFilter({ ...peopleFilter, filter: e.target.value })}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-              {/* First and default: the question this screen exists to answer.
-                  The two directions below it are each half of this one. */}
-              <option value="active">Anyone with a balance</option>
-              <option value="outstanding">Holding company cash</option>
-              <option value="payable">Company owes them</option>
-              <option value="settled">Settled up</option>
-              <option value="all">Everyone</option>
-            </select>
-            {/* Also reachable from inside a person, but most people look for it
-                here first — so it is on the list as well. */}
-            {!viewOnly && (
-              <button onClick={() => setKhataModal({ employee: '', name: '', note: '' })}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 whitespace-nowrap">
-                + New book
-              </button>
-            )}
+          <div className="pb-toolbar kh-toolbar">
+            {/* First and default: the question this screen exists to answer.
+                The two directions after it are each half of this one. A click on
+                the view already in force sends nothing, as the old dropdown did. */}
+            <div className="trn-seg" role="group" aria-label="Show">
+              {[
+                ['active', 'Anyone with a balance'],
+                ['outstanding', 'Holding company cash'],
+                ['payable', 'Company owes them'],
+                ['settled', 'Settled up'],
+                ['all', 'Everyone'],
+              ].map(([v, label]) => (
+                <button key={v} type="button" aria-pressed={peopleFilter.filter === v}
+                  onClick={() => { if (peopleFilter.filter !== v) setPeopleFilter({ ...peopleFilter, filter: v }); }}
+                  className={`trn-seg-btn${peopleFilter.filter === v ? ' is-on' : ''}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="pb-toolbar-end">
+              {/* Bound to the typed value, not the applied one — the debounce
+                  above is what turns a burst of typing into one request. */}
+              <label className="trn-search">
+                <FiSearch size={15} className="opacity-50 shrink-0" aria-hidden="true" />
+                <input type="search" placeholder="Search by name or email"
+                  aria-label="Search people"
+                  value={peopleSearch}
+                  onChange={(e) => setPeopleSearch(e.target.value)} />
+              </label>
+              {/* Also reachable from inside a person, but most people look for it
+                  here first — so it is on the list as well. */}
+              {!viewOnly && (
+                <button onClick={() => setKhataModal({ employee: '', name: '', note: '', pickEmployee: true })}
+                  className="trn-btn">
+                  <FiPlus size={14} aria-hidden="true" /> New book
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="prm-list">
             {rows.length === 0 ? (
               /* Two different empty states, kept apart on purpose. The list now
                  opens FILTERED, so "nobody holds a wallet yet" would be a plain
@@ -1355,63 +1448,65 @@ export default function AdminKhata() {
                  and it reads as data loss to somebody who knows there are forty
                  people. Say which one it is, and offer the way out. */
               peopleFilter.filter !== 'all' || peopleFilter.q ? (
-                <div className="px-4 py-10 text-center">
-                  <p className="text-gray-700 font-medium">
+                <div className="trn-empty">
+                  <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                  <p className="text-sm font-semibold">
                     {peopleFilter.q ? 'Nobody matches that search' : 'Nobody has a balance right now'}
                   </p>
-                  <p className="text-gray-500 text-xs mt-1">
+                  <p className="text-xs text-gray-500 -mt-1">
                     {peopleFilter.q
                       ? 'Try a different name, employee code or book.'
-                      : 'Everyone is settled up — no advance is out and nothing is owed.'}
+                      : 'Everyone is settled up.'}
                   </p>
                   <button type="button"
                     onClick={() => { setPeopleSearch(''); setPeopleFilter({ q: '', filter: 'all' }); }}
-                    className="text-xs text-gray-600 hover:text-gray-900 hover:underline mt-2">
+                    className="trn-btn kh-mini">
                     Show everyone
                   </button>
                 </div>
               ) : (
-                <div className="px-4 py-10 text-center">
-                  <p className="text-gray-700 font-medium">Nobody holds a wallet yet</p>
-                  <p className="text-gray-500 text-xs mt-1">
-                    A wallet opens itself the first time you give someone money. Use “New entry” above.
-                  </p>
+                <div className="trn-empty">
+                  <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                  <p className="text-sm font-semibold">Nobody holds a wallet yet</p>
                 </div>
               )
             ) : (
-              <ul className="divide-y divide-gray-100">
+              <ul>
                 {/* One row per PERSON — which is simply what the data is now, one
-                    wallet each. Their expense books are listed beneath as a
+                    wallet each. Their expense books are listed beside it as a
                     breakdown of where the money went. */}
                 {rows.map((r) => (
                   <li key={r.employee._id}>
-                    <button onClick={() => openDetail(r.employee._id)}
-                      className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 text-left">
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-900 truncate">{r.employee.name}</p>
-                        <p className="text-xs text-gray-500 truncate">
-                          {[r.employee.employeeCode, r.employee.designation, r.employee.department].filter(Boolean).join(' · ') || r.employee.email}
-                        </p>
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {/* What each book has COST — books hold no balance of
-                              their own, so a colour-by-sign would be a lie.
-                              A shared book carries a marker, because its figure
-                              is the whole book's spending and not only this
-                              person's. */}
-                          {r.khatas.filter((k) => k.spent > 0 || k.isActive).map((k) => (
-                            <span key={k._id}
-                              title={k.shared
-                                ? `Shared${k.memberCount ? ` with ${k.memberCount} ${k.memberCount === 1 ? 'colleague' : 'colleagues'}` : ''} — this total covers everyone who files against it`
-                                : undefined}
-                              className="text-xs px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
-                              {k.name} {money(k.spent)}
-                              {k.shared && <span className="text-indigo-700"> · shared{k.memberCount ? ` ${k.memberCount}` : ''}</span>}
-                            </span>
-                          ))}
-                        </div>
-                        {r.lastEntryAt && <p className="text-xs text-gray-400 mt-1">Last entry {fmtDate(r.lastEntryAt)}</p>}
-                      </div>
+                    <button onClick={() => openDetail(r.employee._id)} className="kh-person">
+                      <span className="kh-who">
+                        <PersonAvatar user={avatarUser(r.employee)} />
+                        <span className="min-w-0">
+                          <span className="kh-who-name block">{r.employee.name}</span>
+                          <span className="kh-who-sub block">
+                            {[r.employee.employeeCode, r.employee.designation, r.employee.department].filter(Boolean).join(' · ') || r.employee.email}
+                          </span>
+                          {r.lastEntryAt && <span className="kh-who-last block">Last entry {fmtDate(r.lastEntryAt)}</span>}
+                        </span>
+                      </span>
+                      <span className="kh-bookchips">
+                        {/* What each book has COST — books hold no balance of
+                            their own, so a colour-by-sign would be a lie.
+                            A shared book carries a marker, because its figure
+                            is the whole book's spending and not only this
+                            person's. */}
+                        {r.khatas.filter((k) => k.spent > 0 || k.isActive).map((k) => (
+                          <span key={k._id}
+                            title={k.shared
+                              ? `Shared${k.memberCount ? ` with ${k.memberCount} ${k.memberCount === 1 ? 'colleague' : 'colleagues'}` : ''} — this total covers everyone who files against it`
+                              : undefined}
+                            className="kh-bookchip">
+                            {k.name} <span className="kh-bookchip-amt">{money(k.spent)}</span>
+                            {k.shared && <span className="text-indigo-700"> · shared{k.memberCount ? ` ${k.memberCount}` : ''}</span>}
+                          </span>
+                        ))}
+                      </span>
                       <BalanceChip display={r.display} />
+                      <span className="kh-go" aria-hidden="true"><FiChevronRight size={16} /></span>
                     </button>
                   </li>
                 ))}
@@ -1425,53 +1520,68 @@ export default function AdminKhata() {
       {tab === 'people' && detail && (
         <div>
           {/* The only way back out of one employee's khata, so it needs a real
-              target rather than a 20px run of text. Padded the way the other back
-              controls in the portal are (AdminEmployeeDetail), with the negative
-              left margin keeping the glyph optically flush with the card below.
+              target rather than a 20px run of text — a full-size outline button.
               Deliberately NOT hover:underline: that token would pill it like a
               row action, which reads as Edit/Reject rather than navigation. */}
-          <button onClick={() => setDetail(null)}
-            className="inline-flex items-center gap-1 px-4 py-2 text-sm border rounded-lg hover:bg-gray-50 mb-3">
-            ← Back to everyone
+          <button onClick={() => setDetail(null)} className="trn-btn kh-back">
+            <FiArrowLeft size={15} aria-hidden="true" /> Back to everyone
           </button>
 
-          <div className="bg-white shadow rounded-lg p-5 mb-4">
-            <div className="flex flex-wrap justify-between items-start gap-3">
-              <div className="min-w-0 grow basis-64">
-                <p className="text-lg font-semibold text-gray-900">{detail.employee.name}</p>
-                <p className="text-xs text-gray-500">
-                  {[detail.employee.employeeCode, detail.employee.designation, detail.employee.department].filter(Boolean).join(' · ') || detail.employee.email}
-                </p>
+          <div className="kh-hero">
+            <div className="kh-hero-top">
+              <div className="kh-hero-who">
+                <PersonAvatar user={avatarUser(detail.employee)} size="lg" />
+                <div className="min-w-0">
+                  <p className="kh-hero-name">{detail.employee.name}</p>
+                  <p className="kh-hero-sub">
+                    {[detail.employee.employeeCode, detail.employee.designation, detail.employee.department].filter(Boolean).join(' · ') || detail.employee.email}
+                  </p>
+                </div>
               </div>
-              <div className="ml-auto"><BalanceChip display={detail.balance} /></div>
+              <div className="kh-hero-bal"><BalanceChip display={detail.balance} /></div>
             </div>
 
-            {/* The wallet arithmetic in one line: what went out, what came back
-                as spending or cash, and what is still in their hand. */}
-            <p className="text-xs text-gray-500 mt-2">
-              {money(detail.totals?.advanced)} advanced · {money(detail.totals?.spent)} spent
-              · {money(detail.totals?.returned)} returned
-              {detail.wallet?.creditLimit > 0 && ` · limit ${money(detail.wallet.creditLimit)}`}
-            </p>
+            {/* The wallet arithmetic: what went out, what came back as spending
+                or cash — and the limit, when there is one. */}
+            <div className="prm-metrics">
+              <div className="prm-metric">
+                <div className="prm-metric-value">{money(detail.totals?.advanced)}</div>
+                <div className="prm-metric-label">Advanced</div>
+              </div>
+              <div className="prm-metric">
+                <div className="prm-metric-value">{money(detail.totals?.spent)}</div>
+                <div className="prm-metric-label">Spent</div>
+              </div>
+              <div className="prm-metric">
+                <div className="prm-metric-value">{money(detail.totals?.returned)}</div>
+                <div className="prm-metric-label">Returned</div>
+              </div>
+              {detail.wallet?.creditLimit > 0 && (
+                <div className="prm-metric">
+                  <div className="prm-metric-value">{money(detail.wallet.creditLimit)}</div>
+                  <div className="prm-metric-label">Limit</div>
+                </div>
+              )}
+            </div>
 
-            <div className="flex flex-wrap gap-2 mt-4">
+            <div className="kh-hero-actions">
               {!viewOnly && (
                 <>
               <button onClick={() => openEntry(detail.employee._id, 'to_employee')}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">
-                Give advance
+                className="trn-btn is-primary accent-bg text-white">
+                <FiArrowUpRight size={15} aria-hidden="true" /> Give advance
               </button>
               <button onClick={() => openEntry(detail.employee._id, 'from_employee', '', 'expense')}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                Record an expense
+                className="trn-btn">
+                <FiBook size={14} aria-hidden="true" /> Record an expense
               </button>
               <button onClick={() => openEntry(detail.employee._id, 'from_employee')}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                Record cash back
+                className="trn-btn">
+                <FiArrowDownLeft size={14} aria-hidden="true" /> Record cash back
               </button>
               <button onClick={() => setKhataModal({ employee: detail.employee._id, name: '', note: '' })}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                + New book
+                className="trn-btn">
+                <FiPlus size={14} aria-hidden="true" /> New book
               </button>
               <button onClick={() => setWalletModal({
                 employee: detail.employee._id,
@@ -1481,8 +1591,8 @@ export default function AdminKhata() {
                 openingBalance: detail.wallet?.openingBalance || 0,
                 note: detail.wallet?.note || '',
               })}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                Wallet settings
+                className="trn-btn">
+                <FiSettings size={14} aria-hidden="true" /> Wallet settings
               </button>
                 </>
               )}
@@ -1495,50 +1605,57 @@ export default function AdminKhata() {
                 khataName: (detail.khatas || []).find((k) => k._id === viewKhata)?.name || '',
                 from: '', to: '', report: 'entries', bills: true,
               })}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">
-                Statement PDF
+                className="trn-btn">
+                <FiFileText size={14} aria-hidden="true" /> Statement PDF
               </button>
             </div>
           </div>
 
           {/* Their books — a breakdown of where the one wallet went, not
               balances of their own. */}
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Books</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+          <div className="prm-head">
+            <span className="prm-head-title">Books</span>
+            <span className="prm-head-sub">{(detail.khatas || []).length}</span>
+          </div>
+          <div className="kh-book-grid">
             {(detail.khatas || []).map((k) => {
               const active = viewKhata === k._id;
               return (
                 <div key={k._id}
-                  className={`bg-white shadow rounded-lg p-4 ${active ? 'ring-2 ring-gray-900' : ''} ${k.isActive ? '' : 'opacity-60'}`}>
-                  <div className="flex items-start justify-between gap-2">
+                  className={`kh-book${active ? ' is-on' : ''}${k.isActive ? '' : ' is-closed'}`}>
+                  <div className="kh-book-head">
+                    <span className="kh-book-icon" aria-hidden="true"><FiBookOpen size={17} /></span>
                     <div className="min-w-0">
-                      <p className="font-medium text-gray-900 truncate">{k.name}</p>
-                      <p className="text-xs text-gray-500">
-                        {k.isDefault ? 'Default · ' : ''}
-                        {k.isActive ? 'Open' : (k.closedByOwner ? 'Closed by the employee' : 'Closed')}
-                      </p>
-                      {/* Shared books total every contributor's spending, so the
-                          figure to the right is not this person's alone. */}
-                      {k.shared && <p className="mt-1"><SharedPill khata={k} /></p>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-semibold text-gray-900">{money(k.spent)}</p>
-                      <p className="text-xs text-gray-500">spent</p>
+                      <p className="kh-book-name">{k.name}</p>
+                      <div className="kh-tags">
+                        {k.isDefault && <span className="kh-pill is-accent">Default</span>}
+                        <span className={`kh-pill${k.isActive ? ' is-green' : ''}`}>
+                          {k.isActive ? 'Open' : (k.closedByOwner ? 'Closed by the employee' : 'Closed')}
+                        </span>
+                        {/* Shared books total every contributor's spending, so the
+                            figure below is not this person's alone. */}
+                        {k.shared && <SharedPill khata={k} />}
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 mt-2">
+                  <div className="kh-book-figure">
+                    <span className="kh-book-spent-value">{money(k.spent)}</span>
+                    <span className="kh-acct-cap">spent</span>
+                  </div>
+                  <p className="kh-book-count">
                     {k.entryCount === 1 ? '1 entry' : `${k.entryCount || 0} entries`}
                     {k.lastEntryAt ? ` · last ${fmtDate(k.lastEntryAt)}` : ''}
                   </p>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <button onClick={() => setViewKhata(active ? '' : k._id)}
-                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
+                  <div className="kh-book-foot">
+                    <button onClick={() => setViewKhata(active ? '' : k._id)} aria-pressed={active}
+                      className={`trn-btn kh-mini${active ? ' is-on' : ''}`}>
+                      <FiList size={13} aria-hidden="true" />
                       {active ? 'Show all entries' : 'Show only this'}
                     </button>
                     {!viewOnly && (
                       <button onClick={() => openEntry(detail.employee._id, 'from_employee', k._id, 'expense')}
-                        className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
-                        Add expense
+                        className="trn-btn kh-mini">
+                        <FiPlus size={13} aria-hidden="true" /> Add expense
                       </button>
                     )}
                     <button onClick={() => setSettingsModal({
@@ -1549,15 +1666,15 @@ export default function AdminKhata() {
                       spent: k.spent,
                       note: k.note || '',
                     })}
-                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
-                      Settings
+                      className="trn-btn kh-mini">
+                      <FiSettings size={13} aria-hidden="true" /> Settings
                     </button>
                     {/* Straight from the card, for the people who may — an
                         employee can close their own book but never re-open it. */}
                     {!k.isActive && mayReopen && (
                       <button onClick={() => reopenBook(k)}
-                        className="text-xs text-emerald-700 hover:text-emerald-900 hover:underline">
-                        Re-open
+                        className="trn-btn kh-mini text-emerald-700">
+                        <FiRotateCcw size={13} aria-hidden="true" /> Re-open
                       </button>
                     )}
                     <button onClick={() => setStatementModal({
@@ -1567,8 +1684,8 @@ export default function AdminKhata() {
                       khataName: k.name,
                       from: '', to: '', report: 'entries', bills: true,
                     })}
-                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
-                      Statement PDF
+                      className="trn-btn kh-mini">
+                      <FiFileText size={13} aria-hidden="true" /> Statement PDF
                     </button>
                   </div>
                 </div>
@@ -1576,6 +1693,14 @@ export default function AdminKhata() {
             })}
           </div>
 
+          <div className="prm-head">
+            <span className="prm-head-title">Entries</span>
+            {viewKhata && (
+              <span className="prm-head-sub">
+                {(detail.khatas || []).find((k) => k._id === viewKhata)?.name || ''}
+              </span>
+            )}
+          </div>
           <EntryTable
             entries={viewKhata
               ? (detail.entries || []).filter((e) => String(e.khata) === viewKhata)
@@ -1591,113 +1716,115 @@ export default function AdminKhata() {
       {/* ---------------- Ledger ---------------- */}
       {tab === 'ledger' && (
         <div>
-          <div className="bg-white shadow rounded-lg px-4 py-3.5 mb-4">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* A real form, so Enter applies the search immediately rather
-                  than making somebody wait out the debounce they cannot see. */}
-              <form
-                onSubmit={(e) => { e.preventDefault(); setLedgerQuery(ledgerSearch); }}
-                className="flex items-center gap-2 flex-1 min-w-[16rem]">
-                <div className="relative flex-1">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
-                  <input
-                    value={ledgerSearch}
-                    onChange={(e) => setLedgerSearch(e.target.value)}
-                    placeholder="Search by remark, amount, category or reference"
-                    aria-label="Search the ledger"
-                    className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
-                </div>
-                <button type="submit" className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 shrink-0">
-                  Search
-                </button>
-              </form>
+          <div className="pb-toolbar kh-toolbar">
+            {/* A real form, so Enter applies the search immediately rather
+                than making somebody wait out the debounce they cannot see. */}
+            <form
+              onSubmit={(e) => { e.preventDefault(); setLedgerQuery(ledgerSearch); }}
+              className="kh-search-form">
+              <label className="trn-search">
+                <FiSearch size={15} className="opacity-50 shrink-0" aria-hidden="true" />
+                <input
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  placeholder="Search by remark, amount, category or reference"
+                  aria-label="Search the ledger" />
+              </label>
+              <button type="submit" className="trn-btn is-primary accent-bg text-white">
+                Search
+              </button>
+            </form>
 
-              <div className="min-w-[220px]">
-                <SearchableSelect
-                  value={ledgerFilter.employee}
-                  onChange={(e) => setLedgerFilter({ ...ledgerFilter, employee: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                  <option value="">Everyone</option>
-                  {peopleOptions(people, personLabel)}
-                </SearchableSelect>
-              </div>
-              <select value={ledgerFilter.status}
-                onChange={(e) => setLedgerFilter({ ...ledgerFilter, status: e.target.value })}
-                aria-label="Filter by status"
-                className="border rounded-lg px-3 py-2 text-sm text-gray-700">
-                <option value="">Any status</option>
-                {['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'].map((v) => (
-                  <option key={v} value={v}>{STATUS_LABELS[v] || v}</option>
-                ))}
-              </select>
-              {/* Goes out as ?movement=, never ?type= — see MOVEMENT_FILTERS. */}
-              <select value={ledgerFilter.movement}
-                onChange={(e) => setLedgerFilter({ ...ledgerFilter, movement: e.target.value })}
-                aria-label="Filter by type of entry"
-                className="border rounded-lg px-3 py-2 text-sm text-gray-700">
-                <option value="">Any type</option>
-                {MOVEMENT_FILTERS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
-              </select>
-              <input type="date" value={ledgerFilter.from} aria-label="From date"
-                onChange={(e) => setLedgerFilter({ ...ledgerFilter, from: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
-              <input type="date" value={ledgerFilter.to} aria-label="To date"
-                onChange={(e) => setLedgerFilter({ ...ledgerFilter, to: e.target.value })}
-                className="border rounded-lg px-3 py-2 text-sm text-gray-700" />
-              {/* The same order the Date column header drives, offered here too
-                  because the filters are where somebody looks for it. */}
-              <DateSortButton dir={dateDir} onToggle={toggleDateDir} compact />
-
-              <div className="flex flex-wrap items-center gap-3 ml-auto shrink-0">
-                {ledgerActiveCount > 0 && (
-                  <button type="button" onClick={clearLedgerFilters} className="text-xs text-gray-600 hover:underline">
-                    Clear {ledgerActiveCount === 1 ? 'filter' : 'filters'}
-                  </button>
-                )}
-                <span className="text-xs text-gray-500 whitespace-nowrap">
-                  {visibleEntries.length === entries.length
-                    ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`
-                    : `${visibleEntries.length} of ${entries.length}`}
-                </span>
-                {/* Same download as the overview. It is a whole workbook —
-                    wallets, books and the ledger — built by a fresh query on
-                    the server, so it honours the person, the status and the two
-                    dates. It does NOT narrow by the type filter or the text
-                    box: /khata/reports/export takes neither, and the text
-                    search is applied here over the rows already loaded. */}
-                {mayExport && (
-                  <button type="button" onClick={exportXlsx}
-                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                    Export to Excel
-                  </button>
-                )}
-              </div>
+            <div className="kh-filter-person">
+              <SearchableSelect
+                value={ledgerFilter.employee}
+                onChange={(e) => setLedgerFilter({ ...ledgerFilter, employee: e.target.value })}
+                className="w-full trn-select">
+                <option value="">Everyone</option>
+                {peopleOptions(people, personLabel)}
+              </SearchableSelect>
             </div>
-            {/* The server caps the ledger at its 200 most recent matching rows.
-                Saying so is the difference between "there is nothing older" and
-                "you have not asked for anything older yet". */}
-            {entries.length >= 200 && (
-              <p className="text-xs text-amber-700 mt-2">
-                Showing the 200 most recent entries that match these filters, and searching within them.
-                Narrow the dates or pick a person to look further back.
-              </p>
-            )}
+            <select value={ledgerFilter.status}
+              onChange={(e) => setLedgerFilter({ ...ledgerFilter, status: e.target.value })}
+              aria-label="Filter by status"
+              className="trn-select">
+              <option value="">Any status</option>
+              {['AwaitingApproval', 'Pending', 'Approved', 'Rejected', 'Reversed'].map((v) => (
+                <option key={v} value={v}>{STATUS_LABELS[v] || v}</option>
+              ))}
+            </select>
+            {/* Goes out as ?movement=, never ?type= — see MOVEMENT_FILTERS. */}
+            <select value={ledgerFilter.movement}
+              onChange={(e) => setLedgerFilter({ ...ledgerFilter, movement: e.target.value })}
+              aria-label="Filter by type of entry"
+              className="trn-select">
+              <option value="">Any type</option>
+              {MOVEMENT_FILTERS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+            <input type="date" value={ledgerFilter.from} aria-label="From date"
+              onChange={(e) => setLedgerFilter({ ...ledgerFilter, from: e.target.value })}
+              className="trn-select" />
+            <input type="date" value={ledgerFilter.to} aria-label="To date"
+              onChange={(e) => setLedgerFilter({ ...ledgerFilter, to: e.target.value })}
+              className="trn-select" />
+            {/* The date order of the rows below (newest or oldest first). */}
+            <DateSortButton dir={dateDir} onToggle={toggleDateDir} compact />
+
+            <div className="kh-toolbar-end">
+              {ledgerActiveCount > 0 && (
+                <button type="button" onClick={clearLedgerFilters} className="trn-btn kh-mini">
+                  <FiX size={13} aria-hidden="true" /> Clear {ledgerActiveCount === 1 ? 'filter' : 'filters'}
+                </button>
+              )}
+              <span className="kh-count">
+                {visibleEntries.length === entries.length
+                  ? `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}`
+                  : `${visibleEntries.length} of ${entries.length}`}
+              </span>
+              {/* Same download as the overview. It is a whole workbook —
+                  wallets, books and the ledger — built by a fresh query on
+                  the server, so it honours the person, the status and the two
+                  dates. It does NOT narrow by the type filter or the text
+                  box: /khata/reports/export takes neither, and the text
+                  search is applied here over the rows already loaded. */}
+              {mayExport && (
+                <button type="button" onClick={exportXlsx} className="trn-btn">
+                  <FiDownload size={14} aria-hidden="true" /> Export to Excel
+                </button>
+              )}
+            </div>
           </div>
+          {/* The server caps the ledger at its 200 most recent matching rows.
+              Saying so is the difference between "there is nothing older" and
+              "you have not asked for anything older yet". */}
+          {entries.length >= 200 && (
+            <p className="kh-cap-note">
+              <FiAlertTriangle size={13} aria-hidden="true" /> Showing the 200 most recent entries.
+            </p>
+          )}
           <EntryTable entries={visibleEntries}
             onReverse={viewOnly ? undefined : reverse}
             onEdit={viewOnly ? undefined : openExpenseEdit}
             onConfirm={viewOnly ? undefined : confirmExpense}
-            onViewBill={viewReceipt} showEmployee
-            dateDir={dateDir} onToggleDate={toggleDateDir} />
+            onViewBill={viewReceipt} showEmployee />
         </div>
       )}
 
       {/* ---------------- Reimburse (2026-09-27) ----------------
           Claims to pay back: somebody spent past their advance and asked for it. */}
-      {tab === 'reimburse' && renderPayouts(reimburseRows, {
-        title: 'No claims to pay back',
-        hint: 'When somebody has spent past their advance and asks to be paid back, the claim waits here.',
-      })}
+      {tab === 'reimburse' && (
+        <div>
+          <div className="prm-head kh-head-first">
+            <span className="prm-head-title">Claims to pay back</span>
+            {reimburseRows.length > 0 && (
+              <span className="prm-head-sub">{reimburseRows.length} · {money(sumOf(reimburseRows))}</span>
+            )}
+          </div>
+          {renderPayouts(reimburseRows, {
+            title: 'No claims to pay back',
+          })}
+        </div>
+      )}
 
       {/* ---------------- Advance ----------------
           The executives' sanction queue first (SuperAdmin / CEO / MD).
@@ -1705,58 +1832,60 @@ export default function AdminKhata() {
           none — an approved request drops into the list below, where the
           accounts team chooses the account it comes out of. */}
       {tab === 'advance' && isApprover && (
-        <div className="mb-6">
-          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
-            Waiting on the CEO/MD
-            {sanctions.length > 0 && (
-              <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
-                {sanctions.length}
-              </span>
-            )}
-          </h3>
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div>
+          <div className="prm-head kh-head-first">
+            <span className="kh-head-title">
+              <span className="prm-head-title">Waiting on the CEO/MD</span>
+              {sanctions.length > 0 && (
+                <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
+                  {sanctions.length}
+                </span>
+              )}
+            </span>
+            {sanctions.length > 0 && <span className="prm-head-sub">{money(sumOf(sanctions))}</span>}
+          </div>
+          <div className="prm-list">
             {sanctions.length === 0 ? (
-              <div className="px-4 py-8 text-center">
-                <p className="text-gray-700 font-medium">No advance requests waiting</p>
-                <p className="text-gray-500 text-xs mt-1">
-                  When somebody asks for an advance, it waits here for your decision before the accounts team sees it.
-                </p>
+              <div className="trn-empty">
+                <span className="trn-empty-icon"><FiInbox size={24} /></span>
+                <p className="text-sm font-semibold">No advance requests waiting</p>
               </div>
             ) : (
               <>
               {/* ONE DECISION EACH (2026-09-29, web and app): no Select all and
                   no tick boxes here — every request keeps its own Approve and
                   Decline. */}
-              <ul className="divide-y divide-gray-100">
+              <ul>
                 {sanctions.map((e) => (
-                  <li key={e._id} className="px-4 py-3">
-                    {/* Text beside the buttons, buttons on the right — a long
-                        purpose used to push them onto a line of their own at the
-                        left. Below 16rem of text they wrap, still to the right. */}
-                    <div className="flex flex-wrap justify-between items-start gap-3">
-                      <div className="min-w-0 grow basis-64">
-                        <p className="font-medium text-gray-900">
-                          {e.employee?.name || 'Employee'} · {money(e.amount)}
-                        </p>
-                        {e.purpose && <p className="text-sm text-gray-700 mt-1 break-words">{e.purpose}</p>}
-                        {/* What they are already carrying. Without it the
-                            decision is being made blind. */}
-                        <p className="text-xs text-gray-500 mt-1">
-                          Asked {fmtDate(e.date)} · already holding {money(e.employeeBalance)}
+                  <li key={e._id} className="kh-q">
+                    <span className="kh-lead"><PersonAvatar user={avatarUser(e.employee)} /></span>
+                    <div className="min-w-0">
+                      <p className="kh-name">{e.employee?.name || 'Employee'}</p>
+                      {e.purpose && <p className="kh-purpose">{e.purpose}</p>}
+                      {/* What they are already carrying. Without it the
+                          decision is being made blind. */}
+                      <div className="kh-meta">
+                        <span><FiCalendar size={12} aria-hidden="true" />Asked {fmtDate(e.date)}</span>
+                        <span>
+                          <FiCreditCard size={12} aria-hidden="true" />
+                          Already holding {money(e.employeeBalance)}
                           {e.employeeCreditLimit > 0 && ` of a ${money(e.employeeCreditLimit)} limit`}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">{e.code}</p>
+                        </span>
+                        <span className="kh-code">{e.code}</span>
                       </div>
-                      <div className="ml-auto flex gap-2 shrink-0">
-                        <button onClick={() => setSanctionModal({ entry: e, approve: true, note: '' })}
-                          className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
-                          Approve
-                        </button>
-                        <button onClick={() => setSanctionModal({ entry: e, approve: false, note: '' })}
-                          className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                          Decline
-                        </button>
-                      </div>
+                    </div>
+                    <div className="kh-amt" title="Company → employee">
+                      <span className="kh-amt-value text-emerald-700">{money(e.amount)}</span>
+                    </div>
+                    <div className="kh-row-actions">
+                      <button onClick={() => setSanctionModal({ entry: e, approve: true, note: '' })}
+                        className="trn-btn kh-mini rg-approve">
+                        <FiCheck size={14} aria-hidden="true" /> Approve
+                      </button>
+                      <button onClick={() => setSanctionModal({ entry: e, approve: false, note: '' })}
+                        className="trn-btn kh-mini">
+                        Decline
+                      </button>
                     </div>
                   </li>
                 ))}
@@ -1769,19 +1898,19 @@ export default function AdminKhata() {
       {/* Not for the CEO/MD (2026-09-29): paying out is the accounts team's. */}
       {tab === 'advance' && !execView && (
         <div>
-          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
-            Approved — to pay out
-            {advanceRows.length > 0 && (
-              <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
-                {advanceRows.length}
-              </span>
-            )}
-          </h3>
+          <div className={`prm-head${isApprover ? '' : ' kh-head-first'}`}>
+            <span className="kh-head-title">
+              <span className="prm-head-title">Approved — to pay out</span>
+              {advanceRows.length > 0 && (
+                <span className="grid min-w-[20px] place-items-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white">
+                  {advanceRows.length}
+                </span>
+              )}
+            </span>
+            {advanceRows.length > 0 && <span className="prm-head-sub">{money(sumOf(advanceRows))}</span>}
+          </div>
           {renderPayouts(advanceRows, {
             title: 'No advances to pay out',
-            hint: isApprover
-              ? 'Once you approve a request above, it waits here for the accounts team to pay it.'
-              : 'An advance lands here once the CEO/MD has approved it. Choose the account and pay it out.',
           })}
         </div>
       )}
@@ -1792,10 +1921,12 @@ export default function AdminKhata() {
           refunds to confirm. */}
       {tab === 'approval' && (
         <div>
-          <h3 className="mb-2 text-sm font-semibold text-gray-700">To confirm or pay</h3>
+          <div className="prm-head kh-head-first">
+            <span className="prm-head-title">To confirm or pay</span>
+            {otherRows.length > 0 && <span className="prm-head-sub">{otherRows.length}</span>}
+          </div>
           {renderPayouts(otherRows, {
             title: 'Nothing waiting',
-            hint: 'Cash handed back and payouts above an operator’s limit land here.',
           })}
         </div>
       )}
@@ -1805,80 +1936,92 @@ export default function AdminKhata() {
           this is a review queue rather than an approval one: everything here has
           already counted, and the action is to reject what should not stand. */}
       {tab === 'approval' && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Expenses and refunds to confirm</h3>
-          <p className="text-xs text-gray-500 mb-2">
-            Already counted against the employee&apos;s advance, but not yet checked by anyone here. Confirm what
-            stands — which also locks it, so neither side can edit it afterwards. Correct a wrong figure while
-            you still can, or reject it: that puts it back onto their advance and tells them why.
-          </p>
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div>
+          <div className="prm-head">
+            <span className="prm-head-title">Expenses and refunds to confirm</span>
+            {expenses.length > 0 && <span className="prm-head-sub">{expenses.length}</span>}
+          </div>
+          <div className="prm-list">
             {expenses.length === 0 ? (
-              <div className="px-4 py-8 text-center text-gray-500 text-sm">
-                Nothing waiting — every recorded expense has been confirmed.
+              <div className="trn-empty">
+                <span className="trn-empty-icon"><FiCheckCircle size={24} /></span>
+                <p className="text-sm font-semibold">Nothing waiting — every recorded expense has been confirmed.</p>
               </div>
             ) : (
               <>
               {!viewOnly && (
                 <SelectionBar sel={expensePick} total={expenses.length}>
                   <button type="button" onClick={confirmTicked} disabled={saving}
-                    className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
-                    Confirm {expensePick.selected.length}
+                    className="trn-btn kh-mini rg-approve">
+                    <FiCheck size={14} aria-hidden="true" /> Confirm {expensePick.selected.length}
                   </button>
                   <button type="button" onClick={rejectTicked} disabled={saving}
-                    className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50 disabled:opacity-50">
+                    className="trn-btn kh-mini is-danger">
                     Reject {expensePick.selected.length}
                   </button>
                 </SelectionBar>
               )}
-              <ul className="divide-y divide-gray-100">
+              <ul>
                 {expenses.map((e) => (
-                  <li key={e._id} className="px-4 py-3 flex flex-wrap justify-between items-start gap-3">
+                  <li key={e._id}
+                    className={`kh-q${viewOnly ? '' : ' has-pick'}${!viewOnly && expensePick.isOn(e._id) ? ' is-picked' : ''}`}>
                     {!viewOnly && <PickBox sel={expensePick} entry={e} />}
-                    <div className="min-w-0 grow basis-64">
-                      <p className="font-medium text-gray-900">
-                        {e.employee?.name || 'Employee'} · {money(e.amount)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {e.khataName ? `${e.khataName} · ` : ''}{fmtDate(e.date)} · {e.code}
-                        {!e.raisedByEmployee && ' · recorded by the company'}
-                      </p>
-                      {e.purpose && <p className="text-sm text-gray-700 mt-1">{e.purpose}</p>}
+                    <span className="kh-lead"><PersonAvatar user={avatarUser(e.employee)} /></span>
+                    <div className="min-w-0">
+                      <p className="kh-name">{e.employee?.name || 'Employee'}</p>
+                      <div className="kh-meta">
+                        {e.khataName && <span><FiBook size={12} aria-hidden="true" />{e.khataName}</span>}
+                        <span><FiCalendar size={12} aria-hidden="true" />{fmtDate(e.date)}</span>
+                        <span className="kh-code">{e.code}</span>
+                        {!e.raisedByEmployee && <span>Recorded by the company</span>}
+                      </div>
+                      {e.purpose && <p className="kh-purpose">{e.purpose}</p>}
                       {/* Corrected since it was filed? Say so — the figure being
                           confirmed may not be the one first recorded. */}
                       {e.edits?.length > 0 && (
-                        <p className="text-xs text-amber-700 mt-1">
-                          Edited {e.edits.length === 1 ? 'once' : `${e.edits.length} times`}:{' '}
-                          {e.edits[e.edits.length - 1].summary}
+                        <p className="kh-note is-amber">
+                          <FiEdit2 size={12} aria-hidden="true" />
+                          <span>
+                            Edited {e.edits.length === 1 ? 'once' : `${e.edits.length} times`}:{' '}
+                            {e.edits[e.edits.length - 1].summary}
+                          </span>
                         </p>
                       )}
                       {/* The bill is mandatory on these, so a row without one is
                           worth noticing rather than passing over quietly. */}
-                      <div className="flex flex-wrap items-center gap-3">
+                      <div className="kh-billrow">
                         {e.hasAttachment ? (
                           <button onClick={() => viewReceipt(e)}
-                            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
+                            className="trn-btn kh-mini kh-link">
+                            <FiPaperclip size={13} aria-hidden="true" />
                             {e.attachmentCount > 1 ? `View ${e.attachmentCount} bills` : 'View bill'}
                           </button>
                         ) : (
-                          <span className="text-xs text-amber-700">No bill attached</span>
+                          <span className="kh-warn">
+                            <FiAlertTriangle size={12} aria-hidden="true" /> No bill attached
+                          </span>
                         )}
                         {/* Super Admins only — nobody else is sent the coordinates. */}
                         <FiledFrom location={e.filedLocation} />
                       </div>
                     </div>
+                    <div className="kh-amt" title={e.direction === 'to_employee' ? 'Company → employee' : 'Employee → company'}>
+                      <span className={`kh-amt-value ${e.direction === 'to_employee' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {money(e.amount)}
+                      </span>
+                    </div>
                     {!viewOnly && (
-                    <div className="ml-auto flex flex-wrap justify-end gap-2 shrink-0">
+                    <div className="kh-row-actions">
                       <button onClick={() => confirmExpense(e)}
-                        className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700">
-                        Confirm
+                        className="trn-btn kh-mini rg-approve">
+                        <FiCheck size={14} aria-hidden="true" /> Confirm
                       </button>
                       <button onClick={() => openExpenseEdit(e)}
-                        className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                        Edit
+                        className="trn-icon-btn" aria-label="Edit" title="Edit">
+                        <FiEdit2 size={15} />
                       </button>
                       <button onClick={() => reverse(e, true)}
-                        className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50">
+                        className="trn-btn kh-mini is-danger">
                         Reject
                       </button>
                     </div>
@@ -1895,26 +2038,39 @@ export default function AdminKhata() {
       {/* ---------------- Accounts / operators (SuperAdmin) ---------------- */}
       {tab === 'accounts' && isSuperAdmin && (
         <div>
-          <p className="text-sm text-gray-500 mb-3">
-            Who may hand company money to staff, out of which account, and how much they may release before
-            someone else has to sign it off. Holding the cashbook permission alone pays nobody.
-          </p>
-          <div className="bg-white shadow rounded-lg overflow-hidden">
-            <ul className="divide-y divide-gray-100">
+          {accounts.length === 0 ? (
+            <div className="prm-list">
+              <div className="trn-empty">
+                <span className="trn-empty-icon"><FiCreditCard size={24} /></span>
+                <p className="text-sm font-semibold">No cash accounts</p>
+              </div>
+            </div>
+          ) : (
+            <div className="kh-acct-grid">
               {accounts.map((a) => (
-                <li key={a._id} className="px-4 py-3 flex justify-between items-center gap-3">
-                  <div>
-                    <p className="font-medium text-gray-900">{a.name}</p>
-                    <p className="text-xs text-gray-500">{a.type} · {money(a.currentBalance)}</p>
+                <div key={a._id} className="kh-acct">
+                  <div className="kh-acct-head">
+                    <span className="kh-acct-icon" aria-hidden="true"><FiCreditCard size={18} /></span>
+                    <div className="min-w-0">
+                      <p className="kh-acct-name">{a.name}</p>
+                      {a.type && <span className="kh-acct-type">{a.type}</span>}
+                    </div>
                   </div>
-                  <button onClick={() => openOperators(a._id)}
-                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-                    Manage operators
-                  </button>
-                </li>
+                  <div>
+                    <p className={`kh-acct-bal${Number(a.currentBalance) < 0 ? ' text-rose-700' : ''}`}>
+                      {money(a.currentBalance)}
+                    </p>
+                    <p className="kh-acct-cap">Balance</p>
+                  </div>
+                  <div className="kh-acct-foot">
+                    <button onClick={() => openOperators(a._id)} className="trn-btn kh-mini">
+                      <FiUsers size={13} aria-hidden="true" /> Manage operators
+                    </button>
+                  </div>
+                </div>
               ))}
-            </ul>
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1931,13 +2087,15 @@ export default function AdminKhata() {
 
       {entryModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={submitEntry} className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Record a cashbook entry</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Fields marked <span aria-hidden="true" className="text-red-600">*</span> are required.
-            </p>
+          <form onSubmit={submitEntry} className="bg-white kh-modal w-full max-w-lg p-5 my-8">
+            <div className="kh-modal-head mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Record a cashbook entry</h3>
+              <button type="button" onClick={() => setEntryModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
 
-            <label className="block text-sm text-gray-700 mb-1">Employee<Req /></label>
+            <label className="prm-label">Employee<Req /></label>
             <div className="mb-3">
               <SearchableSelect required
                 value={entryForm.employee}
@@ -1947,7 +2105,7 @@ export default function AdminKhata() {
                   setEntryModal({ ...entryModal, khatas: [], data: { ...entryForm, employee: v, khata: '' } });
                   loadKhatasFor(v);
                 }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                className="w-full prm-input">
                 <option value="">Choose an employee…</option>
                 {peopleOptions(people, (p) => (
                   `${personLabel(p)}${p.balance ? ` — holds ${money(p.balance)}` : ''}`
@@ -1955,28 +2113,30 @@ export default function AdminKhata() {
               </SearchableSelect>
             </div>
 
-            <label className="block text-sm text-gray-700 mb-1">Which way did the money go?</label>
+            <label className="prm-label">Which way did the money go?</label>
             {/* Stacked below sm: at phone widths a half of this modal is ~140px,
                 and both labels are wider than that, so a two-column grid wrapped
                 each pill onto two lines and the selected/unselected pair became
                 hard to tell apart at a glance. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+            <div className="kh-dirs mb-3">
               {[['to_employee', 'Company → employee'], ['from_employee', 'Employee → company']].map(([v, label]) => (
-                <button key={v} type="button"
+                <button key={v} type="button" aria-pressed={entryForm.direction === v}
                   onClick={() => setEntryModal({
                     ...entryModal,
                     // Switching direction resets the reason, because half the
                     // reasons only make sense one way round.
                     data: { ...entryForm, direction: v, type: v === 'to_employee' ? 'advance' : 'settlement', khata: '' },
                   })}
-                  className={`px-3 py-2 rounded-lg border text-sm ${
-                    entryForm.direction === v ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 hover:bg-gray-50'}`}>
+                  className={`kh-dir-btn${entryForm.direction === v ? ' is-on' : ''}`}>
+                  {v === 'to_employee'
+                    ? <FiArrowUpRight size={15} aria-hidden="true" />
+                    : <FiArrowDownLeft size={15} aria-hidden="true" />}
                   {label}
                 </button>
               ))}
             </div>
 
-            <label className="block text-sm text-gray-700 mb-1">Reason</label>
+            <label className="prm-label">Reason</label>
             <select value={entryForm.type}
               onChange={(e) => {
                 const type = e.target.value;
@@ -1995,7 +2155,7 @@ export default function AdminKhata() {
                   },
                 });
               }}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+              className="prm-input mb-3">
               {ENTRY_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
 
@@ -2005,10 +2165,10 @@ export default function AdminKhata() {
                 as bad as a wrong amount. */}
             {isKhataEntry && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Book<Req /></label>
+                <label className="prm-label">Book<Req /></label>
                 <select value={entryForm.khata} required
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, khata: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
+                  className="prm-input mb-1"
                   disabled={!entryForm.employee}>
                   <option value="">
                     {entryForm.employee ? 'Choose a book…' : 'Choose an employee first'}
@@ -2019,17 +2179,12 @@ export default function AdminKhata() {
                     </option>
                   ))}
                 </select>
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs text-gray-500">
-                    {entryForm.type === 'refund'
-                      ? 'Which book the money is coming back into.'
-                      : 'Which book this spend is filed under.'}
-                  </p>
+                <div className="flex items-center justify-end mb-3">
                   {entryForm.employee && (
                     <button type="button"
                       onClick={() => setKhataModal({ employee: entryForm.employee, name: '', note: '', fromEntry: true })}
-                      className="text-xs text-gray-600 hover:text-gray-900 hover:underline">
-                      + New book
+                      className="trn-btn kh-mini">
+                      <FiPlus size={13} aria-hidden="true" /> New book
                     </button>
                   )}
                 </div>
@@ -2040,25 +2195,25 @@ export default function AdminKhata() {
                 modal is ~138px on a phone, too tight for a date field. */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
+                <label className="prm-label">Amount<Req /></label>
                 <input type="number" min="0.01" step="0.01" required value={entryForm.amount}
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, amount: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-lg" placeholder="0.00" />
+                  className="prm-input kh-amount-input" placeholder="0.00" />
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Date</label>
+                <label className="prm-label">Date</label>
                 <input type="date" value={entryForm.date}
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, date: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2" />
+                  className="w-full prm-input" />
               </div>
             </div>
 
             {movesCash ? (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Company account<Req /></label>
+                <label className="prm-label">Company account<Req /></label>
                 <select value={entryForm.cashAccount} required
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, cashAccount: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1">
+                  className="prm-input mb-1">
                   <option value="">Choose an account…</option>
                   {accounts.map((a) => (
                     <option key={a._id} value={a._id}>{a.name} — {money(a.currentBalance)}</option>
@@ -2066,44 +2221,40 @@ export default function AdminKhata() {
                 </select>
                 {/* Tell them what will happen before they commit to it. */}
                 {willPark ? (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-3">
-                    This is above your limit on that account, so it will be sent for approval. No cash moves yet.
+                  <p className="kh-callout is-amber mb-3">
+                    <FiAlertTriangle size={13} aria-hidden="true" />
+                    <span>Above your limit — sent for approval; no cash moves yet.</span>
                   </p>
                 ) : (
                   <p className="text-xs text-gray-500 mb-3">This will post immediately and move the cash.</p>
                 )}
               </>
             ) : (
-              <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5 mb-3">
-                {entryForm.type === 'refund'
-                  ? 'No company account is involved: the money never went back into the tin, it went back to the '
-                    + 'person who is holding the advance. This takes it off what the book has cost and adds it to '
-                    + 'what they are holding.'
-                  : 'No company account is involved: the cash left the tin when the advance was paid. This records '
-                    + 'what the advance was spent on and takes it off what they are holding.'}
+              <p className="kh-callout text-gray-500 mb-3">
+                No company account is involved.
               </p>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">What is it for?</label>
+            <label className="prm-label">What is it for?</label>
             <input type="text" value={entryForm.purpose}
               onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, purpose: e.target.value } })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
+              className="prm-input mb-3"
               placeholder="e.g. site material purchase" />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Mode</label>
+                <label className="prm-label">Mode</label>
                 <select value={entryForm.paymentMode}
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, paymentMode: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                  className="w-full prm-input">
                   {['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Adjustment', 'Other'].map((m) => <option key={m}>{m}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Reference</label>
+                <label className="prm-label">Reference</label>
                 <input type="text" value={entryForm.referenceNo}
                   onChange={(e) => setEntryModal({ ...entryModal, data: { ...entryForm, referenceNo: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2" placeholder="Optional" />
+                  className="w-full prm-input" placeholder="Optional" />
               </div>
             </div>
 
@@ -2114,15 +2265,14 @@ export default function AdminKhata() {
                 label="Receipts (optional)"
                 files={entryModal.files || []}
                 onFilesChange={(files) => setEntryModal((m) => (m ? { ...m, files } : m))}
-                hint="Images or PDFs, up to 5 MB each."
               />
             </div>
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setEntryModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Saving…' : willPark ? 'Send for approval' : 'Record it'}
               </button>
             </div>
@@ -2132,15 +2282,20 @@ export default function AdminKhata() {
 
       {approveModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={submitApproval} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {approveModal.entries ? `Approve ${approveModal.entries.length} entries` : 'Approve this entry'}
-            </h3>
+          <form onSubmit={submitApproval} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {approveModal.entries ? `Approve ${approveModal.entries.length} entries` : 'Approve this entry'}
+              </h3>
+              <button type="button" onClick={() => setApproveModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-sm text-gray-600 mt-1 mb-4">
               {approveModal.entries
                 ? `${money(sumOf(approveModal.entries))} in all, for ${
                   [...new Set(approveModal.entries.map((x) => x.employee?.name).filter(Boolean))].join(', ')
-                }. Each is checked on its own — anything that cannot go through is listed afterwards and stays here.`
+                }.`
                 : `${money(approveModal.entry.amount)} — ${approveModal.entry.employee?.name}.`}
               {' '}The cash moves as soon as you approve.
             </p>
@@ -2149,33 +2304,34 @@ export default function AdminKhata() {
               ? approveModal.entries.some((x) => x.affectsCompanyCash)
               : approveModal.entry.affectsCompanyCash) && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Pay from<Req /></label>
+                <label className="prm-label">Pay from<Req /></label>
                 <select value={approveModal.cashAccount} required
                   onChange={(e) => setApproveModal({ ...approveModal, cashAccount: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+                  className="prm-input mb-3">
                   <option value="">Choose an account…</option>
                   {accounts.filter((a) => a.canApprove).map((a) => (
                     <option key={a._id} value={a._id}>{a.name} — {money(a.currentBalance)}</option>
                   ))}
                 </select>
                 {accounts.filter((a) => a.canApprove).length === 0 && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-3">
-                    You are not an approver on any account. Ask a Super Admin to release this one.
+                  <p className="kh-callout is-amber mb-3">
+                    <FiAlertTriangle size={13} aria-hidden="true" />
+                    <span>You are not an approver on any account.</span>
                   </p>
                 )}
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">Note (optional)</label>
+            <label className="prm-label">Note (optional)</label>
             <input type="text" value={approveModal.note}
               onChange={(e) => setApproveModal({ ...approveModal, note: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4" />
+              className="prm-input mb-4" />
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setApproveModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Approving…' : approveModal.entries ? 'Approve & pay all' : 'Approve & pay'}
               </button>
             </div>
@@ -2189,23 +2345,24 @@ export default function AdminKhata() {
 
       {khataModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={submitKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              A separate heading for spending — a site, a vehicle, a particular job. It holds no money of its
-              own: expenses filed under it come out of the employee&apos;s one wallet, like every other book.
-            </p>
+          <form onSubmit={submitKhata} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Add a new book</h3>
+              <button type="button" onClick={() => setKhataModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
 
             {/* Opened from the People list rather than from inside a person,
                 so there is nobody chosen yet. */}
-            {!khataModal.employee && (
+            {(khataModal.pickEmployee || !khataModal.employee) && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Employee</label>
+                <label className="prm-label">Employee</label>
                 <div className="mb-3">
                   <SearchableSelect required
                     value={khataModal.employee}
                     onChange={(e) => setKhataModal({ ...khataModal, employee: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    className="w-full prm-input">
                     <option value="">Choose an employee…</option>
                     {peopleOptions(people, personLabel)}
                   </SearchableSelect>
@@ -2213,22 +2370,22 @@ export default function AdminKhata() {
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">What is it for?<Req /></label>
+            <label className="prm-label">What is it for?<Req /></label>
             <input type="text" required maxLength={80} value={khataModal.name}
               onChange={(e) => setKhataModal({ ...khataModal, name: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
+              className="prm-input mb-3"
               placeholder="e.g. Site A — materials" />
 
-            <label className="block text-sm text-gray-700 mb-1">Note (optional)</label>
+            <label className="prm-label">Note (optional)</label>
             <input type="text" value={khataModal.note}
               onChange={(e) => setKhataModal({ ...khataModal, note: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4" />
+              className="prm-input mb-4" />
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setKhataModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Opening…' : 'Open book'}
               </button>
             </div>
@@ -2241,18 +2398,23 @@ export default function AdminKhata() {
           the Download button off the bottom of the sheet. */}
       {statementModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={downloadStatement} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Statement PDF</h3>
+          <form onSubmit={downloadStatement} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head">
+              <h3 className="text-lg font-semibold text-gray-900">Statement PDF</h3>
+              <button type="button" onClick={() => setStatementModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-xs text-gray-500 mt-1 mb-4">
               {statementModal.khataName
-                ? <>A printable statement of <strong>{statementModal.khataName}</strong> for {statementModal.employeeName}.</>
-                : <>A printable statement of every book {statementModal.employeeName} holds.</>}
+                ? <><strong>{statementModal.khataName}</strong> · {statementModal.employeeName}</>
+                : <>{statementModal.employeeName} · every book</>}
             </p>
 
             {statementModal.khataName && (
               <button type="button"
                 onClick={() => setStatementModal({ ...statementModal, khata: '', khataName: '' })}
-                className="text-xs text-gray-600 hover:text-gray-900 hover:underline mb-3">
+                className="trn-btn kh-mini mb-3">
                 Cover every book instead
               </button>
             )}
@@ -2261,17 +2423,14 @@ export default function AdminKhata() {
                 server renders each one differently, so it is asked here rather
                 than handing over whichever one used to be hard-coded. */}
             <fieldset className="mb-3">
-              <legend className="block text-sm text-gray-700 mb-1">What should it show?</legend>
+              <legend className="prm-label">What should it show?</legend>
               <div className="space-y-1.5">
-                {REPORT_TYPES.map(([value, label, hint]) => (
+                {REPORT_TYPES.map(([value, label]) => (
                   <label key={value} className="flex items-start gap-2 text-sm text-gray-700">
                     <input type="radio" name="report" className="mt-1" value={value}
                       checked={statementModal.report === value}
                       onChange={() => setStatementModal({ ...statementModal, report: value })} />
-                    <span>
-                      {label}
-                      <span className="block text-xs text-gray-500">{hint}</span>
-                    </span>
+                    <span>{label}</span>
                   </label>
                 ))}
               </div>
@@ -2283,40 +2442,28 @@ export default function AdminKhata() {
               <input type="checkbox" className="mt-1"
                 checked={statementModal.bills !== false}
                 onChange={(e) => setStatementModal({ ...statementModal, bills: e.target.checked })} />
-              <span>
-                Attach the bills
-                <span className="block text-xs text-gray-500">
-                  Every bill in the period — photos, iPhone photos and PDF invoices — is attached in full at the
-                  end, one to a page, and each entry links to it, so the document stands on its own once it leaves
-                  here. It takes longer to build and the file is much larger.
-                </span>
-              </span>
+              <span>Attach the bills</span>
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">From</label>
+                <label className="prm-label">From</label>
                 <input type="date" value={statementModal.from}
                   onChange={(e) => setStatementModal({ ...statementModal, from: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  className="prm-input" />
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">To</label>
+                <label className="prm-label">To</label>
                 <input type="date" value={statementModal.to} max={today()}
                   onChange={(e) => setStatementModal({ ...statementModal, to: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 text-sm" />
+                  className="prm-input" />
               </div>
             </div>
-            <p className="text-xs text-gray-400 mt-2">
-              Leave both blank for everything to date. With a start date, the statement opens on the balance
-              carried in from before it.
-            </p>
-
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="kh-modal-foot mt-5">
               <button type="button" onClick={() => setStatementModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Building…' : 'Open PDF'}
               </button>
             </div>
@@ -2331,18 +2478,22 @@ export default function AdminKhata() {
           reversal. */}
       {expenseEdit && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={submitExpenseEdit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Correct this expense</h3>
+          <form onSubmit={submitExpenseEdit} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head mb-1">
+              <h3 className="text-lg font-semibold text-gray-900">Correct this expense</h3>
+              <button type="button" onClick={() => setExpenseEdit(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-xs text-gray-500 mb-4">
               {expenseEdit.entry.employee?.name || 'The employee'} · {expenseEdit.entry.code}.
-              It is already counted against their advance, so saving a different amount moves their wallet
-              straight away. They are told what changed.
+              Saving a different amount moves their wallet straight away.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Book</label>
+            <label className="prm-label">Book</label>
             <select value={expenseEdit.data.khata}
               onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, khata: e.target.value } })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+              className="prm-input mb-3">
               {expenseEdit.khatas.length === 0 && <option value={expenseEdit.data.khata}>{expenseEdit.entry.khataName || 'Their book'}</option>}
               {expenseEdit.khatas.map((k) => (
                 <option key={k._id} value={k._id}>{k.name}{k.isActive ? '' : ' (closed)'}</option>
@@ -2353,38 +2504,38 @@ export default function AdminKhata() {
                 spaces them once they stack into one column on a phone. */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Amount<Req /></label>
+                <label className="prm-label">Amount<Req /></label>
                 <input type="number" min="0.01" step="0.01" required value={expenseEdit.data.amount}
                   onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, amount: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+                  className="prm-input mb-3" />
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Date</label>
+                <label className="prm-label">Date</label>
                 <input type="date" value={expenseEdit.data.date}
                   onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, date: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+                  className="prm-input mb-3" />
               </div>
             </div>
 
-            <label className="block text-sm text-gray-700 mb-1">What was bought</label>
+            <label className="prm-label">What was bought</label>
             <input type="text" value={expenseEdit.data.purpose}
               onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, purpose: e.target.value } })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" />
+              className="prm-input mb-3" />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Paid by</label>
+                <label className="prm-label">Paid by</label>
                 <select value={expenseEdit.data.paymentMode}
                   onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, paymentMode: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3">
+                  className="prm-input mb-3">
                   {['Cash', 'Bank', 'UPI', 'Cheque', 'Card', 'Adjustment', 'Other'].map((m) => <option key={m}>{m}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-gray-700 mb-1">Reference</label>
+                <label className="prm-label">Reference</label>
                 <input type="text" value={expenseEdit.data.referenceNo}
                   onChange={(e) => setExpenseEdit({ ...expenseEdit, data: { ...expenseEdit.data, referenceNo: e.target.value } })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3" placeholder="Optional" />
+                  className="prm-input mb-3" placeholder="Optional" />
               </div>
             </div>
 
@@ -2400,15 +2551,14 @@ export default function AdminKhata() {
                 keep={expenseEdit.keep || []}
                 onKeepChange={(keep) => setExpenseEdit((m) => (m ? { ...m, keep } : m))}
                 onViewExisting={(i) => openBillInTab(billPath(expenseEdit.entry._id, i))}
-                hint="Take off any that are wrong, or add more. Images or PDFs, up to 5 MB each."
               />
             </div>
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setExpenseEdit(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Saving…' : 'Save changes'}
               </button>
             </div>
@@ -2421,17 +2571,21 @@ export default function AdminKhata() {
 
       {settingsModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={saveSettings} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Book settings</h3>
+          <form onSubmit={saveSettings} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head mb-1">
+              <h3 className="text-lg font-semibold text-gray-900">Book settings</h3>
+              <button type="button" onClick={() => setSettingsModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-xs text-gray-500 mb-4">
-              {money(settingsModal.spent)} spent under this heading so far. The advance limit is set on the
-              person&apos;s wallet, not here — a book holds no money of its own.
+              {money(settingsModal.spent)} spent so far.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Name<Req /></label>
+            <label className="prm-label">Name<Req /></label>
             <input type="text" required maxLength={80} value={settingsModal.name}
               onChange={(e) => setSettingsModal({ ...settingsModal, name: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-3"
+              className="prm-input mb-3"
               placeholder="e.g. Site A — materials" />
 
             {/* The fallback book for self-service. Exactly one per person, so
@@ -2441,12 +2595,7 @@ export default function AdminKhata() {
                 <input type="checkbox" className="mt-1"
                   checked={!!settingsModal.makeDefault}
                   onChange={(e) => setSettingsModal({ ...settingsModal, makeDefault: e.target.checked })} />
-                <span>
-                  Make this their default book
-                  <span className="block text-xs text-gray-500">
-                    Where a request lands when they do not pick a book.
-                  </span>
-                </span>
+                <span>Make this their default book</span>
               </label>
             )}
 
@@ -2478,21 +2627,22 @@ export default function AdminKhata() {
             ) : (
               // Said rather than hidden: somebody who can close a book here would
               // otherwise go looking for the way to open it again.
-              <p className="text-xs text-gray-500 mb-3">
-                This book is closed. Only the CEO, MD, an Admin or a cashbook manager can re-open it.
+              <p className="text-xs text-gray-500 mb-3"
+                title="Only the CEO, MD, an Admin or a cashbook manager can re-open it.">
+                This book is closed.
               </p>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">Note</label>
+            <label className="prm-label">Note</label>
             <input type="text" value={settingsModal.note}
               onChange={(e) => setSettingsModal({ ...settingsModal, note: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4" />
+              className="prm-input mb-4" />
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setSettingsModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </div>
@@ -2502,45 +2652,47 @@ export default function AdminKhata() {
 
       {walletModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={saveWallet} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Wallet — {walletModal.name}</h3>
+          <form onSubmit={saveWallet} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head mb-1">
+              <h3 className="text-lg font-semibold text-gray-900">Wallet — {walletModal.name}</h3>
+              <button type="button" onClick={() => setWalletModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-xs text-gray-500 mb-4">
-              The one pot advances are paid into. They are currently holding {money(Math.abs(walletModal.balance))}.
+              Currently holding {money(Math.abs(walletModal.balance))}.
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">Advance limit</label>
+            <label className="prm-label">Advance limit</label>
             <input type="number" min="0" step="100" value={walletModal.creditLimit}
               onChange={(e) => setWalletModal({ ...walletModal, creditLimit: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
+              className="prm-input mb-1" />
             <p className="text-xs text-gray-500 mb-3">
-              The most this person may hold at any one time, across every book. An advance taking them past it
-              is refused. 0 means no limit.
+              0 means no limit.
             </p>
 
             {isSuperAdmin && (
               <>
-                <label className="block text-sm text-gray-700 mb-1">Opening balance</label>
+                <label className="prm-label">Opening balance</label>
                 <input type="number" step="0.01" value={walletModal.openingBalance}
                   onChange={(e) => setWalletModal({ ...walletModal, openingBalance: e.target.value })}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1" />
+                  className="prm-input mb-1" />
                 <p className="text-xs text-gray-500 mb-3">
-                  What they were already holding before this module existed. Positive means they hold company
-                  cash. This is the only figure that moves a balance with no entry behind it, so it is
-                  Super Admin only.
+                  Moves the balance with no entry behind it.
                 </p>
               </>
             )}
 
-            <label className="block text-sm text-gray-700 mb-1">Note</label>
+            <label className="prm-label">Note</label>
             <input type="text" value={walletModal.note}
               onChange={(e) => setWalletModal({ ...walletModal, note: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-4" />
+              className="prm-input mb-4" />
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setWalletModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </div>
@@ -2550,12 +2702,17 @@ export default function AdminKhata() {
 
       {sanctionModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <form onSubmit={submitSanction} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {sanctionModal.entries
-                ? `${sanctionModal.approve ? 'Approve' : 'Decline'} ${sanctionModal.entries.length} advance requests?`
-                : sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
-            </h3>
+          <form onSubmit={submitSanction} className="bg-white kh-modal w-full max-w-md p-5 my-8">
+            <div className="kh-modal-head">
+              <h3 className="text-lg font-semibold text-gray-900">
+                {sanctionModal.entries
+                  ? `${sanctionModal.approve ? 'Approve' : 'Decline'} ${sanctionModal.entries.length} advance requests?`
+                  : sanctionModal.approve ? 'Approve this advance?' : 'Decline this advance?'}
+              </h3>
+              <button type="button" onClick={() => setSanctionModal(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
             <p className="text-sm text-gray-600 mt-1 mb-4">
               {sanctionModal.entries
                 ? `${money(sumOf(sanctionModal.entries))} in all, for ${
@@ -2566,35 +2723,30 @@ export default function AdminKhata() {
                 </>}
             </p>
 
-            <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4">
+            <p className="kh-callout text-gray-500 mb-4">
               {sanctionModal.entries
                 ? (sanctionModal.approve
-                  ? 'No money moves yet. Approving passes them to the cashbook manager, who chooses the account '
-                    + 'each is paid from — the cash leaves only when they do.'
-                  : 'Nothing moves. Each request is closed and its employee is told why.')
+                  ? 'No money moves yet — the cashbook manager pays them out.'
+                  : 'Nothing moves. Each request is closed.')
                 : (sanctionModal.approve
-                  ? 'No money moves yet. Approving passes it to the accounts team, who choose which account to pay '
-                    + 'it out of — the cash leaves only when they do.'
-                  : 'Nothing moves. The request is closed and the employee is told why.')}
+                  ? 'No money moves yet — the accounts team pays it out.'
+                  : 'Nothing moves. The request is closed.')}
             </p>
 
-            <label className="block text-sm text-gray-700 mb-1">
+            <label className="prm-label">
               {sanctionModal.approve ? 'Note (optional)' : <>Why are you declining?<Req /></>}
             </label>
             <input type="text" autoFocus required={!sanctionModal.approve} value={sanctionModal.note}
               onChange={(e) => setSanctionModal({ ...sanctionModal, note: e.target.value })}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 mb-1"
+              className="prm-input mb-4"
               placeholder={sanctionModal.approve ? 'Anything the employee should know' : 'e.g. settle the last advance first'} />
-            <p className="text-xs text-gray-500 mb-4">
-              {sanctionModal.entries ? 'Every one of them sees this.' : 'The employee sees this.'}
-            </p>
 
-            <div className="flex justify-end gap-2">
+            <div className="kh-modal-foot">
               <button type="button" onClick={() => setSanctionModal(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="submit" disabled={saving}
-                className={`px-4 py-2 rounded-lg text-sm text-white disabled:opacity-50 ${
-                  sanctionModal.approve ? 'bg-gray-900 hover:bg-gray-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                className={`trn-btn ${
+                  sanctionModal.approve ? 'is-primary accent-bg text-white' : 'kh-btn-danger'}`}>
                 {saving ? 'Saving…' : `${sanctionModal.approve ? 'Approve' : 'Decline'}${sanctionModal.entries ? ' all' : ''}`}
               </button>
             </div>
@@ -2604,12 +2756,13 @@ export default function AdminKhata() {
 
       {operatorsFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Operators — {operatorsFor.account.name}</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              Anyone listed here can hand company money to staff out of this account. Above their limit the entry
-              is still accepted, but it waits for an approver instead of paying out.
-            </p>
+          <div className="bg-white kh-modal w-full max-w-2xl p-5 my-8">
+            <div className="kh-modal-head mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Operators — {operatorsFor.account.name}</h3>
+              <button type="button" onClick={() => setOperatorsFor(null)} aria-label="Close" className="trn-icon-btn">
+                <FiX size={17} />
+              </button>
+            </div>
 
             <div className="mb-3">
               <SearchableSelect
@@ -2628,7 +2781,7 @@ export default function AdminKhata() {
                     }],
                   });
                 }}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2">
+                className="w-full prm-input">
                 <option value="">Add a person…</option>
                 {peopleOptions(
                   people.filter((p) => !operatorsFor.operators.some((x) => x.user === p._id)),
@@ -2638,12 +2791,13 @@ export default function AdminKhata() {
             </div>
 
             {operatorsFor.operators.length === 0 ? (
-              <p className="text-sm text-gray-500 py-6 text-center border border-dashed border-gray-300 rounded-lg">
-                Nobody but a Super Admin can pay employees from this account.
-              </p>
+              <div className="trn-empty border border-dashed border-gray-300 rounded-xl">
+                <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                <p className="text-sm font-semibold">Only a Super Admin can pay from this account.</p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
+                <table className="min-w-full text-sm kh-ops-table">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-3 py-2 text-left font-medium text-gray-700">Person</th>
@@ -2662,8 +2816,13 @@ export default function AdminKhata() {
                       return (
                         <tr key={o.user}>
                           <td className="px-3 py-2">
-                            <p className="text-gray-900">{o.name}</p>
-                            <p className="text-xs text-gray-500">{o.email}</p>
+                            <div className="kh-who">
+                              <PersonAvatar user={avatarUser({ _id: o.user, name: o.name })} size="sm" />
+                              <div className="min-w-0">
+                                <p className="text-gray-900 font-semibold">{o.name}</p>
+                                <p className="text-xs text-gray-500">{o.email}</p>
+                              </div>
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-center">
                             <input type="checkbox" checked={o.canDisburse}
@@ -2672,7 +2831,7 @@ export default function AdminKhata() {
                           <td className="px-3 py-2 text-right">
                             <input type="number" min="0" step="100" value={o.maxPerTransaction}
                               onChange={(e) => patch({ maxPerTransaction: e.target.value })}
-                              className="w-28 border border-gray-300 rounded px-2 py-1 text-right" />
+                              className="prm-input kh-ops-input" />
                             <p className="text-xs text-gray-400">0 = no limit</p>
                           </td>
                           <td className="px-3 py-2 text-center">
@@ -2680,20 +2839,15 @@ export default function AdminKhata() {
                               onChange={(e) => patch({ canApprove: e.target.checked })} />
                           </td>
                           <td className="px-3 py-2 text-right">
-                            {/* Same shape as the Reject action further up this page:
-                                an unpadded text-xs run gave a 16px tap target for
-                                taking a person's disbursing rights away. Spelt out
-                                rather than left to the hover:underline pill so the
-                                two destructive controls stay the same red, and the
-                                hover:bg-red-50 is load-bearing — a bordered button
-                                carrying no bg- token gets its border repainted in
-                                the portal accent on hover. */}
+                            {/* Same shape as the Reject actions further up this page:
+                                a labelled red outline button, never a bare run of
+                                text, for taking a person's disbursing rights away. */}
                             <button type="button"
                               onClick={() => setOperatorsFor({
                                 ...operatorsFor,
                                 operators: operatorsFor.operators.filter((_, j) => j !== i),
                               })}
-                              className="px-3 py-1.5 border border-red-300 text-red-700 rounded-lg text-sm hover:bg-red-50">Remove</button>
+                              className="trn-btn kh-mini is-danger">Remove</button>
                           </td>
                         </tr>
                       );
@@ -2703,11 +2857,11 @@ export default function AdminKhata() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2 mt-5">
+            <div className="kh-modal-foot mt-5">
               <button type="button" onClick={() => setOperatorsFor(null)}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+                className="trn-btn">Cancel</button>
               <button type="button" onClick={saveOperators} disabled={saving}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
+                className="trn-btn is-primary accent-bg text-white">
                 {saving ? 'Saving…' : 'Save operators'}
               </button>
             </div>
@@ -2719,131 +2873,137 @@ export default function AdminKhata() {
 }
 
 /**
- * Shared statement table for the ledger and the per-employee view.
+ * Shared statement for the ledger and the per-employee view — one row per
+ * entry under a heading for each day (2026-10-03; it was a table).
  *
- * `onToggleDate` is optional and is what makes the Date column clickable. The
- * per-employee view leaves it out on purpose: those rows come straight from the
- * server in date order and there is no sort state behind them to reverse, and a
- * header that looks sortable but is not is worse than a plain one.
+ * Rows are drawn in the order given: the ledger has already been put in date
+ * order by the toggle in its toolbar, and the per-employee view comes from the
+ * server in date order. Consecutive rows sharing a day share a heading, so the
+ * order is never changed here.
  * `onViewBill` is NOT one of the write handlers and is never withheld from a
  * read-only account. Opening the bill an employee attached is the whole of
  * checking their spending, the server allows it to anyone who may see the row,
  * and a statement that shows a ₹1,026 expense with no way to see what it was
  * for is a figure the reader has to take on trust.
- * @param {{entries: Object[], onReverse: Function, onViewBill?: Function,
- *   showEmployee: boolean, dateDir?: 'asc'|'desc', onToggleDate?: Function}} props
+ * @param {{entries: Object[], onReverse: Function, onEdit?: Function,
+ *   onConfirm?: Function, onViewBill?: Function, showEmployee: boolean}} props
  */
 function EntryTable({
-  entries, onReverse, onEdit, onConfirm, onViewBill, showEmployee, dateDir, onToggleDate,
+  entries, onReverse, onEdit, onConfirm, onViewBill, showEmployee,
 }) {
-  return (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-700"
-                aria-sort={onToggleDate ? (dateDir === 'asc' ? 'ascending' : 'descending') : undefined}>
-                {onToggleDate ? <DateSortButton dir={dateDir} onToggle={onToggleDate} /> : 'Date'}
-              </th>
-              {showEmployee && <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>}
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Details</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Given</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Spent / returned</th>
-              <th className="px-4 py-3 text-right font-medium text-gray-700">In hand</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {entries.length === 0 ? (
-              <tr><td colSpan={showEmployee ? 8 : 7} className="px-4 py-8 text-center text-gray-500">
-                No entries
-              </td></tr>
-            ) : entries.map((e) => (
-              /* A reversed row is faded, not struck out: it did post, and it
-                 counts beside the reversal row that undoes it — the pair adds up
-                 to nothing (models/CashbookEntry.js POSTED_STATUSES). */
-              <tr key={e._id} className={e.status === 'Reversed' ? 'opacity-60' : ''}>
-                <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtDate(e.date)}</td>
-                {showEmployee && <td className="px-4 py-3 text-gray-800">{e.employee?.name || '—'}</td>}
-                <td className="px-4 py-3">
-                  <p className="text-gray-800">
-                    {e.purpose || e.category}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {/* The book first, where there is one — an advance belongs to
-                        the wallet and to no book at all. */}
-                    {e.khataName ? `${e.khataName} · ` : ''}{e.code}
-                    {e.cashAccountName ? ` · ${e.cashAccountName}` : ''}
-                    {!e.affectsCompanyCash ? ' · no company cash' : ''}
-                  </p>
-                  <FiledFrom location={e.filedLocation} />
-                </td>
-                {/* Green for money that RAISES their in-hand figure, red for
-                    money that lowers it — the same sign-colour rule as the
-                    wallet balances. */}
-                <td className="px-4 py-3 text-right text-emerald-700">
-                  {e.direction === 'to_employee' ? money(e.amount) : ''}
-                </td>
-                <td className="px-4 py-3 text-right text-rose-700">
-                  {e.direction === 'from_employee' ? money(e.amount) : ''}
-                </td>
-                <td className="px-4 py-3 text-right text-gray-700">
-                  {e.status === 'Approved' || e.status === 'Reversed' ? money(e.balanceAfter) : '—'}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${STATUS_STYLES[e.status] || 'bg-gray-100 text-gray-700'}`}>
-                    {STATUS_LABELS[e.status] || e.status}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  {/* An expense that has posted but nobody has confirmed is
-                      still correctable — see the review queue. Once it is
-                      confirmed, reversing is the only way back.
-
-                      `hover:underline` is the token index.css keys the app-wide
-                      row-action pill off — without it these were bare 16px runs
-                      of text, which is no affordance at all for Reverse. The pill
-                      is inline-flex and brings its own padding, so the spacing
-                      lives on this flex row now instead of the old mr-3, and
-                      Reverse is red at REST (the pill draws its border from
-                      currentColor, so a hover-only red would show a grey pill
-                      right up until the pointer lands on it). */}
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    {/* First, and in the link colour rather than the grey of the
-                        write actions: it is the one action here that only READS,
-                        it is the only one a view-only account gets, and it is
-                        what a reader checking a figure reaches for. Rendered
-                        only where a bill exists — an advance never has one, and
-                        a dead "no bill" note on every second row is noise. */}
-                    {e.hasAttachment && onViewBill && (
-                      <button onClick={() => onViewBill(e)} className="text-xs text-indigo-600 hover:underline">
-                        {e.attachmentCount > 1 ? `Bills (${e.attachmentCount})` : 'Bill'}
-                      </button>
-                    )}
-                    {e.editable && onEdit && (
-                      <button onClick={() => onEdit(e)} className="text-xs text-gray-500 hover:underline">
-                        Edit
-                      </button>
-                    )}
-                    {e.editable && onConfirm && (
-                      <button onClick={() => onConfirm(e)} className="text-xs text-gray-500 hover:underline">
-                        Confirm
-                      </button>
-                    )}
-                    {e.status === 'Approved' && (
-                      <button onClick={() => onReverse(e)} className="text-xs text-red-600 hover:underline">
-                        Reverse
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+  if (entries.length === 0) {
+    return (
+      <div className="prm-list">
+        <div className="trn-empty">
+          <span className="trn-empty-icon"><FiList size={24} /></span>
+          <p className="text-sm font-semibold">No entries</p>
+        </div>
       </div>
+    );
+  }
+  return (
+    <div>
+      {groupByDay(entries).map(({ ymd, list }, gi) => {
+        const h = ymd ? dayHeading(ymd) : { label: 'No date', rel: '' };
+        return (
+          <section key={`${ymd}-${gi}`} className="rst-day">
+            <div className="rst-day-head">
+              <span className="rst-day-title">{h.label}</span>
+              {h.rel && <span className="rst-day-rel">{h.rel}</span>}
+              <span className="rst-day-count">{list.length}</span>
+            </div>
+            <div className="prm-list">
+              {list.map((e) => {
+                const isIn = e.direction === 'to_employee';
+                const isOut = e.direction === 'from_employee';
+                return (
+                  /* A reversed row is faded, not struck out: it did post, and it
+                     counts beside the reversal row that undoes it — the pair adds up
+                     to nothing (models/CashbookEntry.js POSTED_STATUSES). */
+                  <div key={e._id} className={`kh-entry${e.status === 'Reversed' ? ' is-reversed' : ''}`}>
+                    <span className="kh-lead">
+                      {showEmployee ? (
+                        <PersonAvatar user={avatarUser(e.employee)} />
+                      ) : (
+                        <span className={`kh-dir${isIn ? ' is-in' : isOut ? ' is-out' : ''}`} aria-hidden="true">
+                          {isOut ? <FiArrowDownLeft size={16} /> : <FiArrowUpRight size={16} />}
+                        </span>
+                      )}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="kh-titlerow">
+                        <p className="kh-name">{showEmployee ? (e.employee?.name || '—') : (e.purpose || e.category)}</p>
+                        <span className={`kh-status is-${e.status}`}>{STATUS_LABELS[e.status] || e.status}</span>
+                      </div>
+                      {showEmployee && (e.purpose || e.category) && (
+                        <p className="kh-detail">{e.purpose || e.category}</p>
+                      )}
+                      <div className="kh-meta">
+                        {/* The book first, where there is one — an advance belongs to
+                            the wallet and to no book at all. */}
+                        {e.khataName && <span><FiBook size={12} aria-hidden="true" />{e.khataName}</span>}
+                        <span className="kh-code">{e.code}</span>
+                        {e.cashAccountName && <span><FiCreditCard size={12} aria-hidden="true" />{e.cashAccountName}</span>}
+                        {!e.affectsCompanyCash && <span>No company cash</span>}
+                      </div>
+                      <FiledFrom location={e.filedLocation} />
+                    </div>
+                    {/* Green for money that RAISES their in-hand figure, red for
+                        money that lowers it — the same sign-colour rule as the
+                        wallet balances. */}
+                    <div className="kh-amt">
+                      {(isIn || isOut) && (
+                        <>
+                          <span className={`kh-amt-value ${isIn ? 'text-emerald-700' : 'text-rose-700'}`}>
+                            {money(e.amount)}
+                          </span>
+                          <span className="kh-amt-cap">{isIn ? 'Given' : 'Spent / returned'}</span>
+                        </>
+                      )}
+                      <span className="kh-amt-hand">
+                        <span>In hand </span>
+                        {e.status === 'Approved' || e.status === 'Reversed' ? money(e.balanceAfter) : '—'}
+                      </span>
+                    </div>
+                    {/* An expense that has posted but nobody has confirmed is
+                        still correctable — see the review queue. Once it is
+                        confirmed, reversing is the only way back. */}
+                    <div className="kh-row-actions">
+                      {/* First, and in the link colour rather than the grey of the
+                          write actions: it is the one action here that only READS,
+                          it is the only one a view-only account gets, and it is
+                          what a reader checking a figure reaches for. Rendered
+                          only where a bill exists — an advance never has one, and
+                          a dead "no bill" note on every second row is noise. */}
+                      {e.hasAttachment && onViewBill && (
+                        <button onClick={() => onViewBill(e)} className="trn-btn kh-mini kh-link">
+                          <FiPaperclip size={13} aria-hidden="true" />
+                          {e.attachmentCount > 1 ? `Bills (${e.attachmentCount})` : 'Bill'}
+                        </button>
+                      )}
+                      {e.editable && onEdit && (
+                        <button onClick={() => onEdit(e)} className="trn-icon-btn" aria-label="Edit" title="Edit">
+                          <FiEdit2 size={15} />
+                        </button>
+                      )}
+                      {e.editable && onConfirm && (
+                        <button onClick={() => onConfirm(e)} className="trn-btn kh-mini">
+                          <FiCheck size={13} aria-hidden="true" /> Confirm
+                        </button>
+                      )}
+                      {e.status === 'Approved' && onReverse && (
+                        <button onClick={() => onReverse(e)} className="trn-btn kh-mini is-danger">
+                          <FiRotateCcw size={13} aria-hidden="true" /> Reverse
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -283,8 +283,7 @@ export default function EmployeeLoans() {
                 </div>
                 <h2 className="card-title mt-3">Request submitted</h2>
                 <p className="text-sm text-gray-600 mt-1 max-w-md mx-auto">
-                  HR has been told. Your Advance Request Form for {inr.format(submitted.principal || 0)} is ready to
-                  open, print or keep for your records.
+                  HR has been told. Your Advance Request Form for {inr.format(submitted.principal || 0)} is ready.
                 </p>
                 <div className="flex flex-wrap justify-center gap-2 mt-5">
                   <button type="button" onClick={() => openForm(submitted)} disabled={opening === submitted._id}
@@ -299,9 +298,6 @@ export default function EmployeeLoans() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h2 className="card-title">Advance Request Form</h2>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      The company&apos;s advance request form. Once you submit it, HR can print it for signing.
-                    </p>
                   </div>
                   <button type="button" aria-label="Close" onClick={close} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
                 </div>
@@ -362,18 +358,16 @@ export default function EmployeeLoans() {
                         <div>
                           <span className={LABEL}>Monthly deduction (₹)</span>
                           <div className={READ_ONLY} aria-live="polite">{emi ? inr.format(emi) : '-'}</div>
-                          <p className="text-[11px] text-gray-500 mt-1">Amount ÷ months. HR may adjust it when approving.</p>
                         </div>
                       </div>
                       {noSalary && (
                         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                          Your salary has not been set up yet, so your advance limit cannot be worked out and this form
-                          cannot be submitted. Please ask HR.
+                          Your salary is not set up yet, so this form cannot be submitted. Please ask HR.
                         </p>
                       )}
                       {!purposes.length && (
                         <p className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                          HR has not added the purposes of advance yet, so this form cannot be submitted. Please ask HR.
+                          No advance purposes are set up yet, so this form cannot be submitted. Please ask HR.
                         </p>
                       )}
                     </FormSection>
@@ -394,9 +388,6 @@ export default function EmployeeLoans() {
                           onChange={(e) => set({ accepted: e.target.checked })} />
                         <span>{cfg.declaration}</span>
                       </label>
-                      <p className="text-[11px] text-gray-500 mt-1.5 ml-6">
-                        Ticking this is your acceptance of the terms above. The date and time are recorded on the form.
-                      </p>
                     </FormSection>
                   </>
                 )}

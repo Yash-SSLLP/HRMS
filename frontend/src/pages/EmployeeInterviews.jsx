@@ -233,7 +233,6 @@ export default function EmployeeInterviews() {
     <div className="ivd">
       <PageHeader
         title="My Interviews"
-        subtitle="Pick an interview · read what the earlier rounds found · join the call · record your assessment"
       />
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
@@ -243,7 +242,6 @@ export default function EmployeeInterviews() {
         <div className="ivd-card p-10 text-center">
           <div className="ivd-empty-icon mx-auto mb-3"><FiCalendar size={22} /></div>
           <div className="text-base font-semibold text-gray-900">No interviews assigned to you yet</div>
-          <p className="text-sm text-gray-500 mt-1">When HR puts you on a candidate&apos;s round, it shows up here.</p>
         </div>
       ) : (
         <>
@@ -314,7 +312,7 @@ export default function EmployeeInterviews() {
           round={moving}
           title={`Reschedule ${moving.label}`}
           subtitle={`${moving.candidateName}${moving.jobTitle ? ` · ${moving.jobTitle}` : ''}`}
-          note="The round goes back to Scheduled at the new time and HR is told. The old date and the reason stay in its history."
+          note="The round goes back to Scheduled and HR is told."
           onClose={() => setMoving(null)}
           onSubmit={(v) => reschedule(moving, v)}
         />
@@ -532,7 +530,7 @@ function CurrentRound({ iv, draft, setDraft, showForm, editing, onEdit, onCancel
             </div>
             <p className="text-xs text-gray-500 mt-1">
               {showForm
-                ? <>For <span className="font-medium text-gray-700">{iv.candidateName}</span> — fill it in after the interview.</>
+                ? <>For <span className="font-medium text-gray-700">{iv.candidateName}</span>.</>
                 : <>What you recorded for <span className="font-medium text-gray-700">{iv.candidateName}</span>.</>}
             </p>
           </div>
@@ -570,7 +568,7 @@ function CurrentRound({ iv, draft, setDraft, showForm, editing, onEdit, onCancel
         <>
           <div className="p-4 sm:p-5 space-y-6">
             {/* 1 — ratings */}
-            <Step n={1} title="Rate each area" hint="Click a star; click it again to clear. Leave an area unrated if it did not come up — it reads as “not assessed”, not a low score.">
+            <Step n={1} title="Rate each area">
               <div className="ivd-ratings">
                 {RATING_FIELDS.map((f) => (
                   <div key={f.key} className="ivd-rating-row">
@@ -583,18 +581,18 @@ function CurrentRound({ iv, draft, setDraft, showForm, editing, onEdit, onCancel
 
             {/* 2 + 3 — strengths and concerns */}
             <div className="grid gap-6 md:grid-cols-2">
-              <Step n={2} title="Strengths" hint="What they did well, with the example that showed it.">
+              <Step n={2} title="Strengths">
                 <textarea rows={4} value={a.strengths} onChange={(e) => setA({ strengths: e.target.value })}
                   placeholder="e.g. Walked through a real client escalation and owned the outcome." className={box} />
               </Step>
-              <Step n={3} title="Concerns / to probe" hint="Gaps, risks, or what the next round should dig into.">
+              <Step n={3} title="Concerns / to probe">
                 <textarea rows={4} value={a.concerns} onChange={(e) => setA({ concerns: e.target.value })}
                   placeholder="e.g. Pricing conversations are thin — test in the next round." className={box} />
               </Step>
             </div>
 
             {/* 4 — overall remarks */}
-            <Step n={4} title="Overall remarks" hint="The record of this round that HR, the next interviewer and the CEO/MD read, with your name on it.">
+            <Step n={4} title="Overall remarks">
               <textarea rows={5} value={draft.feedback} onChange={(e) => setDraft({ feedback: e.target.value })}
                 placeholder={REMARK_PLACEHOLDER} className={box} />
               <div className="flex justify-between gap-2 mt-1">
@@ -622,7 +620,7 @@ function CurrentRound({ iv, draft, setDraft, showForm, editing, onEdit, onCancel
             </Step>
 
             {/* 6 — the round's result */}
-            <Step n={6} title={`Result of ${iv.label}`} hint="Cleared or Rejected closes the round. No Show tells HR to find a new date.">
+            <Step n={6} title={`Result of ${iv.label}`}>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {ROUND_STATUS.map((st) => {
                   const on = draft.status === st;
@@ -659,14 +657,13 @@ function CurrentRound({ iv, draft, setDraft, showForm, editing, onEdit, onCancel
   );
 }
 
-function Step({ n, title, hint, children }) {
+function Step({ n, title, children }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
         <span className="ivd-step-n">{n}</span>
         <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
       </div>
-      {hint && <p className="text-[11px] text-gray-500 -mt-1 mb-2 ml-8">{hint}</p>}
       {children}
     </div>
   );
@@ -686,7 +683,7 @@ function PreviousRoundsPanel({ iv }) {
         </div>
         <p className="text-[11px] text-gray-500 mt-0.5">
           {rounds.length
-            ? `${written} of ${rounds.length} earlier round${rounds.length === 1 ? '' : 's'} written up — read before you start`
+            ? `${written} of ${rounds.length} earlier round${rounds.length === 1 ? '' : 's'} written up`
             : 'Nothing before this one'}
         </p>
       </header>

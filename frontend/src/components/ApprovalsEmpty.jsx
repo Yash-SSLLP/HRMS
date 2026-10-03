@@ -12,14 +12,13 @@
  */
 import { FiCheck } from 'react-icons/fi';
 
-export default function ApprovalsEmpty({ message = 'Nothing is waiting on you right now.', hint }) {
+export default function ApprovalsEmpty({ message = 'Nothing is waiting on you right now.' }) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-10 px-4">
       <span className="flex items-center justify-center w-11 h-11 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
         <FiCheck size={20} strokeWidth={2.4} />
       </span>
       <p className="mt-3 text-sm font-semibold tracking-tight text-gray-800">{message}</p>
-      {hint && <p className="mt-1.5 text-xs text-gray-500 leading-relaxed max-w-sm">{hint}</p>}
     </div>
   );
 }

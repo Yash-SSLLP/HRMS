@@ -17,6 +17,11 @@ export const COMPANY_LOGO_PNG = '/logo.png';
 // The GOLD version since 2026-09-30 (user: "use this logo"); a new file name so
 // no browser keeps showing the cached black one (/logo-full.png, kept unused).
 export const COMPANY_LOGO_FULL = '/logo-full-gold.png';
+// The monochrome logo since 2026-10-03 (user: "use this logo in the web" — the
+// white-on-black artwork). Cut to a transparent ground in two inks: near-black
+// for the light theme, white for the dark one. BrandLockup shows the right one.
+export const COMPANY_LOGO_INK = '/logo-ss-ink.png';
+export const COMPANY_LOGO_WHITE = '/logo-ss-white.png';
 export const COMPANY_LOGO_URL = 'https://sequencesurface.com/images/logo.png';
 // Brand gold, mirrored from the --gold-* tokens in index.css. For the rare spot
 // that needs the value in JS (inline styles, canvas/chart fills).

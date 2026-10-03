@@ -176,7 +176,6 @@ export default function AdminTemplates() {
     <div>
       <PageHeader
         title="Email & Letter Templates"
-        subtitle="Change what the system says when it emails a candidate or an employee, and the wording of the offer and appointment letters."
       />
 
       {/* Branding is its own capability (the API refuses anyone without it), so
@@ -254,10 +253,7 @@ export default function AdminTemplates() {
 
               {active.format === 'letter' && (
                 <p className="text-[11px] text-gray-400 mt-2">
-                  Blank line starts a new paragraph · <code>**wrap in stars**</code> for a bold paragraph ·
-                  {' '}<code>- Heading: text</code> for a numbered clause. The letterhead, fonts and signature block are fixed.
-                  {' '}<strong>Download .tex</strong> exports the saved wording as an Overleaf-ready LaTeX file
-                  {' '}for designing the layout — it does not change how the PDF is produced.
+                  Blank line = new paragraph · <code>**bold**</code> · <code>- Heading: text</code> = numbered clause
                 </p>
               )}
 
@@ -287,7 +283,7 @@ export default function AdminTemplates() {
 
               <div className="mt-3">
                 <div className="text-xs text-gray-500 mb-1.5">
-                  Click to insert. A placeholder with no value is left visible rather than blanked, so a mistake is obvious.
+                  Click to insert.
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {(active.variables || []).map((v) => (

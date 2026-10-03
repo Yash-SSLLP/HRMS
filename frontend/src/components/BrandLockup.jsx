@@ -2,8 +2,12 @@
 // as one identity. Styling lives in index.css (the `.brand-*` classes).
 //
 // 2026-09-30 (user: "use this logo as it in website"): both variants show the
-// company's own logo image AS SUPPLIED (/logo-full.png — wordmark, arrow and
-// tagline in one), instead of a typed wordmark and tagline beside a mark.
+// company's own logo image AS SUPPLIED — wordmark, arrow and tagline in one,
+// instead of a typed wordmark and tagline beside a mark.
+// 2026-10-03 (user: "use this logo in the web"): the monochrome artwork, cut to
+// a transparent ground in two inks — near-black on the light theme, white on
+// the dark one. Both images are in the page; CSS shows the one for the theme
+// (`.brand-ink` / `.brand-white`), so a theme switch never waits on a load.
 //
 //   variant="inline"  the logo (sidebar header). The collapsed icon rail is too
 //                     narrow for it, so there — and only there — the small
@@ -16,20 +20,29 @@
 // portal" / "My portal" / …) — pass `portal`. Without it only the logo shows.
 //
 // Only spans are used so the inline variant can sit inside the sidebar's <Link>.
-import { COMPANY_NAME, COMPANY_LOGO_FULL, COMPANY_LOGO_MARK } from '../config/company';
+import { COMPANY_NAME, COMPANY_LOGO_INK, COMPANY_LOGO_WHITE, COMPANY_LOGO_MARK } from '../config/company';
+
+function Logo({ className }) {
+  return (
+    <>
+      <img src={COMPANY_LOGO_INK} alt={COMPANY_NAME} className={`${className} brand-ink`} />
+      <img src={COMPANY_LOGO_WHITE} alt="" aria-hidden="true" className={`${className} brand-white`} />
+    </>
+  );
+}
 
 export default function BrandLockup({ variant = 'inline', portal = '', className = '' }) {
   if (variant === 'stacked') {
     return (
       <span className={`brand-stack ${className}`}>
-        <img src={COMPANY_LOGO_FULL} alt={COMPANY_NAME} className="brand-stack-full" />
+        <Logo className="brand-stack-full" />
       </span>
     );
   }
 
   return (
     <span className={`brand-lock ${className}`}>
-      <img src={COMPANY_LOGO_FULL} alt={COMPANY_NAME} className="brand-full" />
+      <Logo className="brand-full" />
       {portal ? (
         <>
           <span className="brand-divider" aria-hidden="true" />

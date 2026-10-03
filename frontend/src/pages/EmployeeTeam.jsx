@@ -206,10 +206,7 @@ export default function EmployeeTeam() {
 
   return (
     <div>
-      <PageHeader
-        title="My Team"
-        subtitle={`Your direct reports · who's in, on leave or absent ${isToday ? 'today' : `on ${dayLabel}`}. Approve their leave under Approvals.`}
-      >
+      <PageHeader title="My Team" subtitle={isToday ? 'Today' : dayLabel}>
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
       </PageHeader>
 
@@ -273,8 +270,7 @@ export default function EmployeeTeam() {
               {dutyQueue.isOpen && (
                 <>
                   <p className="text-xs text-gray-500 mt-1 mb-3">
-                    Days off your reports actually worked ({MONTHS[exMonth - 1]} {exYear}). Approving one pays that
-                    day at 2× — one extra day&apos;s salary on top of the day their monthly pay already covers.
+                    {MONTHS[exMonth - 1]} {exYear} · approving pays that day at 2×.
                   </p>
                   <div className="divide-y divide-gray-100">
                     {dutyQueue.rows.map((c) => (
@@ -334,10 +330,7 @@ export default function EmployeeTeam() {
           {/* Export team attendance to Excel (.xlsx). Scoped to my reports. */}
           {team.length > 0 && (
             <div className="bg-white shadow rounded-lg p-5 mb-4">
-              <h2 className="card-title mb-1">Export Attendance</h2>
-              <p className="text-xs text-gray-500 mb-3">
-                Downloads an Excel workbook. Choose a member for one person, or leave it on “Whole team”.
-              </p>
+              <h2 className="card-title mb-3">Export Attendance</h2>
               <div className="flex flex-wrap items-end gap-2">
                 <div>
                   <label className="block text-xs text-gray-600">Member</label>
@@ -388,7 +381,7 @@ export default function EmployeeTeam() {
                 that the two can disagree. */}
             <p className="text-xs text-gray-500 mb-3">Today&apos;s punches for the whole team.</p>
             {team.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">No one reports to you yet. Ask your admin to set reporting managers on the Org Chart.</p>
+              <p className="text-sm text-gray-400 italic">No one reports to you yet.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">

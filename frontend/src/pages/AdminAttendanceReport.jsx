@@ -138,10 +138,7 @@ export default function AdminAttendanceReport() {
 
   return (
     <div>
-      <PageHeader
-        title="Attendance Report"
-        subtitle="Daily login & logout times with total present hours, per employee or for everyone"
-      />
+      <PageHeader title="Attendance Report" />
 
       <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-3 items-end flex-wrap">
         <div>

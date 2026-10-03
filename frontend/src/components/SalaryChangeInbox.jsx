@@ -138,7 +138,7 @@ function ChangeLines({ r }) {
  */
 export default function SalaryChangeInbox({
   onCount, kind, employee, status = 'Pending', reloadKey, onChanged, onOpen,
-  hideWhenEmpty = false, title, excludeEmployee, className = '', emptyMessage, emptyHint,
+  hideWhenEmpty = false, title, excludeEmployee, className = '', emptyMessage,
   withHistory = false,
 }) {
   const [allRows, setRows] = useState([]);
@@ -269,10 +269,7 @@ export default function SalaryChangeInbox({
       {onHistory && historyRows.length === 0 ? (
         <HistoryEmpty>No salary change has been decided yet.</HistoryEmpty>
       ) : list.length === 0 ? (hideWhenEmpty ? null : (
-        <ApprovalsEmpty
-          message={emptyMessage || 'No salary change is waiting for approval.'}
-          hint={emptyHint || 'When HR changes a saved salary, revises a CTC or re-splits a salary structure people are paid on, it waits here until a CEO, MD or Super Admin approves it.'}
-        />
+        <ApprovalsEmpty message={emptyMessage || 'No salary change is waiting for approval.'} />
       )) : (
         <div className="space-y-3">
           {list.map((r) => {

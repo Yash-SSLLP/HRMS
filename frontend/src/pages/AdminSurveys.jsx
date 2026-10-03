@@ -152,7 +152,7 @@ export default function AdminSurveys() {
 
   return (
     <div>
-      <PageHeader title="Surveys & Polls" subtitle="Create surveys, collect responses, and review the results.">
+      <PageHeader title="Surveys & Polls">
         <button onClick={openCreate} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Survey</button>
       </PageHeader>
 
@@ -245,14 +245,12 @@ export default function AdminSurveys() {
                   <input type="date" value={form.startDate}
                     onChange={(e) => setForm({ ...form, startDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="mt-1 text-xs text-gray-400">Blank = open immediately</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-700">Close after</label>
                   <input type="date" value={form.endDate} min={form.startDate || undefined}
                     onChange={(e) => setForm({ ...form, endDate: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="mt-1 text-xs text-gray-400">Blank = never expires</p>
                 </div>
               </div>
 

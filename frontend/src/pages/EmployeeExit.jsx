@@ -144,14 +144,14 @@ export default function EmployeeExit() {
 
           {exit.status === 'Pending' && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
-              Your resignation is climbing your reporting hierarchy for approval. You'll be notified once it's accepted.
+              Your resignation is awaiting approval.
             </div>
           )}
 
           {exit.status === 'InClearance' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
               <strong>Your resignation has been accepted.</strong>
-              <p className="text-xs mt-1">You're serving your notice period until {fmtDate(exit.lastWorkingDay)}. HR will complete your exit clearance before your last day.</p>
+              <p className="text-xs mt-1">Serving notice until {fmtDate(exit.lastWorkingDay)}.</p>
             </div>
           )}
 
@@ -159,7 +159,7 @@ export default function EmployeeExit() {
             <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
               <strong>Your exit has been processed.</strong>
               {exit.exitEmailSentAt && (
-                <p className="text-xs mt-1">A feedback email was sent to you on {fmtDate(exit.exitEmailSentAt)}. Please check your inbox.</p>
+                <p className="text-xs mt-1">Feedback email sent on {fmtDate(exit.exitEmailSentAt)}.</p>
               )}
             </div>
           )}
@@ -179,10 +179,7 @@ export default function EmployeeExit() {
         </div>
       ) : (
         <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="card-title mb-3">Submit your resignation</h2>
-          <p className="text-sm text-gray-500 mb-4">
-            Your resignation goes to your reporting manager for approval. Once accepted, you'll serve your notice period while HR completes clearance.
-          </p>
+          <h2 className="card-title mb-4">Submit your resignation</h2>
           <form onSubmit={onSubmit} className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -196,7 +193,6 @@ export default function EmployeeExit() {
                 <input type="number" min={0} value={form.noticePeriodDays}
                   onChange={(e) => onDaysChange(e.target.value)}
                   className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                <p className="text-xs text-gray-400 mt-1">Kept in sync with your last working day.</p>
               </div>
             </div>
             <div>

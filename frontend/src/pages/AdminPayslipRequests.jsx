@@ -276,16 +276,9 @@ export default function AdminPayslipRequests() {
       <PageHeader title="Payslip Requests">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
       </PageHeader>
-      <p className="text-sm text-gray-500 mb-4 max-w-3xl">
-        Employees ask for their payslip here rather than downloading it themselves. Check the figures and correct them
-        if needed, approve the request, preview the document, then finalise — only then can the employee download it.
-        <strong> Edit</strong> opens the full payroll editor and brings you back here once you save. Editing a payslip
-        after it has been released pulls it back, so it has to be finalised again.
-      </p>
       {canSanction && (
         <p className="text-sm text-gray-500 mb-4 max-w-3xl">
-          <strong>Self-prepared</strong> holds payslips an admin wrote for themselves. They are frozen — they cannot be
-          approved, paid, released or emailed — until you sanction them. Editing one after sanction freezes it again.
+          <strong>Self-prepared</strong> payslips are frozen until you sanction them.
         </p>
       )}
 

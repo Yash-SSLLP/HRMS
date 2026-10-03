@@ -689,9 +689,14 @@ async function collectMonth(req, year, month) {
     // read is left alone rather than the rule copied here.
     festivalsInRange(monthStart, monthEnd),
     // --- Events for the exact month/year ---
-    Event.find({
-      date: { $gte: monthStart, $lt: monthEnd },
-    }).sort({ date: 1 }),
+    // Who added / edited an event is Super Admin-only (same rule as GET /events),
+    // so the names are only fetched for one.
+    (() => {
+      const q = Event.find({ date: { $gte: monthStart, $lt: monthEnd } }).sort({ date: 1 });
+      return req.user.role === 'SuperAdmin'
+        ? q.populate('createdBy', 'firstName lastName role').populate('updatedBy', 'firstName lastName role')
+        : q;
+    })(),
     loadActiveProfiles(req),
     loadCelebrationExecs(req),
     loadCelebrationCompanies(req),
@@ -764,12 +769,24 @@ async function collectMonth(req, year, month) {
   }
 
   // --- Events for the exact month/year ---
+  const isSuperAdmin = req.user.role === 'SuperAdmin';
+  const fullName = (u) => (u && u.firstName !== undefined ? `${u.firstName || ''} ${u.lastName || ''}`.trim() : '');
   for (const ev of customEvents) {
+    const meta = { time: ev.time, location: ev.location, description: ev.description };
+    if (isSuperAdmin) {
+      meta.addedBy = fullName(ev.createdBy);
+      meta.addedByRole = ev.createdBy?.role || '';
+      meta.addedAt = ev.createdAt;
+      if (fullName(ev.updatedBy)) {
+        meta.editedBy = fullName(ev.updatedBy);
+        meta.editedAt = ev.updatedAt;
+      }
+    }
     events.push({
       day: istParts(ev.date).d,
       type: 'event',
       label: ev.title,
-      meta: { time: ev.time, location: ev.location, description: ev.description },
+      meta,
     });
   }
 

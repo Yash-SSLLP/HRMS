@@ -168,7 +168,6 @@ export default function EmployeeIncentive() {
     <div>
       <PageHeader
         title="My Incentive"
-        subtitle="The points you have earned, where they came from, and how you compare."
       >
         {/* THE FIRST TAB'S CONTROL, not the page's. The leaderboard's two
             figures are lifetime, so a month picker above it would be a control
@@ -191,7 +190,7 @@ export default function EmployeeIncentive() {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : !history?.hasIncentive ? (
         <div className="bg-white shadow rounded-xl p-6 text-sm text-gray-500">
-          This account has no employee record, so there are no incentive points against it.
+          No incentive record for this account.
         </div>
       ) : (
         <>
@@ -224,7 +223,7 @@ export default function EmployeeIncentive() {
               were the answer is worse than no number. */}
           {!!history?.billingUnavailable && (
             <div className="mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-              The billing system could not be read, so any billing points are missing from these figures.
+              The billing system could not be read — billing points are missing.
             </div>
           )}
 
@@ -258,9 +257,7 @@ export default function EmployeeIncentive() {
                     {rows.length === 0 && (
                       <tr>
                         <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                          No points this month. Days you were on a rolling team, days your team shared
-                          its cut with you, points credited to you and what the billing system says you
-                          invoiced all show up here.
+                          No points this month.
                         </td>
                       </tr>
                     )}
@@ -430,12 +427,9 @@ export default function EmployeeIncentive() {
               <p className="mt-3 text-xs text-gray-500">
                 {board.scope === 'all'
                   ? 'Everyone in the company.'
-                  : `You can see ${board.departments.join(', ')}. Who appears here is set by your Super Admin.`}
-                {' '}Total is everything somebody has earned since they started; current is what is
-                {' '}left after what they have redeemed. Both count every month, which is why there is
-                {' '}no month to pick on this tab.
+                  : `You can see ${board.departments.join(', ')}.`}
                 {board.billingUnavailable
-                  ? ' The billing system could not be read, so anybody who earns through it is short here.'
+                  ? ' The billing system could not be read — billing points are missing.'
                   : ''}
               </p>
             </>

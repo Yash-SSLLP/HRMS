@@ -1,0 +1,351 @@
+/* ---------------------------------------------------------------------------
+   Recruitment (2026-10-03 redesign) — pages/AdminRecruitment.jsx.
+   KPI strip (.trn-kpi), job openings as .rst-card entity cards, then the
+   candidate pipeline as rich rows under one .pb-toolbar (stage segments,
+   search, job filter). Each row carries its stage hue (--hue) on its leading
+   edge and stage pill; the interview rounds open in a panel inside the row.
+   Every tint mixes a fixed hue into --surface, so light and dark both hold.
+   Built on the shared primitives in index.css (.trn-*, .rst-*, .pb-*, .prm-*).
+--------------------------------------------------------------------------- */
+
+/* ---------- Header ---------- */
+.rc-updating {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.75rem; font-weight: 600; opacity: 0.6; white-space: nowrap;
+}
+
+/* ---------- Job cards ---------- */
+.rc-job.is-on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.rc-job .rst-card-name { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.rc-jstatus {
+  --tone: #64748b;
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.03em; white-space: nowrap;
+  color: color-mix(in srgb, var(--tone) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--tone) 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--tone) 30%, var(--border));
+}
+.rc-jstatus::before { content: ''; width: 0.4rem; height: 0.4rem; border-radius: 999px; background-color: var(--tone); }
+.rc-jstatus.is-open { --tone: #16a34a; }
+.rc-jstatus.is-onhold { --tone: #d97706; }
+.rc-jstatus.is-closed { --tone: #64748b; }
+
+.rc-dept {
+  display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%; min-width: 0;
+  padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.rc-dept svg { flex-shrink: 0; opacity: 0.6; }
+
+.rc-locs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.rc-loc {
+  display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%;
+  padding: 0.15rem 0.5rem; border-radius: 0.5rem; font-size: 0.72rem; font-weight: 600;
+  color: color-mix(in srgb, var(--hue) 80%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--hue) 22%, var(--border));
+}
+.rc-loc svg { flex-shrink: 0; opacity: 0.75; }
+
+.rst-card-foot.rc-job-foot { flex-wrap: wrap; margin-top: auto; }
+.rc-job-actions { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
+
+/* The candidate count — the card's main control (opens the applicant review). */
+.rst-people.rc-count {
+  gap: 0.45rem; padding: 0.4rem 0.75rem; border-radius: 0.75rem;
+  color: color-mix(in srgb, var(--accent) 88%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.rst-people.rc-count:hover {
+  background-color: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.rc-count-n { font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+.rc-count-go { opacity: 0.6; transition: transform 0.15s; }
+.rst-people.rc-count:hover .rc-count-go { transform: translateX(2px); opacity: 1; }
+
+.trn-btn.rc-copy { min-height: 2.25rem; padding: 0.35rem 0.75rem; font-size: 0.78rem; min-width: 7.4rem; }
+.trn-btn.rc-copy.is-done {
+  color: color-mix(in srgb, #16a34a 85%, currentColor);
+  border-color: color-mix(in srgb, #16a34a 40%, var(--border));
+  background-color: color-mix(in srgb, #16a34a 8%, var(--surface));
+}
+.rc-form-off {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; font-weight: 600;
+  opacity: 0.6; white-space: nowrap;
+}
+
+.trn-icon-btn.rc-filter.is-on {
+  color: color-mix(in srgb, var(--accent) 90%, currentColor);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 11%, var(--surface));
+}
+
+.trn-icon-btn.rc-del:hover { color: #dc2626; border-color: color-mix(in srgb, #dc2626 35%, var(--border)); background-color: color-mix(in srgb, #dc2626 8%, var(--surface)); }
+html.dark .trn-icon-btn.rc-del:hover { color: #f87171; }
+
+/* ---------- Candidates heading + toolbar ---------- */
+.rc-filtered {
+  display: inline-flex; align-items: center; gap: 0.4rem; max-width: 100%; min-width: 0;
+  padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.74rem; font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 90%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.rc-filtered:hover { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.rc-filtered svg { flex-shrink: 0; }
+
+.rc-seg-dot { width: 0.45rem; height: 0.45rem; border-radius: 999px; background-color: var(--hue); flex-shrink: 0; }
+.trn-select.rc-job-select { max-width: 15rem; }
+
+/* ---------- Candidate rows ---------- */
+.rc-list { container: rc-list / inline-size; display: grid; gap: 0.6rem; }
+
+.rc-row {
+  --hue: #64748b;
+  position: relative; min-width: 0; border-radius: 1rem;
+  /* The stage edge is painted, not a pseudo-element, so the row needs no
+     overflow clip — an interviewer picker's menu inside it can spill out. */
+  background: linear-gradient(90deg, var(--hue) 0 4px, var(--surface) 4px);
+  background-clip: padding-box;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.rc-row:hover {
+  border-color: color-mix(in srgb, var(--hue) 35%, var(--border));
+  box-shadow: 0 14px 30px -24px color-mix(in srgb, var(--hue) 70%, transparent);
+}
+.rc-row.is-open {
+  border-color: color-mix(in srgb, var(--hue) 42%, var(--border));
+  box-shadow: 0 18px 38px -28px color-mix(in srgb, var(--hue) 80%, transparent);
+}
+
+.rc-main {
+  display: grid; align-items: center; gap: 0.65rem 0.9rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas:
+    "who who"
+    "job src"
+    "stage stage"
+    "side side";
+  padding: 0.8rem 0.85rem 0.8rem 1.15rem;
+}
+.rc-who { grid-area: who; display: flex; align-items: center; gap: 0.7rem; min-width: 0; }
+.rc-job-cell { grid-area: job; min-width: 0; }
+.rc-src-cell { grid-area: src; min-width: 0; }
+.rc-stage-cell { grid-area: stage; min-width: 0; display: grid; gap: 0.4rem; justify-items: start; }
+.rc-side {
+  grid-area: side; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+  padding-top: 0.6rem; border-top: 1px dashed var(--border);
+}
+
+.rc-name { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.45rem; min-width: 0; font-size: 0.9rem; font-weight: 700; line-height: 1.3; }
+.rc-name > .truncate { min-width: 0; max-width: 100%; }
+.rc-contact { display: flex; flex-wrap: wrap; align-items: center; gap: 0.15rem 0.75rem; margin-top: 0.15rem; min-width: 0; font-size: 0.74rem; opacity: 0.68; }
+.rc-contact-item { display: inline-flex; align-items: center; gap: 0.3rem; min-width: 0; max-width: 100%; }
+.rc-contact-item svg { flex-shrink: 0; opacity: 0.7; }
+
+.rc-cell-label { display: block; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.5; margin-bottom: 0.1rem; }
+.rc-job-title { font-size: 0.84rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-job-loc { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.1rem; font-size: 0.72rem; opacity: 0.65; min-width: 0; }
+.rc-job-loc svg { flex-shrink: 0; }
+
+/* Source: an HR consultancy is the one HR has to spot, so it alone is tinted. */
+.rc-src { min-width: 0; }
+.rc-src-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem; max-width: 100%; min-width: 0;
+  padding: 0.15rem 0.55rem; border-radius: 0.55rem; font-size: 0.72rem; font-weight: 600; white-space: nowrap;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.rc-src-chip svg { flex-shrink: 0; opacity: 0.65; }
+.rc-src-chip.is-agency {
+  max-width: 12rem; font-weight: 700;
+  color: color-mix(in srgb, #ea580c 88%, currentColor);
+  background-color: color-mix(in srgb, #ea580c 10%, var(--surface));
+  border-color: color-mix(in srgb, #ea580c 30%, var(--border));
+}
+.rc-src-chip.is-agency svg { opacity: 0.85; }
+html.dark .rc-src-chip.is-agency { color: #fdba74; }
+.rc-src-sub { font-size: 0.66rem; font-weight: 600; opacity: 0.55; margin-top: 0.15rem; padding-left: 0.1rem; }
+
+/* Stage pill, in the row's own hue. */
+.rc-stage {
+  display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; min-width: 0;
+  padding: 0.15rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 11%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--hue) 30%, var(--border));
+}
+.rc-stage::before { content: ''; width: 0.42rem; height: 0.42rem; border-radius: 999px; background-color: var(--hue); flex-shrink: 0; }
+html.dark .rc-stage { color: color-mix(in srgb, var(--hue) 55%, #fff); }
+
+/* Interview progress: "1/4 cleared" over one segment per round, coloured by
+   that round's status. It is the expander for the rounds panel. */
+.rc-progress {
+  display: grid; gap: 0.35rem; width: 100%; max-width: 15rem; text-align: left;
+  padding: 0.4rem 0.6rem; border-radius: 0.7rem;
+  border: 1px solid var(--border); background-color: var(--surface-2);
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+.rc-progress:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.rc-progress:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
+.rc-progress[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.rc-progress-top { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rc-progress-chev { flex-shrink: 0; opacity: 0.6; transition: transform 0.15s; }
+.rc-progress[aria-expanded="true"] .rc-progress-chev { transform: rotate(90deg); opacity: 1; color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.rc-steps { display: flex; gap: 3px; }
+.rc-step { flex: 1 1 0; height: 0.36rem; border-radius: 999px; background-color: var(--step, color-mix(in srgb, currentColor 14%, transparent)); }
+
+/* Resume + actions */
+.rc-resume { display: inline-flex; align-items: center; gap: 0.2rem; }
+.rc-resume-busy, .rc-resume-none { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; font-weight: 600; opacity: 0.6; padding: 0 0.3rem; }
+.rc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.rc-icons { display: inline-flex; align-items: center; gap: 0.1rem; margin-left: auto; }
+.trn-btn.rc-sm { min-height: 2.15rem; padding: 0.3rem 0.7rem; font-size: 0.76rem; border-radius: 0.65rem; }
+.trn-btn.rc-docs {
+  color: color-mix(in srgb, #4f46e5 88%, currentColor);
+  border-color: color-mix(in srgb, #4f46e5 32%, var(--border));
+  background-color: color-mix(in srgb, #4f46e5 8%, var(--surface));
+}
+.trn-btn.rc-docs:hover:not(:disabled) { background-color: color-mix(in srgb, #4f46e5 14%, var(--surface)); border-color: color-mix(in srgb, #4f46e5 50%, var(--border)); }
+html.dark .trn-btn.rc-docs { color: #a5b4fc; }
+.rc-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background-color: #dc2626; box-shadow: 0 0 0 2px color-mix(in srgb, #dc2626 25%, transparent); flex-shrink: 0; }
+.rc-docs-ok { color: #16a34a; flex-shrink: 0; }
+.trn-btn.rc-offer { color: color-mix(in srgb, #7c3aed 88%, currentColor); border-color: color-mix(in srgb, #7c3aed 30%, var(--border)); }
+.trn-btn.rc-offer:hover:not(:disabled) { background-color: color-mix(in srgb, #7c3aed 8%, var(--surface)); border-color: color-mix(in srgb, #7c3aed 50%, var(--border)); }
+html.dark .trn-btn.rc-offer { color: #c4b5fd; }
+.trn-btn.rc-onboard {
+  color: #fff; background-color: #0d9488; border-color: #0d9488;
+  box-shadow: 0 8px 18px -10px rgba(13, 148, 136, 0.8);
+}
+.trn-btn.rc-onboard:hover:not(:disabled) { filter: brightness(1.07); border-color: #0d9488; }
+
+/* ---------- Rounds panel (inside the row) ---------- */
+.rc-detail {
+  padding: 0.95rem 0.85rem 1rem 1.15rem;
+  border-top: 1px dashed var(--border);
+  background: linear-gradient(90deg, var(--hue) 0 4px, var(--surface-2) 4px);
+  border-radius: 0 0 calc(1rem - 1px) calc(1rem - 1px);
+}
+.rc-detail-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin-bottom: 0.6rem;
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.7;
+}
+
+.rc-facts { display: grid; gap: 0.5rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 0.95rem; }
+.rc-fact { min-width: 0; padding: 0.5rem 0.65rem; border-radius: 0.7rem; background-color: var(--surface); border: 1px solid var(--border); }
+.rc-fact.is-wide { grid-column: 1 / -1; }
+.rc-fact-label { font-size: 0.6rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+.rc-fact-value { font-size: 0.84rem; font-weight: 600; margin-top: 0.1rem; overflow-wrap: anywhere; }
+.rc-fact.is-wide .rc-fact-value { font-weight: 400; line-height: 1.5; white-space: pre-wrap; }
+
+.rc-note {
+  margin-bottom: 0.6rem; padding: 0.5rem 0.75rem; border-radius: 0.7rem; font-size: 0.76rem;
+  color: color-mix(in srgb, #b45309 85%, currentColor);
+  background-color: color-mix(in srgb, #d97706 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, #d97706 30%, var(--border));
+}
+html.dark .rc-note { color: #fcd34d; }
+
+.rc-shortlist-cta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; padding: 0.9rem 1rem;
+  border-radius: 0.85rem; border: 1px dashed var(--border); background-color: var(--surface); font-size: 0.85rem;
+}
+
+.rc-rounds { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
+.rc-round {
+  position: relative; min-width: 0; padding: 0.85rem 0.75rem 0.75rem; border-radius: 0.9rem;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.rc-round::before {
+  content: ''; position: absolute; top: -1px; left: 0.9rem; right: 0.9rem; height: 3px;
+  border-radius: 0 0 3px 3px; background-color: var(--step, var(--border));
+}
+.rc-resched {
+  display: flex; align-items: center; justify-content: center; gap: 0.35rem; width: 100%;
+  margin-bottom: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 0.6rem;
+  font-size: 0.75rem; font-weight: 600;
+  border: 1px solid var(--border); background-color: var(--surface);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.rc-resched:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background-color: color-mix(in srgb, var(--accent) 5%, var(--surface)); }
+.rc-resched.is-noshow {
+  color: color-mix(in srgb, #ea580c 88%, currentColor);
+  border-color: color-mix(in srgb, #ea580c 40%, var(--border));
+  background-color: color-mix(in srgb, #ea580c 8%, var(--surface));
+}
+.rc-resched.is-noshow:hover { background-color: color-mix(in srgb, #ea580c 14%, var(--surface)); }
+html.dark .rc-resched.is-noshow { color: #fdba74; }
+.rc-moved { display: flex; align-items: flex-start; gap: 0.3rem; color: color-mix(in srgb, #ea580c 85%, currentColor); }
+.rc-moved svg { flex-shrink: 0; margin-top: 0.1rem; }
+html.dark .rc-moved { color: #fdba74; }
+
+/* Documents modal: each file's frame says its verdict. */
+.rc-docrow { border-color: var(--border); }
+.rc-docrow.is-verified { border-color: color-mix(in srgb, #16a34a 35%, var(--border)); background-color: color-mix(in srgb, #16a34a 6%, var(--surface)); }
+.rc-docrow.is-rejected { border-color: color-mix(in srgb, #dc2626 35%, var(--border)); background-color: color-mix(in srgb, #dc2626 6%, var(--surface)); }
+
+/* ---------- Row layout by the list's own width ---------- */
+@container rc-list (min-width: 560px) {
+  .rc-main {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    grid-template-areas:
+      "who stage"
+      "job src"
+      "side side";
+  }
+  .rc-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container rc-list (min-width: 860px) {
+  .rc-main {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(10.5rem, 12.5rem);
+    grid-template-areas:
+      "who job stage"
+      "src side side";
+    row-gap: 0.5rem;
+  }
+  /* Source sits under the name, lined up with the text, not the avatar. */
+  .rc-src-cell { padding-left: 3.05rem; }
+  .rc-side { padding-top: 0; border-top: 0; justify-content: flex-end; }
+  .rc-icons { margin-left: 0.15rem; }
+  .rc-cell-label { display: none; }
+}
+@container rc-list (min-width: 1240px) {
+  .rc-main {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) minmax(0, 1fr) minmax(10.5rem, 12rem) auto;
+    grid-template-areas: "who job src stage side";
+  }
+  .rc-src-cell { padding-left: 0; }
+  .rc-side { max-width: 25rem; }
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 640px) {
+  .trn-select.rc-job-select { max-width: none; flex: 1 1 10rem; }
+  .pb-toolbar-end .trn-btn.is-primary { flex: 1 1 auto; }
+  .rc-job-actions { margin-left: 0; width: 100%; }
+  .rc-job-actions .trn-btn.rc-copy { flex: 1 1 auto; }
+  .rst-people.rc-count { width: 100%; justify-content: flex-start; }
+  .rst-people.rc-count .rc-count-go { margin-left: auto; }
+  .rc-progress { max-width: none; }
+  .rc-main { padding: 0.75rem 0.75rem 0.75rem 1rem; }
+  .rc-detail { padding: 0.85rem 0.75rem 0.9rem 1rem; }
+  .rc-src-chip.is-agency { max-width: 100%; }
+}
+
+/* Truncating labels inside the inline-flex chips need to be allowed to shrink. */
+.rc-dept > .truncate, .rc-loc > .truncate, .rc-src-chip > .truncate, .rc-contact-item > .truncate,
+.rc-job-loc > .truncate, .rc-stage > .truncate, .rc-filtered > .truncate { min-width: 0; }

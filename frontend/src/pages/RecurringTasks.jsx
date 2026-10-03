@@ -71,7 +71,6 @@ export default function RecurringTasks({ tasksBase = '/employee/tasks' }) {
 
       <PageHeader
         title="Recurring Tasks"
-        subtitle="Set it up once — each time it comes round, it lands in their Tasks on its own. Daily ones are only marked done."
       >
         <Link
           to={tasksBase}
@@ -96,8 +95,7 @@ export default function RecurringTasks({ tasksBase = '/employee/tasks' }) {
           </span>
           <p className="font-semibold text-gray-800">Recurring tasks need a permission</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-            A Super Admin decides who can set up recurring tasks. Ask one to switch it on for you under
-            Permissions — until then, one-off tasks are on the Tasks page.
+            Ask a Super Admin to switch it on.
           </p>
         </div>
       )}

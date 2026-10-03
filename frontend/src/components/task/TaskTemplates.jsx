@@ -143,10 +143,7 @@ export default function TaskTemplates({ meta, viewOnly, onUse }) {
         </div>
       ) : sub === 'mine' ? (
         templates.length === 0 ? (
-          <Empty
-            title="No templates yet"
-            body='Press "Template" on any task you have set and it will be saved here, ready to use again.'
-          />
+          <Empty title="No templates yet" />
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
             {templates.map((t) => (
@@ -162,10 +159,7 @@ export default function TaskTemplates({ meta, viewOnly, onUse }) {
         )
       ) : sub === 'directory' ? (
         departments.length === 0 ? (
-          <Empty
-            title="The directory is empty"
-            body="Nothing has been shared with the company yet. Your own templates are on the first tab."
-          />
+          <Empty title="The directory is empty" />
         ) : (
           <>
             <div className="mb-3 flex flex-wrap gap-1.5">
@@ -213,10 +207,7 @@ export default function TaskTemplates({ meta, viewOnly, onUse }) {
         )
       ) : (
         schedules.length === 0 ? (
-          <Empty
-            title="Nothing repeats yet"
-            body='Tick "Repeat" when you assign a task and the schedule will appear here.'
-          />
+          <Empty title="Nothing repeats yet" />
         ) : (
           <div className="space-y-2">
             {schedules.map((s) => (
@@ -328,7 +319,7 @@ function Empty({ title, body }) {
   return (
     <div className="rounded-2xl border border-dashed border-gray-200 px-6 py-12 text-center">
       <p className="text-sm font-medium text-gray-700">{title}</p>
-      <p className="mt-1 text-xs text-gray-500">{body}</p>
+      {body && <p className="mt-1 text-xs text-gray-500">{body}</p>}
     </div>
   );
 }

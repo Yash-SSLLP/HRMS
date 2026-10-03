@@ -6,6 +6,7 @@
  */
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import '../styles/pages/org-help.css';
 import { toast } from 'react-toastify';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
@@ -18,7 +19,9 @@ import { formatDateTime12 } from '../utils/time';
 // The apps ship a bundled default guide; HR can override it (saved server-side).
 const DEFAULTS = { employee: employeeGuide, hr: hrGuide };
 
-import { FiInfo, FiZap, FiAlertCircle, FiAlertTriangle } from 'react-icons/fi';
+import {
+  FiInfo, FiZap, FiAlertCircle, FiAlertTriangle, FiEdit2, FiRotateCcw, FiCheck, FiList, FiShield, FiUser, FiClock,
+} from 'react-icons/fi';
 
 /**
  * Callout kinds. The guides mark these with a leading `[!NOTE]` / `[!TIP]` /
@@ -26,13 +29,14 @@ import { FiInfo, FiZap, FiAlertCircle, FiAlertTriangle } from 'react-icons/fi';
  * draws a real vector icon that inherits the callout's colour and the reader's
  * font size. The uppercase label is deliberate: it carries the kind in TEXT as
  * well as in colour, so the distinction survives greyscale printing and
- * colour-blindness.
+ * colour-blindness. The hue is mixed into the surface (.help-callout), so the
+ * card holds in dark mode and in every portal accent.
  */
 const CALLOUTS = {
-  note: { Icon: FiInfo, label: 'Note', cls: 'border-sky-400 bg-sky-50 text-sky-900' },
-  tip: { Icon: FiZap, label: 'Tip', cls: 'border-indigo-400 bg-indigo-50 text-indigo-900' },
-  important: { Icon: FiAlertCircle, label: 'Important', cls: 'border-violet-400 bg-violet-50 text-violet-900' },
-  warning: { Icon: FiAlertTriangle, label: 'Warning', cls: 'border-amber-400 bg-amber-50 text-amber-900' },
+  note: { Icon: FiInfo, label: 'Note', hue: '#0ea5e9' },
+  tip: { Icon: FiZap, label: 'Tip', hue: '#6366f1' },
+  important: { Icon: FiAlertCircle, label: 'Important', hue: '#8b5cf6' },
+  warning: { Icon: FiAlertTriangle, label: 'Warning', hue: '#d97706' },
 };
 
 // Stable id for a heading, shared by the renderer (anchors) and the ToC (links).
@@ -56,7 +60,7 @@ function renderInline(text) {
     if (m[2] != null) nodes.push(<strong key={key++} className="font-semibold text-gray-900">{m[2]}</strong>);
     else if (m[3] != null) nodes.push(<em key={key++}>{m[3]}</em>);
     else nodes.push(
-      <code key={key++} className="px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 font-mono text-[0.82em] text-gray-800">
+      <code key={key++} className="help-code">
         {m[4]}
       </code>
     );
@@ -65,11 +69,13 @@ function renderInline(text) {
   return nodes;
 }
 
+// Type scale lives in styles/pages/org-help.css (.help-h*); the gray text
+// utilities stay because index.css remaps them for dark mode.
 const HEADING_CLS = {
-  1: 'text-2xl sm:text-3xl font-bold text-gray-900 mt-1 mb-2 tracking-tight',
-  2: 'text-lg font-bold text-gray-900 mt-10 mb-3 pb-2 border-b border-gray-100 scroll-mt-24',
-  3: 'text-[15px] font-semibold text-gray-900 mt-6 mb-2 scroll-mt-24',
-  4: 'text-sm font-semibold text-gray-600 mt-4 mb-1.5',
+  1: 'help-h1 text-gray-900',
+  2: 'help-h2 text-gray-900',
+  3: 'help-h3 text-gray-900',
+  4: 'help-h4 text-gray-600',
 };
 
 /**
@@ -102,10 +108,10 @@ function MarkdownView({ md }) {
     // the keys stay unique.
     const flush = () => {
       if (!list) return;
-      const items = list.items.map((t, i) => <li key={i} className="mb-1.5 pl-1">{renderInline(t)}</li>);
+      const items = list.items.map((t, i) => <li key={i}>{renderInline(t)}</li>);
       out.push(list.type === 'ol'
-        ? <ol key={`b${list.at}`} className="list-decimal pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-400">{items}</ol>
-        : <ul key={`b${list.at}`} className="list-disc pl-6 mb-4 text-gray-700 leading-relaxed marker:text-gray-300">{items}</ul>);
+        ? <ol key={`b${list.at}`} className="help-list list-decimal text-gray-700">{items}</ol>
+        : <ul key={`b${list.at}`} className="help-list list-disc text-gray-700">{items}</ul>);
       list = null;
     };
     for (let i = 0; i < lines.length; i++) {
@@ -123,20 +129,18 @@ function MarkdownView({ md }) {
         continue;
       }
 
-      if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flush(); out.push(<hr key={`b${i}`} className="my-7 border-gray-100" />); continue; }
+      if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flush(); out.push(<hr key={`b${i}`} className="help-hr" />); continue; }
 
       const callout = calloutOf(line.trim());
       if (callout) {
         flush();
         const { Icon } = callout;
         out.push(
-          <div key={`b${i}`} className={`flex gap-3 my-5 rounded-lg border-l-4 px-4 py-3.5 ${callout.cls}`}>
-            <Icon className="shrink-0 mt-0.5 opacity-80" size={17} aria-hidden="true" />
+          <div key={`b${i}`} className="help-callout" style={{ '--hue': callout.hue }}>
+            <span className="help-callout-icon"><Icon size={16} aria-hidden="true" /></span>
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-wider opacity-70 mb-1">
-                {callout.label}
-              </div>
-              <p className="text-sm leading-relaxed m-0">{renderInline(callout.body)}</p>
+              <div className="help-callout-label">{callout.label}</div>
+              <p className="help-callout-body text-gray-700">{renderInline(callout.body)}</p>
             </div>
           </div>
         );
@@ -156,44 +160,60 @@ function MarkdownView({ md }) {
         continue;
       }
       flush();
-      out.push(<p key={`b${i}`} className="mb-3.5 text-gray-700 leading-relaxed">{renderInline(line)}</p>);
+      out.push(<p key={`b${i}`} className="help-p text-gray-700">{renderInline(line)}</p>);
     }
     flush();
     return out;
   }, [md]);
 
-  return <div className="max-w-none">{blocks}</div>;
+  return <div className="help-prose">{blocks}</div>;
 }
 
-// On-this-page navigation, built from the guide's ## / ### headings.
+// On-this-page navigation, built from the guide's ## / ### headings: one row
+// per chapter (##), and the open chapter's ### sections under it — 50-odd
+// headings listed flat ran several screens down a sidebar.
 function TableOfContents({ toc, activeId, onJump }) {
   if (!toc.length) return null;
+  const groups = [];
+  for (const h of toc) {
+    if (h.level === 2 || !groups.length) groups.push({ head: h, kids: [] });
+    else groups[groups.length - 1].kids.push(h);
+  }
+  const link = (h, cls, children) => (
+    <a
+      href={`#${h.id}`}
+      onClick={(e) => { e.preventDefault(); onJump(h.id); }}
+      // Active is colour only (same weight, same border width), so a label
+      // can never re-wrap and shove every entry below it down a line.
+      className={`help-toc-link ${cls}${activeId === h.id ? ' is-on' : ''}`}
+      aria-current={activeId === h.id ? 'location' : undefined}
+    >
+      {children}
+    </a>
+  );
   return (
-    <nav className="text-sm">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-3">On this page</div>
-      <ul className="border-l border-gray-200">
-        {toc.map((h) => {
-          const active = activeId === h.id;
+    <nav className="help-toc" aria-label="Contents">
+      <ol className="help-toc-list">
+        {groups.map(({ head, kids }) => {
+          const open = activeId === head.id || kids.some((k) => k.id === activeId);
+          const num = head.title.match(/^(\d+)\.\s+(.*)$/);
           return (
-            <li key={h.id}>
-              <a
-                href={`#${h.id}`}
-                onClick={(e) => { e.preventDefault(); onJump(h.id); }}
-                className={[
-                  // font-medium and border-l-2 stay on the BASE so the active item never
-                  // re-measures: a heavier label could re-wrap in the 240px sidebar and
-                  // shove every entry below it down a line. Active is colour only.
-                  'block -ml-px border-l-2 py-1.5 leading-snug font-medium transition-colors',
-                  h.level === 3 ? 'pl-6 text-[13px]' : 'pl-4',
-                  active ? 'border-current accent-text' : 'border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300',
-                ].join(' ')}
-              >
-                {h.title}
-              </a>
+            <li key={head.id}>
+              {link(head, 'is-h2', num ? (
+                <>
+                  <span className={`help-toc-num${open ? ' accent-bg text-white' : ''}`}>{num[1]}</span>
+                  <span className="min-w-0">{num[2]}</span>
+                </>
+              ) : <span className="min-w-0">{head.title}</span>)}
+              {open && kids.length > 0 && (
+                <ul className="help-toc-sub">
+                  {kids.map((k) => <li key={k.id}>{link(k, 'is-h3', k.title)}</li>)}
+                </ul>
+              )}
             </li>
           );
         })}
-      </ul>
+      </ol>
     </nav>
   );
 }
@@ -238,10 +258,14 @@ export default function HowToUse() {
   const content = (meta && meta.content) || DEFAULTS[tab];
 
   // Table of contents from ## / ### headings (matches the renderer's anchor ids).
+  // Each line is right-trimmed first, exactly as MarkdownView does: the guides
+  // are CRLF, and a trailing \r defeated `(.*)$` (`.` never matches \r), so
+  // every heading was missed — the page read "0 sections" and drew no contents
+  // while the renderer, which trims, drew all of them.
   const toc = useMemo(() => {
     const items = [];
     for (const raw of (content || '').split('\n')) {
-      const m = raw.match(/^(#{2,3})\s+(.*)$/);
+      const m = raw.replace(/\s+$/, '').match(/^(#{2,3})\s+(.*)$/);
       if (m) items.push({ level: m[1].length, id: slug(m[2]), title: m[2].replace(/\*\*|`/g, '') });
     }
     return items;
@@ -309,72 +333,98 @@ export default function HowToUse() {
 
   return (
     <div>
-      <PageHeader title="Help" subtitle="A complete walkthrough of the HRMS - every screen and how to use it." />
-
-      {/* Controls: guide switch (admin) + edit actions */}
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        {isAdminPortal && (
-          // The house segmented control (.seg-track / .seg-btn in index.css). The
-          // hand-rolled version this replaces was a rounded-full pill inside a
-          // rounded-full pill — 16px of curve inside 20px, with 2px of track showing —
-          // and, being raw utilities, it took the generic bg-gray-100 dark remap instead
-          // of seg-track's own dark inversion. seg-btn also carries font-weight on the
-          // base, which is what keeps a content-sized strip from re-measuring on click.
-          <nav className="seg-track" aria-label="Choose guide">
-            <button type="button" onClick={() => setTab('hr')}
-              aria-current={tab === 'hr' ? 'page' : undefined}
-              className={`seg-btn${tab === 'hr' ? ' is-active' : ''}`}>
-              HR / Admin guide
+      <PageHeader
+        title="Help"
+        subtitle={!editing && toc.length ? `${toc.length} sections` : undefined}
+      >
+        {/* Edit actions (announcements.manage). */}
+        {canEdit && (editing ? (
+          <>
+            <button type="button" onClick={resetDefault} className="trn-btn is-danger">
+              <FiRotateCcw size={14} /> Reset to default
             </button>
-            <button type="button" onClick={() => setTab('employee')}
-              aria-current={tab === 'employee' ? 'page' : undefined}
-              className={`seg-btn${tab === 'employee' ? ' is-active' : ''}`}>
-              Employee guide
+            <button type="button" onClick={cancel} className="trn-btn">Cancel</button>
+            <button type="button" onClick={save} disabled={saving} className="trn-btn is-primary accent-bg text-white">
+              <FiCheck size={15} /> {saving ? 'Saving…' : 'Save'}
             </button>
-          </nav>
-        )}
-        {!editing && <span className="text-xs text-gray-400">{toc.length} sections</span>}
+          </>
+        ) : (
+          <button type="button" onClick={startEdit} className="trn-btn">
+            <FiEdit2 size={14} /> Edit guide
+          </button>
+        ))}
+      </PageHeader>
 
-        {canEdit && (
-          <div className="ml-auto flex items-center gap-2">
-            {editing ? (
-              <>
-                <button onClick={resetDefault} className="px-3 py-2 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50">Reset to default</button>
-                <button onClick={cancel} className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button onClick={save} disabled={saving} className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
-              </>
-            ) : (
-              <button onClick={startEdit} className="px-4 py-2 text-sm border border-indigo-300 text-indigo-700 rounded-lg hover:bg-indigo-50">Edit guide</button>
-            )}
+      {/* Guide switch (admin portal). .trn-seg keeps font-weight and border
+          width on the base, so the strip never re-measures on click. */}
+      {isAdminPortal && (
+        <div className="help-bar">
+          <div className="trn-seg" role="tablist" aria-label="Choose guide">
+            <button type="button" role="tab" onClick={() => setTab('hr')}
+              aria-selected={tab === 'hr'}
+              className={`trn-seg-btn${tab === 'hr' ? ' is-on' : ''}`}>
+              <FiShield size={14} aria-hidden="true" /> HR / Admin guide
+            </button>
+            <button type="button" role="tab" onClick={() => setTab('employee')}
+              aria-selected={tab === 'employee'}
+              className={`trn-seg-btn${tab === 'employee' ? ' is-on' : ''}`}>
+              <FiUser size={14} aria-hidden="true" /> Employee guide
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {editing ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-white shadow rounded-xl p-4 flex flex-col">
-            <div className="text-xs font-semibold text-gray-500 mb-2">MARKDOWN · editing the {tab === 'hr' ? 'HR / Admin' : 'Employee'} guide</div>
+        <div className="help-editor">
+          <div className="help-pane flex flex-col">
+            <div className="help-pane-head">
+              <span className="help-pane-title">Markdown · {tab === 'hr' ? 'HR / Admin' : 'Employee'} guide</span>
+              <span
+                className="help-pane-hint"
+                role="img"
+                title="Supports Markdown: # heading, **bold**, *italic*, `code`, - bullet, 1. numbered, ---. Saved for everyone."
+                aria-label="Markdown help"
+              >
+                <FiInfo size={14} />
+              </span>
+            </div>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               spellCheck={false}
-              className="flex-1 min-h-[60vh] w-full font-mono text-[13px] leading-relaxed border border-gray-200 rounded-lg p-3 focus:outline-none focus:border-gray-400"
+              aria-label="Guide Markdown"
+              className="help-textarea"
             />
-            <p className="text-[11px] text-gray-400 mt-2">Supports Markdown: <code># heading</code>, <code>**bold**</code>, <code>*italic*</code>, <code>`code`</code>, <code>- bullet</code>, <code>1. numbered</code>, <code>---</code>. Saved for everyone.</p>
           </div>
-          <div className="bg-white shadow rounded-xl p-5 sm:p-6 overflow-y-auto max-h-[75vh]">
-            <div className="text-xs font-semibold text-gray-500 mb-3">LIVE PREVIEW</div>
+          <div className="help-pane help-pane-preview">
+            <div className="help-pane-head">
+              <span className="help-pane-title">Live preview</span>
+            </div>
             <MarkdownView md={previewMd} />
           </div>
         </div>
       ) : (
-        <div className="lg:flex lg:gap-8 lg:items-start">
-          <article id="guide-content" className="flex-1 min-w-0 bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-6 sm:px-10 sm:py-9">
-            {/* Mobile "on this page" (the sidebar is desktop-only) */}
+        <div className="help-layout">
+          {/* Sticky contents (desktop). */}
+          {toc.length > 0 && (
+            <aside className="help-aside">
+              <div className="help-aside-head">
+                <FiList size={14} aria-hidden="true" />
+                <span>Contents</span>
+              </div>
+              <TableOfContents toc={toc} activeId={activeId} onJump={jump} />
+            </aside>
+          )}
+
+          <article id="guide-content" className={`help-article${toc.length ? '' : ' is-wide'}`}>
+            {/* Contents on a phone / tablet (the sidebar is desktop-only). */}
             {toc.length > 0 && (
-              <details className="lg:hidden mb-6 rounded-lg border border-gray-200 bg-gray-50">
-                <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-medium text-gray-700">On this page</summary>
-                <div className="px-4 pb-3">
+              <details className="help-toc-mobile">
+                <summary>
+                  <FiList size={14} aria-hidden="true" />
+                  <span>Contents</span>
+                </summary>
+                <div className="help-toc-mobile-body">
                   <TableOfContents toc={toc} activeId={activeId} onJump={jump} />
                 </div>
               </details>
@@ -383,14 +433,12 @@ export default function HowToUse() {
             <MarkdownView md={content} />
 
             {meta && meta.updatedAt && (
-              <p className="text-[11px] text-gray-400 mt-8 pt-4 border-t border-gray-100">Last edited by {meta.updatedByName || 'HR'} · {fmtWhen(meta.updatedAt)}</p>
+              <p className="help-edited">
+                <FiClock size={12} aria-hidden="true" />
+                Last edited by {meta.updatedByName || 'HR'} · {fmtWhen(meta.updatedAt)}
+              </p>
             )}
           </article>
-
-          {/* Sticky table of contents (desktop) */}
-          <aside className="hidden lg:block w-60 shrink-0 sticky top-20 self-start max-h-[calc(100vh-6rem)] overflow-y-auto pb-6">
-            <TableOfContents toc={toc} activeId={activeId} onJump={jump} />
-          </aside>
         </div>
       )}
     </div>

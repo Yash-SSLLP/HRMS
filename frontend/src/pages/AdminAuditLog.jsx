@@ -289,12 +289,10 @@ export default function AdminAuditLog() {
     }
   };
 
-  const subtitle = 'Every change across the portal, in plain words — who did what, and when';
-
   if (!isSuperAdmin) {
     return (
       <div>
-        <PageHeader title="Audit Log" subtitle={subtitle} />
+        <PageHeader title="Audit Log" />
         <div className="trn-card-base trn-empty">
           <span className="trn-empty-icon"><FiShield size={24} /></span>
           <p className="text-gray-600">This tool isn&apos;t available for your account.</p>
@@ -305,7 +303,7 @@ export default function AdminAuditLog() {
 
   return (
     <div>
-      <PageHeader title="Audit Log" subtitle={subtitle}>
+      <PageHeader title="Audit Log">
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         <button type="button" className="trn-btn" onClick={reloadAll} disabled={loading || refreshing}>
           <FiRefreshCw size={14} /> Refresh
@@ -395,9 +393,6 @@ export default function AdminAuditLog() {
         <div className="trn-card-base trn-empty">
           <span className="trn-empty-icon"><FiShield size={24} /></span>
           <p className="font-semibold text-gray-800">{filtersActive ? 'Nothing matches these filters' : 'No changes recorded yet'}</p>
-          <p className="text-sm text-gray-500 max-w-sm">
-            {filtersActive ? 'Try another module, a wider date range or a shorter search.' : 'Approvals, status moves and edits across the portal will appear here as they happen.'}
-          </p>
           {filtersActive && <button type="button" className="trn-btn" onClick={clearFilters}><FiX size={14} /> Clear filters</button>}
         </div>
       ) : (
@@ -416,7 +411,7 @@ export default function AdminAuditLog() {
             </section>
           ))}
           {items.length >= PAGE && (
-            <p className="text-xs text-gray-500 mt-3 px-1">Showing the latest {num(PAGE)} changes · narrow the filters to reach older ones.</p>
+            <p className="text-xs text-gray-500 mt-3 px-1">Showing the latest {num(PAGE)} changes.</p>
           )}
         </div>
       )}

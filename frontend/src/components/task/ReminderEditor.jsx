@@ -68,7 +68,7 @@ export default function ReminderEditor({ value = [], onChange, onClose }) {
 
       {value.length === 0 && (
         <p className="text-xs text-gray-500">
-          No reminders. Nobody will be chased about this one.
+          No reminders yet.
         </p>
       )}
 
@@ -146,7 +146,6 @@ export default function ReminderEditor({ value = [], onChange, onClose }) {
           ) : (
             <p className="text-[11px] text-gray-400">
               {`${reminderLabel(rule)} the deadline`}
-              {rule.when === 'AFTER' && ' — also goes to whoever set the task'}
             </p>
           )}
         </div>

@@ -82,7 +82,6 @@ export default function CategoryManager({ onClose, onChanged }) {
           <span className="trn-kpi-icon"><FiTag size={18} /></span>
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-gray-900">Categories</div>
-            <div className="text-xs text-gray-600">What trainings are filed under. You can also add one straight from the booking form.</div>
           </div>
           <button type="button" className="trn-icon-btn text-gray-500" onClick={onClose} aria-label="Close" data-modal-close><FiX size={18} /></button>
         </div>
@@ -95,7 +94,7 @@ export default function CategoryManager({ onClose, onChanged }) {
             {list === null ? (
               <div className="space-y-2"><div className="skeleton h-9 rounded" /><div className="skeleton h-9 rounded" /></div>
             ) : list.length === 0 ? (
-              <p className="text-sm text-gray-500 py-6 text-center">No categories yet — add the first one above.</p>
+              <p className="text-sm text-gray-500 py-6 text-center">No categories yet.</p>
             ) : list.map((c) => (
               <div key={c._id} className="trn-person">
                 <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: categoryHue(c.name) }} />

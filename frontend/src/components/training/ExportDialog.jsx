@@ -51,7 +51,6 @@ export default function ExportDialog({ trainings = [], onClose }) {
           <span className="trn-kpi-icon" style={{ '--kpi-hue': '#16a34a' }}><FiFileText size={18} /></span>
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-gray-900">Monthly training report</div>
-            <div className="text-xs text-gray-600">Excel · sessions, time taken, trainer, participants, attendance and reviews.</div>
           </div>
           <button type="button" className="trn-icon-btn text-gray-500" onClick={onClose} aria-label="Close" data-modal-close><FiX size={18} /></button>
         </div>
@@ -71,7 +70,7 @@ export default function ExportDialog({ trainings = [], onClose }) {
             <div className="trn-kpi" style={{ padding: '0.7rem' }}><div className="min-w-0"><div className="trn-kpi-value text-gray-900">{preview.seats}</div><div className="trn-kpi-label text-gray-600">Seats</div></div></div>
           </div>
           <p className="text-xs text-gray-500 mt-3">
-            {monthLabel(month)}{preview.cancelled ? ` · ${preview.cancelled} cancelled (listed, not counted)` : ''}. Three sheets: Summary, Trainings, Participants.
+            {monthLabel(month)}{preview.cancelled ? ` · ${preview.cancelled} cancelled` : ''}
           </p>
         </div>
         <div className="trn-modal-foot">

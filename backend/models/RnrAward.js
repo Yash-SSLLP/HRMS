@@ -4,14 +4,19 @@ const mongoose = require('mongoose');
 // (org-wide) and one "Key Achiever" per department. The award stays a secret
 // Draft until it is Announced, at which point every employee is notified and a
 // celebratory banner shows on their dashboard for 2 working days.
+// The two keys the app shipped with. Since 2026-10-03 HR defines the categories
+// (models/RnrCategory.js), so `category` is any category key — these two are
+// kept as the built-in ones (EmployeeOfMonth = "Best Employee").
 const CATEGORIES = ['EmployeeOfMonth', 'KeyAchiever'];
 
 // A single winner. Name / designation / photo are snapshotted at save time so the
-// banner reflects who won even if the profile later changes.
+// banner reflects who won even if the profile later changes — and so is the
+// category's name, so a category deleted later still reads on past awards.
 const winnerSchema = new mongoose.Schema(
   {
-    category: { type: String, enum: CATEGORIES, required: true },
-    department: { type: String, trim: true, default: '' }, // set for KeyAchiever
+    category: { type: String, required: true, trim: true },
+    categoryName: { type: String, trim: true },
+    department: { type: String, trim: true, default: '' }, // set for a per-department category
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     name: String,
     designation: String,

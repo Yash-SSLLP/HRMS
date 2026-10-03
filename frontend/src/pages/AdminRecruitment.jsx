@@ -5,8 +5,13 @@
  * Jitsi/Meet links, feedback), resume download, and offer-letter generation +
  * emailing (through the editable compose modal). Public apply links per job.
  */
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiArrowRight, FiBriefcase, FiCalendar, FiCheck, FiChevronRight, FiDownload, FiEdit2, FiExternalLink,
+  FiFilePlus, FiFileText, FiFilter, FiGlobe, FiLink, FiLock, FiMail, FiMapPin, FiPhone, FiPlus,
+  FiRefreshCw, FiSearch, FiTrash2, FiUpload, FiUserCheck, FiUserPlus, FiUsers, FiVideo, FiX,
+} from 'react-icons/fi';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import PageHeader from '../components/PageHeader';
@@ -30,6 +35,8 @@ import {
   ROUND_STATUS, ROUND_STATUS_STYLES as ROUND_STYLES, roundStatusLabel,
   RescheduleDialog, canRescheduleRound, historyText,
 } from '../components/InterviewAssessment';
+import { PersonAvatar } from '../components/permissions/permUi';
+import '../styles/pages/recruitment.css';
 
 const JOB_STATUS = ['Open', 'OnHold', 'Closed'];
 const STAGES = ['Applied', 'Shortlisted', 'Screening', 'Interview', 'Offer', 'Onboarding', 'NewJoinee', 'Hired', 'Rejected'];
@@ -44,6 +51,24 @@ const STAGE_STYLES = {
   Hired: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-700',
 };
+// The same stages as hues, for the pipeline rows' edge, pill and segment dot
+// (recruitment.css mixes each into --surface, so dark mode holds).
+const STAGE_HUES = {
+  Applied: '#64748b',
+  Shortlisted: '#6366f1',
+  Screening: '#0ea5e9',
+  Interview: '#d97706',
+  Offer: '#8b5cf6',
+  Onboarding: '#0d9488',
+  NewJoinee: '#0891b2',
+  Hired: '#16a34a',
+  Rejected: '#dc2626',
+};
+// One segment per round on a row's progress bar; Pending stays an empty track.
+const ROUND_HUES = { Scheduled: '#6366f1', OnHold: '#d97706', NoShow: '#ea580c', Cleared: '#16a34a', Rejected: '#dc2626' };
+// Job cards: the status colours the card's edge.
+const JOB_HUES = { Open: '#16a34a', OnHold: '#d97706', Closed: '#64748b' };
+const JOB_STATUS_LABELS = { OnHold: 'On hold' };
 // Stages at/after onboarding — the offer/onboard actions no longer apply.
 const POST_ONBOARD = ['Onboarding', 'NewJoinee', 'Hired'];
 
@@ -77,10 +102,11 @@ const DOC_STATUS_STYLES = {
   Verified: 'bg-green-100 text-green-800',
   Rejected: 'bg-red-100 text-red-800',
 };
+// Tints mixed into --surface (recruitment.css .rc-docrow), so dark mode holds.
 const DOC_ROW_STYLES = {
-  Pending: 'border-gray-100',
-  Verified: 'border-green-200 bg-green-50/40',
-  Rejected: 'border-red-200 bg-red-50/40',
+  Pending: 'rc-docrow',
+  Verified: 'rc-docrow is-verified',
+  Rejected: 'rc-docrow is-rejected',
 };
 
 /**
@@ -110,6 +136,16 @@ function docReviewSummary(candidate) {
 }
 
 const fmtDateTime = (d) => formatDateTime12(d);
+// 'yyyy-m' of a date in local time, '' when there is none — for "this month" counts.
+const monthKey = (d) => {
+  const x = d ? new Date(d) : null;
+  return x && !Number.isNaN(x.getTime()) ? `${x.getFullYear()}-${x.getMonth()}` : '';
+};
+// A candidate is not a login, so their avatar is the initials of their name.
+const nameParts = (name) => {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return { firstName: parts[0] || '', lastName: parts.length > 1 ? parts[parts.length - 1] : '' };
+};
 const toDateInput = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
 
 /**
@@ -169,7 +205,7 @@ const fmtDay = (d) => {
 };
 
 /**
- * The Candidates table's Source column: how the candidate reached the pipeline
+ * A candidate row's Source: how the candidate reached the pipeline
  * (Candidate.source). One sent by an outside HR consultancy is the one HR has
  * to spot, so it alone is tinted and carries the consultancy's name — whether
  * the agency added them from its own portal (it took Round 1 and is on the
@@ -181,22 +217,22 @@ function CandidateSource({ c }) {
     const agency = c.consultancy?.name || 'HR consultancy';
     const viaPortal = !!c.consultancy?.user;
     const added = fmtDay(viaPortal ? (c.consultancy?.addedAt || c.createdAt) : c.createdAt);
-    // 9rem on a phone: index.css caps a table cell at 11rem there, padding
-    // included, and a wider chip ran into the Job column. The full name is in
+    // The chip is capped (recruitment.css) and truncates; the full name is in
     // the tooltip either way.
     return (
-      <div title={viaPortal
+      <div className="rc-src" title={viaPortal
         ? `Sent in by ${agency} from their consultancy portal${added ? ` on ${added}` : ''}. They take Round 1.`
         : `Came through ${agency}, an HR consultancy. Added by HR${added ? ` on ${added}` : ''}.`}>
-        <span className="inline-block max-w-[9rem] md:max-w-[12rem] truncate align-top text-xs font-medium px-2 py-0.5 rounded-lg bg-orange-100 text-orange-800">
-          {agency}
+        <span className="rc-src-chip is-agency">
+          <FiBriefcase size={11} /><span className="truncate">{agency}</span>
         </span>
-        <div className="text-xs text-gray-500 mt-0.5">HR consultancy</div>
+        <div className="rc-src-sub">HR consultancy</div>
       </div>
     );
   }
   return (
-    <span className="text-gray-500 whitespace-nowrap">
+    <span className="rc-src-chip">
+      {c.source === 'Application' ? <FiGlobe size={11} /> : <FiUserPlus size={11} />}
       {c.source === 'Application' ? 'Applied online' : 'Added by HR'}
     </span>
   );
@@ -581,7 +617,7 @@ export default function AdminRecruitment() {
       title: 'Interview invite email',
       link: meetingLink,
       sendLabel: 'Send invite',
-      note: "Review and edit the invite below · it's emailed from the company mailbox to the candidate and interviewer, with the candidate's résumé attached. Add more emails in Cc to keep others in the loop.",
+      note: "Review and edit the invite before it is sent.",
       defaultSubject: mailData.subject,
       defaultBody: mailData.body,
       attachedNames: mailData.attachments || [],
@@ -663,7 +699,7 @@ export default function AdminRecruitment() {
         title: 'Send Offer Letter',
         link: data.link,
         sendLabel: 'Send offer',
-        note: "Review and edit the message below · it's emailed from the company mailbox with the offer letter PDF attached.",
+        note: "Review and edit the message before it is sent.",
         defaultSubject: data.subject,
         defaultBody: data.body,
         attachedNames: data.attachments || [],
@@ -751,7 +787,7 @@ export default function AdminRecruitment() {
         title: 'Email document request',
         link: data.link,
         sendLabel: 'Send request',
-        note: "Review and edit the message below · it's emailed from the company mailbox with the upload link included.",
+        note: "Review and edit the message before it is sent.",
         defaultSubject: data.subject,
         defaultBody: data.body,
         onSend: async ({ subject, body, cc }) => {
@@ -885,445 +921,590 @@ export default function AdminRecruitment() {
     ? true
     : c.stage !== 'Applied' && c.stage !== 'Rejected'));
 
+  // ----- Presentation only: the KPI strip and the pipeline toolbar -----
+  // Search and the stage segments filter the rows already loaded; the job
+  // filter is the existing `selectedJob` (the server narrows the list).
+  const [query, setQuery] = useState('');
+  const [stageView, setStageView] = useState('all');
+  // An agency candidate still at the consultancy's Round 1 reads by that, not
+  // by their stored stage — the same split the stage pill makes; one the agency
+  // turned down there counts with the rejected.
+  const stageKeyOf = (c) => {
+    const agency = agencyRound1(c);
+    if (!agency) return c.stage;
+    return agency.open ? 'Agency' : 'Rejected';
+  };
+  const stageCounts = shortlistedCandidates.reduce((m, c) => {
+    const k = stageKeyOf(c);
+    m[k] = (m[k] || 0) + 1;
+    return m;
+  }, {});
+  const stageViews = [
+    { key: 'all', label: 'All', n: shortlistedCandidates.length },
+    ...(stageCounts.Agency ? [{ key: 'Agency', label: 'With consultancy', n: stageCounts.Agency, hue: '#d97706' }] : []),
+    ...STAGES.filter((s) => stageCounts[s]).map((s) => ({ key: s, label: STAGE_LABELS[s] || s, n: stageCounts[s], hue: STAGE_HUES[s] })),
+  ];
+  // A segment whose last candidate moved on falls back to All, not an empty list.
+  const activeStage = stageView === 'all' || stageCounts[stageView] ? stageView : 'all';
+  const needle = query.trim().toLowerCase();
+  const shownCandidates = shortlistedCandidates.filter((c) => {
+    if (activeStage !== 'all' && stageKeyOf(c) !== activeStage) return false;
+    if (!needle) return true;
+    return [c.name, c.email, c.phone, c.job?.title, c.location, c.consultancy?.name]
+      .join(' ').toLowerCase().includes(needle);
+  });
+
+  const thisMonth = monthKey(new Date());
+  const openJobCount = jobs.filter((j) => j.status === 'Open').length;
+  const newApplicantCount = candidates.filter((c) => c.stage === 'Applied' && !c.consultancy?.user).length;
+  const interviewing = shortlistedCandidates.filter((c) => !agencyRound1(c) && ['Shortlisted', 'Screening', 'Interview'].includes(c.stage));
+  const roundsScheduled = interviewing.reduce((n, c) => n + (c.rounds || []).filter((r) => r.status === 'Scheduled').length, 0);
+  const hiredThisMonth = candidates.filter((c) => monthKey(c.employee?.convertedAt) === thisMonth).length;
+  const offersThisMonth = candidates.filter((c) => monthKey(c.offer?.generatedAt) === thisMonth).length;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const kpis = [
+    { key: 'open', label: 'Open jobs', value: openJobCount, sub: `${jobs.length} posted`, icon: FiBriefcase, hue: '#0ea5e9' },
+    { key: 'pipeline', label: 'Candidates', value: shortlistedCandidates.length, sub: plural(newApplicantCount, 'new applicant', 'new applicants'), icon: FiUsers, hue: '#6366f1' },
+    { key: 'interview', label: 'In interview', value: interviewing.length, sub: plural(roundsScheduled, 'round scheduled', 'rounds scheduled'), icon: FiCalendar, hue: '#d97706' },
+    { key: 'hired', label: 'Hired this month', value: hiredThisMonth, sub: plural(offersThisMonth, 'offer this month', 'offers this month'), icon: FiUserCheck, hue: '#16a34a' },
+  ];
+  const filteredJob = selectedJob ? jobs.find((j) => j._id === selectedJob) : null;
+
   return (
     <div>
-      <PageHeader title="Recruitment" subtitle="Post jobs, share the application form, screen candidates & run interviews">
-        {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
+      <PageHeader title="Recruitment">
+        {refreshing && (
+          <span className="rc-updating" role="status"><FiRefreshCw size={13} className="animate-spin" /> Updating…</span>
+        )}
+        {!viewOnly && (
+          <button type="button" onClick={openJobCreate} className="trn-btn is-primary accent-bg text-white">
+            <FiPlus size={15} /> New Job
+          </button>
+        )}
       </PageHeader>
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
 
-      {/* Jobs */}
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="card-title">Job Openings</h2>
-        {!viewOnly && (
-          <button onClick={openJobCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ New Job</button>
-        )}
-      </div>
-      <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50"><tr>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Title</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Dept / Location</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Candidates</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Application Form</th>
-            <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-          </tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : jobs.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">No job openings</td></tr>
-            ) : jobs.map((j) => (
-              <tr key={j._id} className={selectedJob === j._id ? 'bg-gray-50' : ''}>
-                <td className="px-4 py-3 font-medium text-gray-900">{j.title}</td>
-                {/* All of them, not the first: a job open in three cities used to
-                    read as if it were open in one. */}
-                <td className="px-4 py-3 text-gray-600">{[j.department || '-', jobLocationsOf(j).join(', ')].filter(Boolean).join(' · ')}</td>
-                <td className="px-4 py-3">
-                  <button onClick={() => openJobCandidates(j)}
-                    title="Review applicants - shortlist or reject"
-                    className="inline-flex items-center gap-1 text-blue-600 hover:underline">{j.candidateCount} →</button>
-                </td>
-                <td className="px-4 py-3 text-gray-600">{j.status}</td>
-                <td className="px-4 py-3">
-                  {j.status === 'Open' ? (
-                    <button
-                      onClick={() => copyShare(j)}
-                      className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50"
-                      title={shareLink(j)}
-                    >
-                      🔗 {copiedId === j._id ? 'Copied!' : 'Copy link'}
-                    </button>
-                  ) : (
-                    <span className="text-xs text-gray-400">Closed</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right space-x-2 whitespace-nowrap">
-                  {!viewOnly && (
-                    <>
-                      <button onClick={() => openJobEdit(j)} className="text-blue-600 hover:underline">Edit</button>
-                      <button onClick={() => removeJob(j)} className="text-red-600 hover:underline">Delete</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* Figures — all from the lists already on screen. */}
+      <div className="trn-kpis">
+        {kpis.map((k) => {
+          const Icon = k.icon;
+          return (
+            <div key={k.key} className="trn-kpi" style={{ '--kpi-hue': k.hue }}>
+              <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>
+              <span className="min-w-0">
+                <span className="trn-kpi-value block">{loading ? '—' : k.value}</span>
+                <span className="trn-kpi-label block">{k.label}</span>
+                <span className="trn-kpi-sub block">{loading ? ' ' : k.sub}</span>
+              </span>
+            </div>
+          );
+        })}
       </div>
 
-      {/* Candidates. Wraps on a phone: filtered, the title is long enough to
-          squeeze "+ Add Candidate" into two lines, so the button drops below. */}
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2 sm:flex-nowrap sm:gap-0">
-        <h2 className="card-title">
-          Candidates {selectedJob && <span className="text-sm text-gray-500">· filtered by job <button onClick={() => setSelectedJob('')} className="text-blue-600 hover:underline">(clear)</button></span>}
-        </h2>
-        {!viewOnly && (
-          <button onClick={openCandCreate} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Candidate</button>
+      {/* ===== Job openings ===== */}
+      <div className="prm-head">
+        <span className="prm-head-title">Job Openings</span>
+      </div>
+      {loading ? (
+        <div className="rst-grid">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-44 rounded-2xl" />)}</div>
+      ) : jobs.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiBriefcase size={24} /></span>
+            <p className="text-sm font-semibold">No job openings</p>
+            {!viewOnly && (
+              <button type="button" onClick={openJobCreate} className="trn-btn is-primary accent-bg text-white">
+                <FiPlus size={15} /> New Job
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="rst-grid">
+          {jobs.map((j) => {
+            const places = jobLocationsOf(j);
+            const on = selectedJob === j._id;
+            return (
+              <article key={j._id} className={`rst-card rc-job${j.status === 'Closed' ? ' is-off' : ''}${on ? ' is-on' : ''}`}
+                style={{ '--hue': JOB_HUES[j.status] || JOB_HUES.Closed }}>
+                <div className="rst-card-head">
+                  <div className="min-w-0">
+                    <div className="rst-card-name" title={j.title}>{j.title}</div>
+                    <div className="rst-card-tags">
+                      <span className={`rc-jstatus is-${String(j.status || '').toLowerCase()}`}>{JOB_STATUS_LABELS[j.status] || j.status}</span>
+                      {j.department && <span className="rc-dept"><FiBriefcase size={11} /><span className="truncate">{j.department}</span></span>}
+                    </div>
+                  </div>
+                  {!viewOnly && (
+                    <div className="rst-card-tools">
+                      <button type="button" className="trn-icon-btn" onClick={() => openJobEdit(j)} aria-label={`Edit ${j.title}`} title="Edit"><FiEdit2 size={15} /></button>
+                      <button type="button" className="trn-icon-btn rc-del" onClick={() => removeJob(j)} aria-label={`Delete ${j.title}`} title="Delete"><FiTrash2 size={15} /></button>
+                    </div>
+                  )}
+                </div>
+
+                {/* All of them, not the first: a job open in three cities used
+                    to read as if it were open in one. */}
+                {places.length > 0 && (
+                  <div className="rc-locs">
+                    {places.map((p) => <span key={p} className="rc-loc"><FiMapPin size={11} /><span className="truncate">{p}</span></span>)}
+                  </div>
+                )}
+
+                <div className="rst-card-foot rc-job-foot">
+                  <button type="button" onClick={() => openJobCandidates(j)}
+                    title="Review applicants - shortlist or reject"
+                    className="rst-people rc-count">
+                    <FiUsers size={14} />
+                    <span className="rc-count-n">{j.candidateCount}</span>
+                    {j.candidateCount === 1 ? 'candidate' : 'candidates'}
+                    <FiChevronRight size={15} className="rc-count-go" />
+                  </button>
+                  <div className="rc-job-actions">
+                    {j.status === 'Open' ? (
+                      <button type="button" onClick={() => copyShare(j)} title={shareLink(j)}
+                        className={`trn-btn rc-copy${copiedId === j._id ? ' is-done' : ''}`}>
+                        {copiedId === j._id ? <FiCheck size={14} /> : <FiLink size={14} />}
+                        {copiedId === j._id ? 'Copied!' : 'Copy link'}
+                      </button>
+                    ) : (
+                      <span className="rc-form-off" title="The application form is closed"><FiLock size={12} /> Form closed</span>
+                    )}
+                    <button type="button" onClick={() => setSelectedJob(on ? '' : j._id)} aria-pressed={on}
+                      aria-label={on ? 'Show every job’s candidates' : `Show only ${j.title} candidates`}
+                      title={on ? 'Show every job’s candidates' : 'Show only this job’s candidates'}
+                      className={`trn-icon-btn rc-filter${on ? ' is-on' : ''}`}>
+                      <FiFilter size={15} />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ===== Candidates ===== */}
+      <div className="prm-head">
+        <span className="prm-head-title">Candidates</span>
+        {selectedJob && (
+          <button type="button" onClick={() => setSelectedJob('')} className="rc-filtered" title="Clear the job filter">
+            <FiFilter size={12} />
+            <span className="truncate">{filteredJob?.title || 'Filtered by job'}</span>
+            <FiX size={13} />
+          </button>
         )}
+      </div>
+      <div className="pb-toolbar">
+        <div className="trn-seg" role="tablist" aria-label="Stage">
+          {stageViews.map((v) => (
+            <button key={v.key} type="button" role="tab" aria-selected={activeStage === v.key} onClick={() => setStageView(v.key)}
+              className={`trn-seg-btn${activeStage === v.key ? ' is-on' : ''}`}>
+              {v.hue && <span className="rc-seg-dot" style={{ '--hue': v.hue }} aria-hidden="true" />}
+              {v.label} <span className="trn-seg-count">{loading ? '–' : v.n}</span>
+            </button>
+          ))}
+        </div>
+        <div className="pb-toolbar-end">
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email, phone or job" aria-label="Search candidates" />
+            {query && <button type="button" onClick={() => setQuery('')} aria-label="Clear search" className="opacity-50 hover:opacity-100"><FiX size={14} /></button>}
+          </label>
+          <select value={selectedJob} onChange={(e) => setSelectedJob(e.target.value)} className="trn-select rc-job-select" aria-label="Filter by job">
+            <option value="">All jobs</option>
+            {jobs.map((j) => <option key={j._id} value={j._id}>{j.title}</option>)}
+          </select>
+          {!viewOnly && (
+            <button type="button" onClick={openCandCreate} className="trn-btn is-primary accent-bg text-white">
+              <FiUserPlus size={15} /> Add Candidate
+            </button>
+          )}
+        </div>
       </div>
       {/* Shared hidden input for resume upload/replace from any candidate row. */}
       <input ref={resumeInputRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,image/jpeg,image/png,image/webp" className="hidden" onChange={onResumePicked} />
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50"><tr>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Candidate</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Source</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Job</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Resume</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Stage</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Interviews</th>
-            <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-          </tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {shortlistedCandidates.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">No candidates yet. Open a job's candidate list and shortlist applicants to start the interview process — candidates a consultancy adds appear here straight away.</td></tr>
-            ) : shortlistedCandidates.map((c) => (
-              <Fragment key={c._id}>
-                <tr>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900 flex flex-wrap items-center gap-2">
-                      {c.name}
-                      {/* Turned down before. Expand the row for the reason and
-                          the write-ups from that attempt. */}
-                      <PriorRejectionChip flag={c.priorRejection} />
-                    </div>
-                    <div className="text-xs text-gray-500">{c.email || ''}{c.phone ? ` · ${c.phone}` : ''}</div>
-                  </td>
-                  {/* Where they came from — the "Applied online" / "Via <agency>"
-                      chips that used to sit beside the name. */}
-                  <td className="px-4 py-3"><CandidateSource c={c} /></td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {c.job?.title || '-'}
-                    {/* Which branch of a multi-location opening they are for. */}
-                    {c.location ? <div className="text-xs text-gray-500">{c.location}</div> : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    {resumeBusyId === c._id ? (
-                      <span className="text-gray-400 text-xs">Uploading…</span>
-                    ) : c.hasResume ? (
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => viewResume(c)} className="text-blue-600 hover:underline">View</button>
-                        {!viewOnly && (
-                          <button onClick={() => pickResume(c)} className="text-gray-400 hover:text-gray-700 text-xs">Replace</button>
-                        )}
+
+      {loading ? (
+        <div className="space-y-2.5">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-20 rounded-2xl" />)}</div>
+      ) : shownCandidates.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiUsers size={24} /></span>
+            <p className="text-sm font-semibold">{shortlistedCandidates.length ? 'No candidates match' : 'No candidates yet.'}</p>
+          </div>
+        </div>
+      ) : (
+        <div className="rc-list">
+          {shownCandidates.map((c) => {
+            const open = expanded === c._id;
+            const agency = agencyRound1(c);
+            const hue = agency ? (agency.open ? '#d97706' : '#dc2626') : (STAGE_HUES[c.stage] || STAGE_HUES.Applied);
+            const stageLabel = agency ? agency.label : (STAGE_LABELS[c.stage] || c.stage);
+            const rounds = c.rounds || [];
+            return (
+              <article key={c._id} className={`rc-row${open ? ' is-open' : ''}`} style={{ '--hue': hue }}>
+                <div className="rc-main">
+                  <div className="rc-who">
+                    <PersonAvatar user={nameParts(c.name)} />
+                    <div className="min-w-0">
+                      <div className="rc-name">
+                        <span className="truncate">{c.name}</span>
+                        {/* Turned down before. Expand the row for the reason and
+                            the write-ups from that attempt. */}
+                        <PriorRejectionChip flag={c.priorRejection} />
                       </div>
-                    ) : viewOnly ? (
-                      <span className="text-gray-400 text-xs">None</span>
-                    ) : (
-                      <button onClick={() => pickResume(c)} className="text-blue-600 hover:underline">Upload</button>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {agencyRound1(c) ? (
-                      <span className={`text-xs px-2 py-0.5 rounded-lg ${agencyRound1(c).tone}`}>{agencyRound1(c).label}</span>
-                    ) : (
-                      <span className={`text-xs px-2 py-0.5 rounded-lg ${STAGE_STYLES[c.stage] || ''}`}>{c.stage}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
+                      {(c.email || c.phone) && (
+                        <div className="rc-contact">
+                          {c.email && <span className="rc-contact-item" title={c.email}><FiMail size={11} /><span className="truncate">{c.email}</span></span>}
+                          {c.phone && <span className="rc-contact-item"><FiPhone size={11} />{c.phone}</span>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rc-job-cell">
+                    <span className="rc-cell-label">Job</span>
+                    <div className="rc-job-title" title={c.job?.title || ''}>{c.job?.title || '-'}</div>
+                    {/* Which branch of a multi-location opening they are for. */}
+                    {c.location ? <div className="rc-job-loc"><FiMapPin size={11} /><span className="truncate">{c.location}</span></div> : null}
+                  </div>
+
+                  {/* Where they came from — applied online, added by HR, or
+                      sent in by an HR consultancy. */}
+                  <div className="rc-src-cell">
+                    <span className="rc-cell-label">Source</span>
+                    <CandidateSource c={c} />
+                  </div>
+
+                  <div className="rc-stage-cell">
+                    <span className="rc-stage" title={stageLabel}><span className="truncate">{stageLabel}</span></span>
                     {/* Opening the rounds is what needs the interviewer pool, so
                         this is where it is fetched (once, see loadInterviewers). */}
-                    <button onClick={() => { loadInterviewers(); setExpanded(expanded === c._id ? null : c._id); }} className="text-blue-600 hover:underline">
-                      {roundSummary(c)} {expanded === c._id ? '▾' : '▸'}
+                    <button type="button" onClick={() => { loadInterviewers(); setExpanded(expanded === c._id ? null : c._id); }}
+                      aria-expanded={open} title="Interview rounds" className="rc-progress">
+                      <span className="rc-progress-top">
+                        <span>{roundSummary(c)}</span>
+                        <FiChevronRight size={14} className="rc-progress-chev" />
+                      </span>
+                      <span className="rc-steps" aria-hidden="true">
+                        {rounds.length
+                          ? rounds.map((r, i) => <span key={r._id || i} className="rc-step" style={ROUND_HUES[r.status] ? { '--step': ROUND_HUES[r.status] } : undefined} />)
+                          : <span className="rc-step" />}
+                      </span>
                     </button>
-                  </td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap space-x-2">
-                    {/* All 4 rounds cleared → share the document-submission link */}
-                    {allCleared(c) && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && (
-                      <button onClick={() => openDocs(c)} className="text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1 rounded-lg">
-                        📄 Document Link{c.documents?.submittedAt && !c.documents?.confirmedAt ? ' 🔴' : c.documents?.confirmedAt ? ' ✓' : ''}
-                      </button>
-                    )}
-                    {!viewOnly && allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
-                      <button onClick={() => openOffer(c)} className="text-purple-600 font-medium hover:underline">Create Offer Letter</button>
-                    )}
-                    {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
-                      <button onClick={() => openOffer(c)} className="text-purple-600 hover:underline">Edit Offer</button>
-                    )}
-                    {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
-                      <button onClick={() => onboard(c)} className="text-teal-600 font-medium hover:underline">Onboard →</button>
-                    )}
-                    {c.offer?.hasLetter && (
-                      <button onClick={() => downloadOffer(c)} className="text-gray-600 hover:underline">Offer PDF</button>
-                    )}
-                    {!viewOnly && c.stage === 'Applied' && !c.consultancy?.user && (
-                      <button onClick={() => setStage(c, 'Shortlisted')} className="text-white bg-green-600 hover:bg-green-700 px-2.5 py-1 rounded-lg">Shortlist</button>
-                    )}
-                    {!viewOnly && c.stage !== 'Rejected' && c.stage !== 'Hired' && (
-                      <button onClick={() => setStage(c, 'Rejected')} className="text-red-600 hover:underline">Reject</button>
-                    )}
+                  </div>
+
+                  <div className="rc-side">
+                    <div className="rc-resume">
+                      {resumeBusyId === c._id ? (
+                        <span className="rc-resume-busy"><FiRefreshCw size={13} className="animate-spin" /> Uploading…</span>
+                      ) : c.hasResume ? (
+                        <>
+                          <button type="button" onClick={() => viewResume(c)} className="trn-btn rc-sm" title="Open the résumé">
+                            <FiFileText size={14} /> Résumé
+                          </button>
+                          {!viewOnly && (
+                            <button type="button" onClick={() => pickResume(c)} className="trn-icon-btn"
+                              aria-label={`Replace ${c.name}'s résumé`} title="Replace résumé">
+                              <FiUpload size={14} />
+                            </button>
+                          )}
+                        </>
+                      ) : viewOnly ? (
+                        <span className="rc-resume-none">No résumé</span>
+                      ) : (
+                        <button type="button" onClick={() => pickResume(c)} className="trn-btn rc-sm">
+                          <FiUpload size={14} /> Upload résumé
+                        </button>
+                      )}
+                    </div>
+                    <div className="rc-actions">
+                      {/* All 4 rounds cleared → share the document-submission link */}
+                      {allCleared(c) && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && (
+                        <button type="button" onClick={() => openDocs(c)} className="trn-btn rc-sm rc-docs">
+                          <FiFileText size={14} /> Document Link
+                          {c.documents?.submittedAt && !c.documents?.confirmedAt
+                            ? <span className="rc-dot" title="Submitted · awaiting your confirmation" aria-label="awaiting your confirmation" />
+                            : c.documents?.confirmedAt ? <FiCheck size={13} className="rc-docs-ok" aria-label="confirmed" /> : null}
+                        </button>
+                      )}
+                      {!viewOnly && allCleared(c) && c.documents?.confirmedAt && c.stage !== 'Rejected' && !POST_ONBOARD.includes(c.stage) && !c.offer?.generatedAt && (
+                        <button type="button" onClick={() => openOffer(c)} className="trn-btn rc-sm rc-offer"><FiFilePlus size={14} /> Create Offer Letter</button>
+                      )}
+                      {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
+                        <button type="button" onClick={() => openOffer(c)} className="trn-btn rc-sm rc-offer"><FiEdit2 size={13} /> Edit Offer</button>
+                      )}
+                      {!viewOnly && c.offer?.generatedAt && !POST_ONBOARD.includes(c.stage) && (
+                        <button type="button" onClick={() => onboard(c)} className="trn-btn rc-sm rc-onboard">Onboard <FiArrowRight size={14} /></button>
+                      )}
+                      {c.offer?.hasLetter && (
+                        <button type="button" onClick={() => downloadOffer(c)} className="trn-btn rc-sm"><FiDownload size={14} /> Offer PDF</button>
+                      )}
+                      {!viewOnly && c.stage === 'Applied' && !c.consultancy?.user && (
+                        <button type="button" onClick={() => setStage(c, 'Shortlisted')} className="trn-btn rc-sm rg-approve">Shortlist</button>
+                      )}
+                      {!viewOnly && c.stage !== 'Rejected' && c.stage !== 'Hired' && (
+                        <button type="button" onClick={() => setStage(c, 'Rejected')} className="trn-btn rc-sm is-danger">Reject</button>
+                      )}
+                    </div>
                     {!viewOnly && (
-                      <>
-                        <button onClick={() => openCandEdit(c)} className="text-blue-600 hover:underline">Edit</button>
-                        {/* The bare ✕ was the smallest target in a row of padded
-                            pills — a ~16x9px glyph for the one action that
-                            permanently deletes the candidate. It gets an explicit
-                            32px box instead of `hover:underline`: that pill draws
-                            its border from currentColor, so a gray delete would
-                            render as the palest control on the row. inline-flex +
-                            align-middle keeps it on the baseline of the pills the
-                            stylesheet builds beside it, and the label lives in
-                            aria-label because the glyph names nothing. No solid
-                            bg- class on purpose — that would pull it into the
-                            filled-button treatment and make delete the loudest
-                            thing in the row. */}
-                        <button onClick={() => removeCand(c)}
+                      <div className="rc-icons">
+                        <button type="button" onClick={() => openCandEdit(c)} className="trn-icon-btn"
+                          aria-label={`Edit candidate ${c.name}`} title="Edit candidate">
+                          <FiEdit2 size={15} />
+                        </button>
+                        <button type="button" onClick={() => removeCand(c)}
                           title="Delete candidate"
                           aria-label={`Delete candidate ${c.name}`}
-                          className="inline-flex items-center justify-center w-10 h-10 rounded-lg align-middle text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
-                      </>
+                          className="trn-icon-btn rc-del">
+                          <FiTrash2 size={15} />
+                        </button>
+                      </div>
                     )}
-                  </td>
-                </tr>
-                {expanded === c._id && (
-                  <tr>
-                    <td colSpan={7} className="px-4 pb-4 pt-0 bg-gray-50">
-                      {/* Rejected before: the reason, and every round of that
-                          attempt. Opened by default while the hold still stands
-                          — that is the case somebody has to look at. */}
-                      {c.priorRejection && (
-                        <div className="mb-3">
-                          <PriorRejections flag={c.priorRejection} defaultOpen={c.priorRejection.withinHold} />
-                        </div>
-                      )}
-                      {/* Application details */}
-                      {(c.currentCompany || c.experienceYears != null || c.noticePeriod || c.currentCtc || c.expectedCtc || c.coverNote) && (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 text-sm">
-                          {c.currentCompany && <div><div className="text-xs text-gray-500">Current company</div><div className="text-gray-800">{c.currentCompany}</div></div>}
-                          {c.experienceYears != null && <div><div className="text-xs text-gray-500">Experience</div><div className="text-gray-800">{c.experienceYears} yrs</div></div>}
-                          {c.noticePeriod && <div><div className="text-xs text-gray-500">Notice period</div><div className="text-gray-800">{c.noticePeriod}</div></div>}
-                          {c.currentCtc && <div><div className="text-xs text-gray-500">Current in-hand CTC</div><div className="text-gray-800">{c.currentCtc}</div></div>}
-                          {c.expectedCtc && <div><div className="text-xs text-gray-500">Expected CTC</div><div className="text-gray-800">{c.expectedCtc}</div></div>}
-                          {c.coverNote && <div className="col-span-2 md:col-span-4"><div className="text-xs text-gray-500">Cover note</div><div className="text-gray-700">{c.coverNote}</div></div>}
-                        </div>
-                      )}
-                      {/* Interview rounds */}
-                      <div className="text-xs font-semibold text-gray-600 mb-2">Interview Rounds</div>
-                      {agencyRound1(c) && (
-                        <div className="mb-2 text-xs text-gray-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                          {agencyRound1(c).open
-                            ? `Round 1 is ${c.consultancy?.name || 'the consultancy'}'s to take. Rounds 2–4 open here once they shortlist ${c.name}.`
-                            : `${c.consultancy?.name || 'The consultancy'} turned ${c.name} down at Round 1, so there are no further rounds.`}
-                        </div>
-                      )}
-                      {c.stage === 'Applied' && !c.consultancy?.user ? (
-                        <div className="flex items-center gap-3 bg-white border border-dashed border-gray-300 rounded-lg px-4 py-4 text-sm text-gray-600">
-                          <span>Shortlist this candidate to begin interview rounds.</span>
-                          {!viewOnly && (
-                            <button onClick={() => setStage(c, 'Shortlisted')} className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-xs">Shortlist</button>
+                  </div>
+                </div>
+
+                {open && (
+                  <div className="rc-detail">
+                    {/* Rejected before: the reason, and every round of that
+                        attempt. Opened by default while the hold still stands
+                        — that is the case somebody has to look at. */}
+                    {c.priorRejection && (
+                      <div className="mb-3">
+                        <PriorRejections flag={c.priorRejection} defaultOpen={c.priorRejection.withinHold} />
+                      </div>
+                    )}
+                    {/* Application details */}
+                    {(c.currentCompany || c.experienceYears != null || c.noticePeriod || c.currentCtc || c.expectedCtc || c.coverNote) && (
+                      <div className="rc-facts">
+                        {c.currentCompany && <div className="rc-fact"><div className="rc-fact-label">Current company</div><div className="rc-fact-value">{c.currentCompany}</div></div>}
+                        {c.experienceYears != null && <div className="rc-fact"><div className="rc-fact-label">Experience</div><div className="rc-fact-value">{c.experienceYears} yrs</div></div>}
+                        {c.noticePeriod && <div className="rc-fact"><div className="rc-fact-label">Notice period</div><div className="rc-fact-value">{c.noticePeriod}</div></div>}
+                        {c.currentCtc && <div className="rc-fact"><div className="rc-fact-label">Current in-hand CTC</div><div className="rc-fact-value">{c.currentCtc}</div></div>}
+                        {c.expectedCtc && <div className="rc-fact"><div className="rc-fact-label">Expected CTC</div><div className="rc-fact-value">{c.expectedCtc}</div></div>}
+                        {c.coverNote && <div className="rc-fact is-wide"><div className="rc-fact-label">Cover note</div><div className="rc-fact-value">{c.coverNote}</div></div>}
+                      </div>
+                    )}
+                    {/* Interview rounds */}
+                    <div className="rc-detail-head">Interview Rounds</div>
+                    {agency && (
+                      <div className="rc-note">
+                        {agency.open
+                          ? `Round 1 is ${c.consultancy?.name || 'the consultancy'}'s to take.`
+                          : `${c.consultancy?.name || 'The consultancy'} turned ${c.name} down at Round 1, so there are no further rounds.`}
+                      </div>
+                    )}
+                    {c.stage === 'Applied' && !c.consultancy?.user ? (
+                      <div className="rc-shortlist-cta">
+                        <span>Shortlist this candidate to begin interview rounds.</span>
+                        {!viewOnly && (
+                          <button type="button" onClick={() => setStage(c, 'Shortlisted')} className="trn-btn rc-sm rg-approve">Shortlist</button>
+                        )}
+                      </div>
+                    ) : (
+                    <div className="rc-rounds">
+                      {rounds.filter((_, idx) => !agency || idx === 0).map((r, idx) => (isAgencyRound(c, idx) ? (
+                        // The consultancy's own round: who took it and what
+                        // they wrote, nothing to schedule or change. Their
+                        // account is not in the interviewer picker (outside
+                        // accounts never are), which is why the picker used to
+                        // print it as "(inactive)".
+                        <div key={r._id || idx} className="rc-round" style={ROUND_HUES[r.status] ? { '--step': ROUND_HUES[r.status] } : undefined}>
+                          <div className="flex items-center justify-between mb-2">
+                            <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
+                            <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>
+                              {r.status === 'Cleared' ? 'Shortlisted' : roundStatusLabel(r.status)}
+                            </span>
+                          </div>
+                          <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-700 mb-2">
+                            <span className="block truncate">{c.consultancy?.name || r.interviewerName || 'HR consultancy'}</span>
+                            <span className="block text-[10px] text-gray-500">HR consultancy · takes this round</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openFeedback(c, idx)}
+                            title={r.feedback || 'Read the consultancy’s assessment'}
+                            className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
+                          >
+                            <span className="flex items-center justify-between gap-1">
+                              <span className="font-medium text-gray-700">Assessment</span>
+                              <span className="flex items-center gap-1">
+                                <RecommendationChip value={assessmentOf(r).recommendation} />
+                                {averageRating(r) != null && (
+                                  <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
+                                )}
+                              </span>
+                            </span>
+                            <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
+                              {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
+                            </span>
+                          </button>
+                          {r.decidedByName && (
+                            <div className="mt-1.5 text-[10px] text-gray-400 leading-tight">
+                              Recorded by <span className="font-medium text-gray-500">{r.decidedByName}</span>
+                              {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
+                            </div>
                           )}
                         </div>
                       ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                        {(c.rounds || []).filter((_, idx) => !agencyRound1(c) || idx === 0).map((r, idx) => (isAgencyRound(c, idx) ? (
-                          // The consultancy's own round: who took it and what
-                          // they wrote, nothing to schedule or change. Their
-                          // account is not in the interviewer picker (outside
-                          // accounts never are), which is why the picker used to
-                          // print it as "(inactive)".
-                          <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
-                              <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>
-                                {r.status === 'Cleared' ? 'Shortlisted' : roundStatusLabel(r.status)}
-                              </span>
-                            </div>
-                            <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-700 mb-2">
-                              <span className="block truncate">{c.consultancy?.name || r.interviewerName || 'HR consultancy'}</span>
-                              <span className="block text-[10px] text-gray-500">HR consultancy · takes this round</span>
-                            </div>
+                        <div key={r._id || idx} className="rc-round" style={ROUND_HUES[r.status] ? { '--step': ROUND_HUES[r.status] } : undefined}>
+                          <div className="flex items-center justify-between mb-2">
+                            <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
+                            <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{roundStatusLabel(r.status)}</span>
+                          </div>
+                          <select
+                            value={r.status}
+                            onChange={(e) => setRound(c, idx, { status: e.target.value })}
+                            disabled={viewOnly}
+                            className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2 disabled:bg-gray-50 disabled:text-gray-500"
+                          >
+                            {ROUND_STATUS.map((s) => <option key={s} value={s}>{roundStatusLabel(s)}</option>)}
+                          </select>
+                          {/* Re-hold a no-show, or move a booked slot, with
+                              the old date + reason kept in the history. */}
+                          {!viewOnly && canRescheduleRound(r) && (r.scheduledAt || r.status === 'NoShow') && (
                             <button
                               type="button"
-                              onClick={() => openFeedback(c, idx)}
-                              title={r.feedback || 'Read the consultancy\u2019s assessment'}
-                              className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
-                            >
-                              <span className="flex items-center justify-between gap-1">
-                                <span className="font-medium text-gray-700">Assessment</span>
-                                <span className="flex items-center gap-1">
-                                  <RecommendationChip value={assessmentOf(r).recommendation} />
-                                  {averageRating(r) != null && (
-                                    <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
-                                  )}
-                                </span>
-                              </span>
-                              <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
-                                {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
-                              </span>
-                            </button>
-                            <p className="mt-2 text-[11px] text-gray-500 leading-snug">
-                              Taken and recorded by the consultancy from their portal. Schedule Round 2 onwards here — they are on those invites and can join.
-                            </p>
-                            {r.decidedByName && (
-                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight">
-                                Recorded by <span className="font-medium text-gray-500">{r.decidedByName}</span>
-                                {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div key={r._id || idx} className="bg-white border border-gray-200 rounded-lg p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <RoundBadge>{r.label || `Round ${idx + 1}`}</RoundBadge>
-                              <span className={`text-[11px] px-2 py-0.5 rounded ${ROUND_STYLES[r.status]}`}>{roundStatusLabel(r.status)}</span>
+                              onClick={() => openReschedule(c, idx)}
+                              title="Move this round to a new date — the old date and the reason stay in its history"
+                              className={`rc-resched${r.status === 'NoShow' ? ' is-noshow' : ''}`}
+                            ><FiRefreshCw size={12} /> Reschedule{r.status === 'NoShow' ? ' (no-show)' : ''}</button>
+                          )}
+                          {/* Scoped to the job's department by default, with
+                              search and a one-click widen to everyone. */}
+                          {viewOnly ? (
+                            <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-600">
+                              {r.interviewerName || 'No interviewer assigned'}
                             </div>
-                            <select
-                              value={r.status}
-                              onChange={(e) => setRound(c, idx, { status: e.target.value })}
+                          ) : (
+                            <EmployeePicker
+                              value={r.interviewer || ''}
+                              onChange={(id) => setRound(c, idx, { interviewer: id })}
+                              people={users}
+                              department={c.job?.department || ''}
+                              valueLabel={r.interviewerName || ''}
+                              placeholder="Assign interviewer"
+                            />
+                          )}
+                          {/* The write-up. A single-line box used to sit here
+                              and collected a single line — "tty", "GOOD TO GO"
+                              — which is then the whole record the next round,
+                              HR and the CEO/MD read. The scores, strengths,
+                              concerns and recommendation open in a panel that
+                              also carries the earlier rounds. */}
+                          <button
+                            type="button"
+                            onClick={() => openFeedback(c, idx)}
+                            title={r.feedback || 'Open the interview assessment'}
+                            className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
+                          >
+                            <span className="flex items-center justify-between gap-1">
+                              <span className="font-medium text-gray-700">Assessment</span>
+                              <span className="flex items-center gap-1">
+                                <RecommendationChip value={assessmentOf(r).recommendation} />
+                                {averageRating(r) != null && (
+                                  <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
+                                )}
+                              </span>
+                            </span>
+                            <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
+                              {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
+                            </span>
+                          </button>
+                          {/* Interview schedule + auto Google Meet for this round */}
+                          <div className="mt-2 space-y-1">
+                            <input
+                              type="datetime-local"
+                              // Keyed on the saved time so a reschedule (which
+                              // changes it from outside) refreshes the box.
+                              key={`at-${r.scheduledAt || ''}`}
+                              defaultValue={toLocalInput(r.scheduledAt)}
+                              onChange={(e) => setMeetTimes((m) => ({ ...m, [`${c._id}:${idx}`]: e.target.value }))}
+                              onBlur={(e) => {
+                                const v = e.target.value;
+                                const iso = v ? new Date(v).toISOString() : '';
+                                if (iso !== (r.scheduledAt ? new Date(r.scheduledAt).toISOString() : '')) setRound(c, idx, { scheduledAt: iso });
+                              }}
+                              title="Interview date & time (used for the calendar invite)"
                               disabled={viewOnly}
-                              className="block w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm mb-2 disabled:bg-gray-50 disabled:text-gray-500"
+                              className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
+                            />
+                            <select
+                              value={meetDurations[`${c._id}:${idx}`] ?? (r.meetDurationMinutes || 45)}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                setMeetDurations((m) => ({ ...m, [`${c._id}:${idx}`]: v }));
+                                setRound(c, idx, { meetDurationMinutes: v });
+                              }}
+                              title="Interview duration (used for the Google Meet / calendar invite)"
+                              disabled={viewOnly}
+                              className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
                             >
-                              {ROUND_STATUS.map((s) => <option key={s} value={s}>{roundStatusLabel(s)}</option>)}
+                              {[15, 30, 45, 60, 90, 120].map((min) => (
+                                <option key={min} value={min}>
+                                  {min < 60 ? `${min} min` : min === 60 ? '1 hour' : `${min / 60} hours`}
+                                </option>
+                              ))}
                             </select>
-                            {/* Re-hold a no-show, or move a booked slot, with
-                                the old date + reason kept in the history. */}
-                            {!viewOnly && canRescheduleRound(r) && (r.scheduledAt || r.status === 'NoShow') && (
+                            <div className="flex gap-1">
+                              <input
+                                key={`link-${r.meetingLink || ''}`}
+                                defaultValue={r.meetingLink || ''}
+                                onBlur={(e) => { if (e.target.value !== (r.meetingLink || '')) setRound(c, idx, { meetingLink: e.target.value }); }}
+                                placeholder={viewOnly ? 'No meeting link' : 'Meeting link…'}
+                                readOnly={viewOnly}
+                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs read-only:bg-gray-50 read-only:text-gray-500"
+                              />
+                              {!viewOnly && (
                               <button
                                 type="button"
-                                onClick={() => openReschedule(c, idx)}
-                                title="Move this round to a new date — the old date and the reason stay in its history"
-                                className={`block w-full text-xs font-medium rounded-lg px-2 py-1.5 mb-2 border ${r.status === 'NoShow'
-                                  ? 'border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100'
-                                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-                              >↻ Reschedule{r.status === 'NoShow' ? ' (no-show)' : ''}</button>
-                            )}
-                            {/* Scoped to the job's department by default, with
-                                search and a one-click widen to everyone. */}
-                            {viewOnly ? (
-                              <div className="block w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-gray-50 text-gray-600">
-                                {r.interviewerName || 'No interviewer assigned'}
-                              </div>
-                            ) : (
-                              <EmployeePicker
-                                value={r.interviewer || ''}
-                                onChange={(id) => setRound(c, idx, { interviewer: id })}
-                                people={users}
-                                department={c.job?.department || ''}
-                                valueLabel={r.interviewerName || ''}
-                                placeholder="Assign interviewer"
-                              />
-                            )}
-                            {/* The write-up. A single-line box used to sit here
-                                and collected a single line — "tty", "GOOD TO GO"
-                                — which is then the whole record the next round,
-                                HR and the CEO/MD read. The scores, strengths,
-                                concerns and recommendation open in a panel that
-                                also carries the earlier rounds. */}
-                            <button
-                              type="button"
-                              onClick={() => openFeedback(c, idx)}
-                              title={r.feedback || 'Open the interview assessment'}
-                              className="block w-full text-left border border-gray-200 rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50"
-                            >
-                              <span className="flex items-center justify-between gap-1">
-                                <span className="font-medium text-gray-700">Assessment</span>
-                                <span className="flex items-center gap-1">
-                                  <RecommendationChip value={assessmentOf(r).recommendation} />
-                                  {averageRating(r) != null && (
-                                    <span className="text-[10px] text-gray-500">{averageRating(r).toFixed(1)}/5</span>
-                                  )}
-                                </span>
-                              </span>
-                              <span className={`block mt-0.5 truncate ${hasAssessment(r) ? 'text-gray-600' : 'text-amber-600'}`}>
-                                {hasAssessment(r) ? (r.feedback || 'Rated — no remarks written') : 'Not written up yet'}
-                              </span>
-                            </button>
-                            {/* Interview schedule + auto Google Meet for this round */}
-                            <div className="mt-2 space-y-1">
-                              <input
-                                type="datetime-local"
-                                // Keyed on the saved time so a reschedule (which
-                                // changes it from outside) refreshes the box.
-                                key={`at-${r.scheduledAt || ''}`}
-                                defaultValue={toLocalInput(r.scheduledAt)}
-                                onChange={(e) => setMeetTimes((m) => ({ ...m, [`${c._id}:${idx}`]: e.target.value }))}
-                                onBlur={(e) => {
-                                  const v = e.target.value;
-                                  const iso = v ? new Date(v).toISOString() : '';
-                                  if (iso !== (r.scheduledAt ? new Date(r.scheduledAt).toISOString() : '')) setRound(c, idx, { scheduledAt: iso });
-                                }}
-                                title="Interview date & time (used for the calendar invite)"
-                                disabled={viewOnly}
-                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
-                              />
-                              <select
-                                value={meetDurations[`${c._id}:${idx}`] ?? (r.meetDurationMinutes || 45)}
-                                onChange={(e) => {
-                                  const v = Number(e.target.value);
-                                  setMeetDurations((m) => ({ ...m, [`${c._id}:${idx}`]: v }));
-                                  setRound(c, idx, { meetDurationMinutes: v });
-                                }}
-                                title="Interview duration (used for the Google Meet / calendar invite)"
-                                disabled={viewOnly}
-                                className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-500"
-                              >
-                                {[15, 30, 45, 60, 90, 120].map((min) => (
-                                  <option key={min} value={min}>
-                                    {min < 60 ? `${min} min` : min === 60 ? '1 hour' : `${min / 60} hours`}
-                                  </option>
-                                ))}
-                              </select>
-                              <div className="flex gap-1">
-                                <input
-                                  key={`link-${r.meetingLink || ''}`}
-                                  defaultValue={r.meetingLink || ''}
-                                  onBlur={(e) => { if (e.target.value !== (r.meetingLink || '')) setRound(c, idx, { meetingLink: e.target.value }); }}
-                                  placeholder={viewOnly ? 'No meeting link' : 'Meeting link…'}
-                                  readOnly={viewOnly}
-                                  className="block w-full border border-gray-200 rounded-lg px-2 py-1 text-xs read-only:bg-gray-50 read-only:text-gray-500"
-                                />
-                                {!viewOnly && (
-                                <button
-                                  type="button"
-                                  onClick={() => createMeet(c, idx)}
-                                  disabled={meetBusy === `${c._id}:${idx}`}
-                                  title="Create a Google Meet for this round · you review and edit the invite email before it's sent"
-                                  className="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
-                                >{meetBusy === `${c._id}:${idx}` ? '…' : '＋ Meet'}</button>
-                                )}
-                              </div>
-                              {r.meetingLink && (
-                                <div className="mt-1 flex items-center gap-2">
-                                  <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline">↗ Join meeting</a>
-                                  {!viewOnly && (
-                                    <button
-                                      type="button"
-                                      onClick={() => openInviteMail(c, idx)}
-                                      title="Preview, edit and (re)send the invite email to the candidate and interviewer"
-                                      className="text-[11px] text-indigo-600 hover:underline"
-                                    >✉ Email invite</button>
-                                  )}
-                                </div>
+                                onClick={() => createMeet(c, idx)}
+                                disabled={meetBusy === `${c._id}:${idx}`}
+                                title="Create a Google Meet for this round · you review and edit the invite email before it's sent"
+                                className="shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap"
+                              >{meetBusy === `${c._id}:${idx}` ? '…' : <><FiVideo size={12} /> Meet</>}</button>
                               )}
                             </div>
-                            {/* Audit trail: who last changed the status */}
-                            {r.decidedByName && (
-                              <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${historyText(h)} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
-                                Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
-                                {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
-                                {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
-                              </div>
-                            )}
-                            {/* A re-held round says so on its face, and from which date. */}
-                            {r.history?.length > 0 && r.history[r.history.length - 1].event === 'Rescheduled' && (
-                              <div className="mt-1 text-[10px] text-orange-700 leading-tight">
-                                ↻ {historyText(r.history[r.history.length - 1])}
+                            {r.meetingLink && (
+                              <div className="mt-1 flex flex-wrap items-center gap-2">
+                                <a href={r.meetingLink} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue-600 hover:underline"><FiExternalLink size={11} /> Join meeting</a>
+                                {!viewOnly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openInviteMail(c, idx)}
+                                    title="Preview, edit and (re)send the invite email to the candidate and interviewer"
+                                    className="text-[11px] text-indigo-600 hover:underline"
+                                  ><FiMail size={11} /> Email invite</button>
+                                )}
                               </div>
                             )}
                           </div>
-                        )))}
-                      </div>
-                      )}
-                    </td>
-                  </tr>
+                          {/* Audit trail: who last changed the status */}
+                          {r.decidedByName && (
+                            <div className="mt-1.5 text-[10px] text-gray-400 leading-tight" title={(r.history || []).map((h) => `${historyText(h)} · ${h.byName} (${fmtDateTime(h.at)})`).join('\n')}>
+                              Changed by <span className="font-medium text-gray-500">{r.decidedByName}</span>
+                              {r.decidedAt ? ` · ${fmtDateTime(r.decidedAt)}` : ''}
+                              {(r.history?.length > 1) ? ` · ${r.history.length} changes` : ''}
+                            </div>
+                          )}
+                          {/* A re-held round says so on its face, and from which date. */}
+                          {r.history?.length > 0 && r.history[r.history.length - 1].event === 'Rescheduled' && (
+                            <div className="mt-1 text-[10px] leading-tight rc-moved">
+                              <FiRefreshCw size={10} /> <span>{historyText(r.history[r.history.length - 1])}</span>
+                            </div>
+                          )}
+                        </div>
+                      )))}
+                    </div>
+                    )}
+                  </div>
                 )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
 
       {/* Reschedule a round: new date + reason, and optionally a different
           interviewer / duration / meeting link for the re-held slot. */}
@@ -1338,8 +1519,8 @@ export default function AdminRecruitment() {
             title={`Reschedule ${label}`}
             subtitle={`${c.name}${c.job?.title ? ` · ${c.job.title}` : ''}`}
             note={r.meetEventId
-              ? 'The round goes back to Scheduled at the new time. Its Google Calendar invite moves too (Google emails the attendees the new time). The old date and the reason stay in its history.'
-              : 'The round goes back to Scheduled at the new time and the interviewer is told. The old date and the reason stay in its history.'}
+              ? 'The round goes back to Scheduled and its calendar invite moves too.'
+              : 'The round goes back to Scheduled and the interviewer is told.'}
             onClose={() => setMovingRound(null)}
             onSubmit={rescheduleRound}
           >
@@ -1457,12 +1638,7 @@ export default function AdminRecruitment() {
               )}
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[11px] text-gray-500 max-w-md">
-                  {readOnly
-                    ? 'Recorded by the interviewer. The next round sees this alongside their own form.'
-                    : 'The next round\u2019s interviewer sees this before their call, and it stays on the candidate\u2019s record.'}
-                </p>
-                <div className="flex gap-2">
+                <div className="flex gap-2 ml-auto">
                   <button onClick={() => setFbRound(null)} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Close</button>
                   {!readOnly && (
                     <button onClick={saveFeedback} disabled={fbSaving}
@@ -1562,7 +1738,7 @@ export default function AdminRecruitment() {
                 {editingAgency ? (
                   <>
                     <input id="cand-consultancy" value={editingAgency} disabled className="block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100 text-gray-600" />
-                    <p className="text-xs text-gray-500 mt-1">Added by this consultancy from its own portal, so it can’t be changed here.</p>
+                    <p className="text-xs text-gray-500 mt-1">Added by the consultancy; can’t be changed here.</p>
                   </>
                 ) : (
                   <ConsultancySelect id="cand-consultancy" value={candForm.consultancyName}
@@ -1602,8 +1778,8 @@ export default function AdminRecruitment() {
                     <>
                       <button onClick={() => composeDocsMail(docsCand)} disabled={docsBusy || !docsCand.email}
                         title={docsCand.email ? undefined : 'This candidate has no email on file'}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed">
-                        ✉ {docsCand.documents?.requestEmailedAt ? 'Email again' : 'Email to candidate'}
+                        className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed">
+                        <FiMail size={13} /> {docsCand.documents?.requestEmailedAt ? 'Email again' : 'Email to candidate'}
                       </button>
                       <button onClick={() => generateDocLink(docsCand)} disabled={docsBusy} className="text-[11px] text-gray-500 hover:underline">Regenerate link</button>
                     </>
@@ -1624,7 +1800,7 @@ export default function AdminRecruitment() {
             {/* Status */}
             <div className="mb-3 text-xs">
               {docsCand.documents?.confirmedAt ? (
-                <span className="text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">✓ Confirmed by {docsCand.documents.confirmedByName} · {fmtDateTime(docsCand.documents.confirmedAt)}</span>
+                <span className="inline-flex items-center gap-1 text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded"><FiCheck size={12} /> Confirmed by {docsCand.documents.confirmedByName} · {fmtDateTime(docsCand.documents.confirmedAt)}</span>
               ) : docsCand.documents?.submittedAt ? (
                 <span className="text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded">Submitted {fmtDateTime(docsCand.documents.submittedAt)} · awaiting your confirmation</span>
               ) : (
@@ -1658,14 +1834,14 @@ export default function AdminRecruitment() {
                     <div className="flex items-center gap-2 mt-1.5">
                       {!viewOnly && status !== 'Verified' && (
                         <button onClick={() => reviewDoc(docsCand, f, 'Verified')} disabled={docsBusy}
-                          className="text-[11px] font-semibold px-2 py-1 rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-60">
-                          ✓ Verify
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 disabled:opacity-60">
+                          <FiCheck size={12} /> Verify
                         </button>
                       )}
                       {!viewOnly && status !== 'Rejected' && (
                         <button onClick={() => reviewDoc(docsCand, f, 'Rejected')} disabled={docsBusy}
-                          className="text-[11px] font-semibold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-60">
-                          ✕ Reject
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 disabled:opacity-60">
+                          <FiX size={12} /> Reject
                         </button>
                       )}
                       {!viewOnly && status !== 'Pending' && (
@@ -1722,7 +1898,7 @@ export default function AdminRecruitment() {
                         className="mt-0.5 h-4 w-4 shrink-0 rounded border-amber-300 text-green-600 focus:ring-green-500" />
                       <span>
                         I have opened and verified every document above for {docsCand.name}.
-                        <span className="block text-xs text-amber-800/90 mt-0.5">
+                        <span className="block text-xs text-amber-800 mt-0.5">
                           Confirming unlocks the offer letter and cannot be undone here.
                         </span>
                       </span>
@@ -1749,7 +1925,7 @@ export default function AdminRecruitment() {
               </div>
             )}
             {docsCand.documents?.confirmedAt && (
-              <p className="text-[11px] text-gray-400 mt-2">Documents confirmed · you can now create the offer letter from the candidate's row.</p>
+              <p className="text-[11px] text-gray-400 mt-2">Documents confirmed.</p>
             )}
           </div>
         </div>
@@ -1826,7 +2002,7 @@ export default function AdminRecruitment() {
 
               <label className={`sm:col-span-2 flex items-center gap-2 text-sm ${offerCand.email ? 'text-gray-700' : 'text-gray-400'}`}>
                 <input type="checkbox" checked={offerEmail && !!offerCand.email} disabled={!offerCand.email} onChange={(e) => setOfferEmail(e.target.checked)} />
-                Email the offer letter to the candidate · an editable preview opens after generating{!offerCand.email && ' (no email on file)'}
+                Email the offer letter to the candidate{!offerCand.email && ' (no email on file)'}
               </label>
 
               {error && <div className="sm:col-span-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -1855,7 +2031,6 @@ export default function AdminRecruitment() {
             <div className="px-5 pt-5 pb-4 border-b border-gray-100 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h2 className="text-lg font-semibold text-gray-900 truncate">Applicants · {jobCandJob.title}</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Shortlist to move a candidate into the interview process, or reject.</p>
               </div>
               <button aria-label="Close" title="Close" type="button" onClick={() => setJobCandJob(null)}
                 className="shrink-0 text-gray-400 hover:text-gray-700 rounded-lg p-1 -mr-1 hover:bg-gray-100 text-xl leading-none">×</button>
@@ -1975,9 +2150,8 @@ export default function AdminRecruitment() {
             </div>
 
             <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between gap-3 sm:gap-0">
-              <p className="text-xs text-gray-400">Only shortlisted candidates move forward to the interview process.</p>
               <button type="button" onClick={() => setJobCandJob(null)}
-                className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
+                className="ml-auto px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
             </div>
           </div>
         </div>

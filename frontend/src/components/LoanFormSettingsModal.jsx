@@ -82,10 +82,6 @@ export default function LoanFormSettingsModal({ config, onClose, onSaved }) {
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <h2 className="card-title">Advance Request Form settings</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              What employees choose from and what they accept. Changes apply to new requests; a request already
-              submitted keeps the purpose and terms it was submitted with.
-            </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none px-1">×</button>
         </div>
@@ -95,7 +91,6 @@ export default function LoanFormSettingsModal({ config, onClose, onSaved }) {
             <h3 className="text-sm font-semibold text-gray-900">
               Purpose of Advance <span className="text-gray-400 font-normal">({filledPurposes.length})</span>
             </h3>
-            <span className="text-xs text-gray-500">Employees must pick one of these.</span>
           </div>
           <ListEditor
             rows={purposes}
@@ -106,7 +101,7 @@ export default function LoanFormSettingsModal({ config, onClose, onSaved }) {
             itemName="purpose"
             empty={(
               <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                No purposes yet. Employees cannot submit an advance request until at least one is added.
+                No purposes yet. Employees cannot request an advance.
               </p>
             )}
           />
@@ -131,7 +126,7 @@ export default function LoanFormSettingsModal({ config, onClose, onSaved }) {
             maxItems={MAX_TERMS}
             placeholder="Write the term…"
             itemName="term"
-            empty={<p className="text-sm text-gray-500">No terms. Employees will only confirm the declaration.</p>}
+            empty={<p className="text-sm text-gray-500">No terms yet.</p>}
             extra={!followingPrinted && (
               <button type="button" onClick={resetTerms} className="px-3 py-1.5 text-sm text-gray-600 hover:underline">
                 Reset to the printed terms

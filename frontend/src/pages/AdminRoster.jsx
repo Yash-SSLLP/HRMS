@@ -3,19 +3,29 @@
  * shifts via /shifts (GET/POST/PUT/DELETE) and roster entries via /shifts/roster
  * (GET with date filter, POST to assign, DELETE to remove). Employee list for the
  * assign dropdown comes from GET /admin/users. Times shown in 12-hour format.
+ *
+ * 2026-10-03 redesign (user: "redesign this also"): the Shifts table and the
+ * "Who is in which shift" list are ONE grid of shift cards — a 24-hour timeline
+ * bar, status, headcount and every action on the card. "People" opens a drawer
+ * with that shift's employees; the day roster is grouped by date. Styling is the
+ * `.rst-*` block in index.css; no behaviour changed.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiPlus, FiDownload, FiUsers, FiClock, FiMoon, FiEdit2, FiTrash2, FiUserPlus, FiX, FiSearch, FiCalendar,
+  FiLayers, FiCheckCircle,
+} from 'react-icons/fi';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useViewOnly } from '../hooks/useViewOnly';
 import { confirmDialog } from '../components/dialogs';
 import SearchableSelect from '../components/SearchableSelect';
+import { PersonAvatar } from '../components/permissions/permUi';
 import { peopleOptions, hasLeft } from '../utils/peopleOptions';
 import { downloadTableXlsx } from '../api/download';
+import { toYMD } from '../utils/time';
 
-const fmtDate = (d) =>
-  d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
 // "HH:mm" (24h) → "h:mm AM/PM"
 const to12h = (t) => {
   if (!t) return '';
@@ -24,14 +34,53 @@ const to12h = (t) => {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
 };
 const timeRange = (s) => (s && s.startTime && s.endTime ? `${to12h(s.startTime)} – ${to12h(s.endTime)}` : '-');
+const minsOf = (t) => {
+  if (!t) return null;
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+/** Length of a shift in minutes; an end at or before the start runs into the next day. */
+const spanOf = (s) => {
+  const a = minsOf(s?.startTime);
+  const b = minsOf(s?.endTime);
+  if (a == null || b == null) return null;
+  return b > a ? b - a : b + 1440 - a;
+};
+const spanText = (m) => (m == null ? '' : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}`);
+const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
+const dayHeading = (ymd) => {
+  const d = new Date(`${ymd}T00:00:00`);
+  const today = toYMD(new Date());
+  const tomorrow = toYMD(new Date(Date.now() + 86400000));
+  const label = d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  return { label, rel: ymd === today ? 'Today' : ymd === tomorrow ? 'Tomorrow' : '' };
+};
+
+// One hue per shift, by position — the timeline bar, the card's edge and the
+// roster chips all share it, so a shift reads as the same colour everywhere.
+const HUES = ['#4f46e5', '#0d9488', '#d97706', '#db2777', '#2563eb', '#16a34a', '#9333ea', '#dc2626'];
+
+/** The 24-hour bar: where in the day the shift sits (two pieces if it runs past midnight). */
+function Timeline({ shift, hue }) {
+  const a = minsOf(shift.startTime);
+  const span = spanOf(shift);
+  if (a == null || span == null) return <div className="rst-line" />;
+  const pct = (m) => `${(m / 1440) * 100}%`;
+  const pieces = a + span <= 1440 ? [[a, span]] : [[a, 1440 - a], [0, a + span - 1440]];
+  return (
+    <div className="rst-line" style={{ '--hue': hue }} aria-hidden="true">
+      {pieces.map(([left, w]) => <span key={left} className="rst-line-seg" style={{ left: pct(left), width: pct(w) }} />)}
+      {[6, 12, 18].map((h) => <span key={h} className="rst-line-tick" style={{ left: pct(h * 60) }} />)}
+    </div>
+  );
+}
 
 const blankShift = { name: '', code: '', startTime: '', endTime: '', isActive: true };
 const blankAssign = { employee: '', date: '', shift: '', note: '' };
 
 export default function AdminRoster() {
   // A view-only account reads who is on which shift and assigns nobody. The
-  // Export button stays — it is a read, and downloading the roster is exactly
-  // the sort of thing an audit account is for.
+  // Export button stays — it is a read.
   const viewOnly = useViewOnly();
   const [shifts, setShifts] = useState([]);
   const [entries, setEntries] = useState([]);
@@ -45,7 +94,7 @@ export default function AdminRoster() {
   const [shiftForm, setShiftForm] = useState(blankShift);
   const [savingShift, setSavingShift] = useState(false);
 
-  // Assign modal
+  // Assign (roster) modal
   const [showAssign, setShowAssign] = useState(false);
   const [assignForm, setAssignForm] = useState(blankAssign);
   const [savingAssign, setSavingAssign] = useState(false);
@@ -60,7 +109,8 @@ export default function AdminRoster() {
   // /employees and posts EmployeeProfile ids. They are different collections
   // with interchangeable-looking ids, so the two are never given similar names.
   const [profiles, setProfiles] = useState([]);
-  const [expandedShift, setExpandedShift] = useState(null);
+  const [peopleShift, setPeopleShift] = useState(null);         // the Shift whose people drawer is open
+  const [peopleSearch, setPeopleSearch] = useState('');
   const [shiftEmployees, setShiftEmployees] = useState({});
   const [loadingShiftEmployees, setLoadingShiftEmployees] = useState(false);
   const [exportingShift, setExportingShift] = useState(false);
@@ -69,6 +119,12 @@ export default function AdminRoster() {
   const [savingShiftAssign, setSavingShiftAssign] = useState(false);
   const [shiftSearch, setShiftSearch] = useState('');
 
+  const hueOf = useMemo(() => {
+    const m = new Map();
+    shifts.forEach((s, i) => m.set(String(s._id), HUES[i % HUES.length]));
+    return (id) => m.get(String(id)) || '#64748b';
+  }, [shifts]);
+
   // Filters the assign list only. Selections are held separately in
   // shiftProfileIds, so narrowing the search can never silently drop somebody
   // the user had already ticked.
@@ -76,8 +132,7 @@ export default function AdminRoster() {
     const q = shiftSearch.trim().toLowerCase();
     if (!q) return profiles;
     // Every term has to match somewhere, so "sang 99" finds Samuel Sangama
-    // (SSL 99) rather than everyone called Sangama plus everyone with a 99 in
-    // their code.
+    // (SSL 99) rather than everyone called Sangama plus everyone with a 99.
     const terms = q.split(/\s+/);
     return profiles.filter((p) => {
       const hay = [
@@ -91,10 +146,10 @@ export default function AdminRoster() {
     const { data } = await api.get('/shifts');
     setShifts(data.shifts);
   };
-  const loadRoster = async () => {
+  const loadRoster = async (f = filter) => {
     const params = new URLSearchParams();
-    if (filter.from) params.set('from', filter.from);
-    if (filter.to) params.set('to', filter.to);
+    if (f.from) params.set('from', f.from);
+    if (f.to) params.set('to', f.to);
     const qs = params.toString();
     const { data } = await api.get(`/shifts/roster${qs ? `?${qs}` : ''}`);
     setEntries(data.entries);
@@ -122,6 +177,11 @@ export default function AdminRoster() {
     e.preventDefault();
     setError('');
     try { await loadRoster(); } catch (err) { setError(err.response?.data?.message || 'Failed to filter'); }
+  };
+  const clearFilter = async () => {
+    const cleared = { from: '', to: '' };
+    setFilter(cleared);
+    try { await loadRoster(cleared); } catch (err) { setError(err.response?.data?.message || 'Failed to filter'); }
   };
 
   // ---- Shifts ----
@@ -184,10 +244,10 @@ export default function AdminRoster() {
       setLoadingShiftEmployees(false);
     }
   };
-  const toggleShiftEmployees = async (shiftId) => {
-    if (expandedShift === shiftId) { setExpandedShift(null); return; }
-    setExpandedShift(shiftId);
-    await loadShiftEmployees(shiftId);
+  const openPeople = async (s) => {
+    setPeopleShift(s);
+    setPeopleSearch('');
+    await loadShiftEmployees(s._id);
   };
 
   const openShiftAssign = async (s) => {
@@ -200,8 +260,7 @@ export default function AdminRoster() {
       try {
         const { data } = await api.get('/employees');
         // Nobody who has left (utils/peopleOptions). The dialog opens with
-        // nothing ticked and assigns only what is ticked, so a leaver still on a
-        // shift is simply left as they are.
+        // nothing ticked and assigns only what is ticked.
         setProfiles((data.profiles || []).filter((p) => !hasLeft(p)));
       } catch (err) {
         toast.error(err.response?.data?.message || 'Could not load employees');
@@ -217,10 +276,11 @@ export default function AdminRoster() {
       await api.post(`/shifts/${shiftId}/assign`, { employeeIds: shiftProfileIds });
       setAssignShiftTo(null);
       await loadShifts();
-      // Refresh both the list they were looking at and the one they just left,
-      // so a move between shifts does not leave the old card showing a stale row.
+      // Refresh every list already loaded, so a move between shifts does not
+      // leave the old shift's drawer showing a stale row.
       await Promise.all(Object.keys(shiftEmployees).map((id) => loadShiftEmployees(id)));
       if (!shiftEmployees[shiftId]) await loadShiftEmployees(shiftId);
+      setProfiles([]); // their shiftRef changed — reload the directory next time
       toast.success('Shift assigned');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Assign failed');
@@ -229,7 +289,7 @@ export default function AdminRoster() {
     }
   };
   const unassignFromShift = async (s, p) => {
-    const who = `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || 'this employee';
+    const who = fullName(p.user) || 'this employee';
     if (!(await confirmDialog({
       message: `Take ${who} off the ${s.name} shift? Their attendance will go back to the company's standard hours.`,
       tone: 'danger',
@@ -238,6 +298,7 @@ export default function AdminRoster() {
     try {
       await api.post(`/shifts/${s._id}/unassign`, { employeeIds: [p._id] });
       await Promise.all([loadShifts(), loadShiftEmployees(s._id)]);
+      setProfiles([]);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Could not remove');
     }
@@ -246,13 +307,12 @@ export default function AdminRoster() {
   const exportByShift = async () => {
     setExportingShift(true);
     try {
-      // Ask the server per shift rather than exporting what happens to be
-      // expanded on screen — an export that silently covers only the rows the
-      // user had opened is worse than no export.
+      // Ask the server per shift rather than exporting what happens to be loaded
+      // on screen — a partial export is worse than none.
       const lists = await Promise.all(shifts.map(async (s) => {
         const { data } = await api.get(`/shifts/${s._id}/employees`);
         return (data.employees || []).map((p) => [
-          `${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim(),
+          fullName(p.user),
           s.name,
           timeRange(s) + (s.crossesMidnight ? ' (ends next day)' : ''),
           p.employeeCode || '',
@@ -276,241 +336,362 @@ export default function AdminRoster() {
     }
   };
 
+  // Figures for the strip, and the roster grouped by day.
+  const activeShifts = shifts.filter((s) => s.isActive).length;
+  const onAShift = shifts.reduce((n, s) => n + (s.assignedCount || 0), 0);
+  const overnight = shifts.filter((s) => s.crossesMidnight).length;
+  const rosterDays = useMemo(() => {
+    const m = new Map();
+    entries.forEach((en) => {
+      const k = en.date ? toYMD(new Date(en.date)) : '—';
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(en);
+    });
+    return [...m.entries()];
+  }, [entries]);
+  const formSpan = spanOf(shiftForm);
+  const formOvernight = formSpan != null && minsOf(shiftForm.endTime) <= minsOf(shiftForm.startTime);
+
+  const peopleList = peopleShift ? (shiftEmployees[peopleShift._id] || []) : [];
+  const peopleShown = peopleSearch.trim()
+    ? peopleList.filter((p) => [fullName(p.user), p.employeeCode, p.department].join(' ').toLowerCase()
+      .includes(peopleSearch.trim().toLowerCase()))
+    : peopleList;
+
   return (
     <div>
-      <PageHeader title="Shifts & Roster" />
-      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
-
-      {/* ===== Shifts card ===== */}
-      <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-          <h2 className="card-title">Shifts</h2>
-          {!viewOnly && (
-            <button onClick={openCreateShift} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">+ Add Shift</button>
-          )}
-        </div>
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50"><tr>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Name</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Code</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Time</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Status</th>
-            <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-          </tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={5} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : shifts.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No shifts</td></tr>
-            ) : shifts.map((s) => (
-              <tr key={s._id}>
-                <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
-                <td className="px-4 py-3 font-mono text-xs">{s.code || '-'}</td>
-                <td className="px-4 py-3 text-gray-600">{timeRange(s)}</td>
-                <td className="px-4 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-lg ${s.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>
-                    {s.isActive ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right space-x-2">
-                  {!viewOnly && (
-                    <>
-                      <button onClick={() => openEditShift(s)} className="text-blue-600 hover:underline">Edit</button>
-                      <button onClick={() => removeShift(s)} className="text-red-600 hover:underline">Delete</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ===== Who is in which shift ===== */}
-      <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
-          <div>
-            <h2 className="card-title">Who is in which shift</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              An employee&rsquo;s standing shift. Their attendance — including when a check-in counts
-              as late — is measured against these hours. A roster entry below overrides it for one day.
-            </p>
-          </div>
-          <button onClick={exportByShift} disabled={exportingShift}
-            title="Download every assigned employee with their shift and timing"
-            className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50">
-            {exportingShift ? 'Preparing…' : 'Export'}
+      <PageHeader title="Shifts & Roster">
+        <button type="button" onClick={exportByShift} disabled={exportingShift || !shifts.length} className="trn-btn"
+          title="Every assigned employee with their shift and timing">
+          <FiDownload size={14} /> {exportingShift ? 'Preparing…' : 'Export'}
+        </button>
+        {!viewOnly && (
+          <button type="button" onClick={openCreateShift} className="trn-btn is-primary accent-bg text-white">
+            <FiPlus size={15} /> Add shift
           </button>
+        )}
+      </PageHeader>
+      {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{error}</div>}
+
+      {/* Figures */}
+      <div className="rst-kpis">
+        <div className="trn-kpi">
+          <span className="trn-kpi-icon" aria-hidden="true"><FiLayers size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{loading ? '—' : shifts.length}</span>
+            <span className="trn-kpi-label block">Shifts</span>
+            <span className="trn-kpi-sub block">{loading ? '' : `${activeShifts} active`}</span>
+          </span>
         </div>
-        <div className="divide-y divide-gray-100">
-          {loading ? (
-            <div className="px-4 py-4 space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-2/3" /></div>
-          ) : shifts.length === 0 ? (
-            <div className="px-4 py-6 text-center text-gray-500">Add a shift first, then assign employees to it.</div>
-          ) : shifts.map((s) => (
-            <div key={s._id}>
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0 grow basis-64">
-                  <span className="font-medium text-gray-900">{s.name}</span>
-                  <span className="text-gray-600 text-sm ml-2">{timeRange(s)}</span>
-                  {/* Without this, "7:00 PM – 4:00 AM" reads as a fifteen-hour
-                      day running backwards rather than an overnight shift. */}
-                  {s.crossesMidnight && (
-                    <span className="text-xs px-2 py-0.5 rounded-lg bg-indigo-100 text-indigo-800 ml-2">ends next day</span>
-                  )}
-                  <span className="text-xs text-gray-500 ml-2">
-                    {s.assignedCount === 1 ? '1 employee' : `${s.assignedCount || 0} employees`}
-                  </span>
-                </div>
-                <div className="ml-auto flex items-center gap-2">
-                  <button onClick={() => toggleShiftEmployees(s._id)} className="text-blue-600 hover:underline text-sm">
-                    {expandedShift === s._id ? 'Hide' : 'View'}
-                  </button>
-                  {!viewOnly && (
-                    <button onClick={() => openShiftAssign(s)} className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50">
-                      Assign employees
-                    </button>
-                  )}
-                </div>
-              </div>
-              {expandedShift === s._id && (
-                <div className="px-4 pb-3">
-                  {loadingShiftEmployees ? (
-                    <div className="skeleton h-4 rounded w-1/2" />
-                  ) : (shiftEmployees[s._id] || []).length === 0 ? (
-                    <p className="text-sm text-gray-500">Nobody is on this shift yet.</p>
-                  ) : (
-                    <table className="min-w-full text-sm">
-                      <thead><tr className="text-left text-gray-500">
-                        <th className="py-1 font-medium">Employee</th>
-                        <th className="py-1 font-medium">Code</th>
-                        <th className="py-1 font-medium">Department</th>
-                        <th className="py-1 font-medium text-right">Actions</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {(shiftEmployees[s._id] || []).map((p) => (
-                          <tr key={p._id}>
-                            <td className="py-1.5 text-gray-900">
-                              {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || '-'}
-                            </td>
-                            <td className="py-1.5 font-mono text-xs">{p.employeeCode || '-'}</td>
-                            <td className="py-1.5 text-gray-600">{p.department || '-'}</td>
-                            <td className="py-1.5 text-right">
-                              {!viewOnly && (
-                                <button onClick={() => unassignFromShift(s, p)} className="text-red-600 hover:underline">Remove</button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="trn-kpi" style={{ '--kpi-hue': '#16a34a' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiUsers size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{loading ? '—' : onAShift}</span>
+            <span className="trn-kpi-label block">On a shift</span>
+            <span className="trn-kpi-sub block">Standing assignments</span>
+          </span>
+        </div>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#6366f1' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiMoon size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{loading ? '—' : overnight}</span>
+            <span className="trn-kpi-label block">Overnight</span>
+            <span className="trn-kpi-sub block">End the next day</span>
+          </span>
+        </div>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#d97706' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiCalendar size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{loading ? '—' : entries.length}</span>
+            <span className="trn-kpi-label block">Roster entries</span>
+            <span className="trn-kpi-sub block">{filter.from || filter.to ? 'In the chosen dates' : 'All dates'}</span>
+          </span>
         </div>
       </div>
 
-      {/* ===== Roster card ===== */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
-          <h2 className="card-title">Roster</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <form onSubmit={applyFilter} className="flex flex-wrap items-center gap-2">
-              <input type="date" value={filter.from} onChange={(e) => setFilter({ ...filter, from: e.target.value })} className="border rounded-lg px-3 py-2 text-sm" />
-              <span className="text-gray-400 text-sm">to</span>
-              <input type="date" value={filter.to} onChange={(e) => setFilter({ ...filter, to: e.target.value })} className="border rounded-lg px-3 py-2 text-sm" />
-              <button type="submit" className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50">Filter</button>
-            </form>
+      {/* ===== Shifts ===== */}
+      <div className="prm-head">
+        <span className="prm-head-title">Shifts</span>
+      </div>
+      {loading ? (
+        <div className="rst-grid">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-44 rounded-2xl" />)}</div>
+      ) : shifts.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiClock size={24} /></span>
+            <p className="text-sm font-semibold">No shifts yet</p>
             {!viewOnly && (
-              <button onClick={openAssign} className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm">Assign Shift</button>
+              <button type="button" onClick={openCreateShift} className="trn-btn is-primary accent-bg text-white">
+                <FiPlus size={15} /> Add shift
+              </button>
             )}
           </div>
         </div>
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50"><tr>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Employee</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Date</th>
-            <th className="px-4 py-3 text-left font-medium text-gray-700">Shift</th>
-            <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-          </tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={4} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : entries.length === 0 ? (
-              <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">No roster entries</td></tr>
-            ) : entries.map((en) => (
-              <tr key={en._id}>
-                <td className="px-4 py-3 font-medium text-gray-900">
-                  {en.employee ? `${en.employee.firstName} ${en.employee.lastName}` : '-'}
-                </td>
-                <td className="px-4 py-3 text-gray-600">{fmtDate(en.date)}</td>
-                <td className="px-4 py-3">
-                  {en.shift ? en.shift.name : '-'}
-                  <div className="text-xs text-gray-500">{timeRange(en.shift)}</div>
-                </td>
-                <td className="px-4 py-3 text-right">
+      ) : (
+        <div className="rst-grid">
+          {shifts.map((s) => {
+            const hue = hueOf(s._id);
+            const span = spanOf(s);
+            const n = s.assignedCount || 0;
+            return (
+              <article key={s._id} className={`rst-card${s.isActive ? '' : ' is-off'}`} style={{ '--hue': hue }}>
+                <div className="rst-card-head">
+                  <div className="min-w-0">
+                    <div className="rst-card-name">{s.name}</div>
+                    <div className="rst-card-tags">
+                      {s.code && <span className="rst-code">{s.code}</span>}
+                      <span className={`rst-status${s.isActive ? ' is-on' : ''}`}>{s.isActive ? 'Active' : 'Inactive'}</span>
+                      {s.crossesMidnight && <span className="rst-night"><FiMoon size={11} /> Ends next day</span>}
+                    </div>
+                  </div>
                   {!viewOnly && (
-                    <button onClick={() => removeEntry(en)} className="text-red-600 hover:underline">Delete</button>
+                    <div className="rst-card-tools">
+                      <button type="button" className="trn-icon-btn" onClick={() => openEditShift(s)} aria-label={`Edit ${s.name}`} title="Edit"><FiEdit2 size={15} /></button>
+                      <button type="button" className="trn-icon-btn rst-del" onClick={() => removeShift(s)} aria-label={`Delete ${s.name}`} title="Delete"><FiTrash2 size={15} /></button>
+                    </div>
                   )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+
+                <div className="rst-time">
+                  <span className="rst-time-main">{timeRange(s)}</span>
+                  {span != null && <span className="rst-time-span">{spanText(span)}</span>}
+                </div>
+                <Timeline shift={s} hue={hue} />
+                <div className="rst-line-scale" aria-hidden="true"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>12 AM</span></div>
+
+                <div className="rst-card-foot">
+                  <button type="button" className="rst-people" onClick={() => openPeople(s)}>
+                    <FiUsers size={14} /> {n === 1 ? '1 employee' : `${n} employees`}
+                  </button>
+                  {!viewOnly && (
+                    <button type="button" className="trn-btn" onClick={() => openShiftAssign(s)}>
+                      <FiUserPlus size={14} /> Assign
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ===== Roster ===== */}
+      <div className="prm-head">
+        <span className="prm-head-title">Day roster</span>
       </div>
+      <div className="rst-toolbar">
+        <form onSubmit={applyFilter} className="rst-range">
+          <label className="rst-field">
+            <span className="prm-label">From</span>
+            <input type="date" value={filter.from} onChange={(e) => setFilter({ ...filter, from: e.target.value })} className="trn-select" />
+          </label>
+          <label className="rst-field">
+            <span className="prm-label">To</span>
+            <input type="date" value={filter.to} onChange={(e) => setFilter({ ...filter, to: e.target.value })} className="trn-select" />
+          </label>
+          <button type="submit" className="trn-btn">Filter</button>
+          {(filter.from || filter.to) && <button type="button" className="trn-btn" onClick={clearFilter}>Clear</button>}
+        </form>
+        {!viewOnly && (
+          <button type="button" onClick={openAssign} className="trn-btn is-primary accent-bg text-white rst-toolbar-end">
+            <FiPlus size={15} /> Assign for a day
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="space-y-2.5">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-14 rounded-xl" />)}</div>
+      ) : rosterDays.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiCalendar size={24} /></span>
+            <p className="text-sm font-semibold">No roster entries</p>
+          </div>
+        </div>
+      ) : (
+        rosterDays.map(([ymd, list]) => {
+          const h = ymd === '—' ? { label: 'No date', rel: '' } : dayHeading(ymd);
+          return (
+            <section key={ymd} className="rst-day">
+              <div className="rst-day-head">
+                <span className="rst-day-title">{h.label}</span>
+                {h.rel && <span className="rst-day-rel">{h.rel}</span>}
+                <span className="rst-day-count">{list.length}</span>
+              </div>
+              <div className="prm-list">
+                {list.map((en) => {
+                  const hue = en.shift ? hueOf(en.shift._id) : '#64748b';
+                  return (
+                    <div key={en._id} className="rst-entry">
+                      <PersonAvatar user={en.employee} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="rst-entry-name">{en.employee ? fullName(en.employee) : '-'}</div>
+                        {en.note && <div className="rst-entry-note">{en.note}</div>}
+                      </div>
+                      <span className="rst-chip" style={{ '--hue': hue }}>
+                        <span className="rst-chip-dot" />{en.shift ? en.shift.name : '-'}
+                        <span className="rst-chip-time">{timeRange(en.shift)}</span>
+                      </span>
+                      {!viewOnly && (
+                        <button type="button" className="trn-icon-btn rst-del" onClick={() => removeEntry(en)} aria-label="Delete roster entry" title="Delete">
+                          <FiTrash2 size={15} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })
+      )}
+
+      {/* ===== People on a shift (drawer) ===== */}
+      {peopleShift && (
+        <div className="fixed inset-0 trn-drawer-wrap" onClick={() => setPeopleShift(null)}>
+          <div className="trn-drawer" role="dialog" aria-modal="true" aria-label={`People on ${peopleShift.name}`} onClick={(e) => e.stopPropagation()}>
+            <div className="trn-drawer-head" style={{ '--hue': hueOf(peopleShift._id) }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-lg font-bold truncate">{peopleShift.name}</div>
+                  <div className="text-xs opacity-70 mt-0.5">
+                    {timeRange(peopleShift)}{peopleShift.crossesMidnight ? ' · ends next day' : ''} · {peopleList.length} {peopleList.length === 1 ? 'employee' : 'employees'}
+                  </div>
+                </div>
+                <button type="button" className="trn-icon-btn" onClick={() => setPeopleShift(null)} aria-label="Close"><FiX size={17} /></button>
+              </div>
+              {peopleList.length > 6 && (
+                <label className="trn-search mt-3">
+                  <FiSearch size={15} className="opacity-50 shrink-0" />
+                  <input value={peopleSearch} onChange={(e) => setPeopleSearch(e.target.value)} placeholder="Search name, code or department" aria-label="Search people" />
+                </label>
+              )}
+            </div>
+            <div className="trn-drawer-body">
+              {loadingShiftEmployees && !shiftEmployees[peopleShift._id] ? (
+                <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="skeleton h-12 rounded-xl" />)}</div>
+              ) : peopleShown.length === 0 ? (
+                <div className="trn-empty">
+                  <span className="trn-empty-icon"><FiUsers size={24} /></span>
+                  <p className="text-sm font-semibold">{peopleList.length ? 'No one matches' : 'Nobody on this shift yet'}</p>
+                </div>
+              ) : (
+                <div className="prm-list">
+                  {peopleShown.map((p) => (
+                    <div key={p._id} className="rst-entry">
+                      <PersonAvatar user={p.user} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="rst-entry-name">{fullName(p.user) || p.employeeCode || '-'}</div>
+                        <div className="rst-entry-note">{[p.employeeCode, p.department].filter(Boolean).join(' · ') || '—'}</div>
+                      </div>
+                      {!viewOnly && (
+                        <button type="button" className="trn-btn rst-remove" onClick={() => unassignFromShift(peopleShift, p)}>Remove</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {!viewOnly && (
+              <div className="trn-drawer-foot">
+                <button type="button" className="trn-btn is-primary accent-bg text-white" onClick={() => openShiftAssign(peopleShift)}>
+                  <FiUserPlus size={14} /> Assign employees
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ===== Shift modal ===== */}
       {showShift && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[70] overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-4">{editingId ? 'Edit Shift' : 'New Shift'}</h2>
-            <form onSubmit={saveShift} className="space-y-3">
-              <input required placeholder="Name *" value={shiftForm.name} onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              <input placeholder="Code" value={shiftForm.code} onChange={(e) => setShiftForm({ ...shiftForm, code: e.target.value.toUpperCase() })} className="block w-full border rounded-lg px-3 py-2 font-mono" />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="text-sm text-gray-600">Start
-                  <input type="time" value={shiftForm.startTime} onChange={(e) => setShiftForm({ ...shiftForm, startTime: e.target.value })} className="block w-full border rounded-lg px-3 py-2 mt-1" />
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h2 className="card-title">{editingId ? 'Edit shift' : 'New shift'}</h2>
+              <button type="button" onClick={() => setShowShift(false)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
+            <form onSubmit={saveShift} className="space-y-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="sm:col-span-2">
+                  <span className="prm-label">Name *</span>
+                  <input required value={shiftForm.name} onChange={(e) => setShiftForm({ ...shiftForm, name: e.target.value })} className="prm-input" />
                 </label>
-                <label className="text-sm text-gray-600">End
-                  <input type="time" value={shiftForm.endTime} onChange={(e) => setShiftForm({ ...shiftForm, endTime: e.target.value })} className="block w-full border rounded-lg px-3 py-2 mt-1" />
+                <label>
+                  <span className="prm-label">Code</span>
+                  <input value={shiftForm.code} onChange={(e) => setShiftForm({ ...shiftForm, code: e.target.value.toUpperCase() })} className="prm-input font-mono" />
                 </label>
               </div>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
+              <div className="grid grid-cols-2 gap-3">
+                <label>
+                  <span className="prm-label">Start</span>
+                  <input type="time" value={shiftForm.startTime} onChange={(e) => setShiftForm({ ...shiftForm, startTime: e.target.value })} className="prm-input" />
+                </label>
+                <label>
+                  <span className="prm-label">End</span>
+                  <input type="time" value={shiftForm.endTime} onChange={(e) => setShiftForm({ ...shiftForm, endTime: e.target.value })} className="prm-input" />
+                </label>
+              </div>
+              {formSpan != null && (
+                <div className="rst-preview">
+                  <Timeline shift={shiftForm} hue={editingId ? hueOf(editingId) : HUES[shifts.length % HUES.length]} />
+                  <div className="rst-preview-text">
+                    <FiClock size={13} /> {spanText(formSpan)}
+                    {formOvernight && <span className="rst-night"><FiMoon size={11} /> Ends next day</span>}
+                  </div>
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={shiftForm.isActive} onChange={(e) => setShiftForm({ ...shiftForm, isActive: e.target.checked })} />
                 Active
               </label>
               {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowShift(false)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingShift} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{savingShift ? 'Saving…' : 'Save'}</button>
+                <button type="button" onClick={() => setShowShift(false)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={savingShift} className="trn-btn is-primary accent-bg text-white">{savingShift ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* ===== Assign modal ===== */}
+      {/* ===== Roster (one day) modal ===== */}
       {showAssign && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[70] overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
-            <h2 className="card-title mb-4">Assign Shift</h2>
-            <form onSubmit={saveAssign} className="space-y-3">
-              <SearchableSelect required value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">Select employee</option>
-                {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [assignForm.employee] })}
-              </SearchableSelect>
-              <input required type="date" value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
-              <SearchableSelect required value={assignForm.shift} onChange={(e) => setAssignForm({ ...assignForm, shift: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
-                <option value="">Select shift</option>
-                {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}{s.startTime && s.endTime ? ` (${to12h(s.startTime)}–${to12h(s.endTime)})` : ''}</option>)}
-              </SearchableSelect>
-              <textarea rows={2} placeholder="Note" value={assignForm.note} onChange={(e) => setAssignForm({ ...assignForm, note: e.target.value })} className="block w-full border rounded-lg px-3 py-2" />
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h2 className="card-title">Assign for a day</h2>
+              <button type="button" onClick={() => setShowAssign(false)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
+            <form onSubmit={saveAssign} className="space-y-3.5">
+              <label className="block">
+                <span className="prm-label">Employee *</span>
+                <SearchableSelect required value={assignForm.employee} onChange={(e) => setAssignForm({ ...assignForm, employee: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                  <option value="">Select employee</option>
+                  {peopleOptions(users, (u) => `${u.firstName} ${u.lastName} (${u.role})`, { keep: [assignForm.employee] })}
+                </SearchableSelect>
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label>
+                  <span className="prm-label">Date *</span>
+                  <input required type="date" value={assignForm.date} onChange={(e) => setAssignForm({ ...assignForm, date: e.target.value })} className="prm-input" />
+                </label>
+                <label className="block">
+                  <span className="prm-label">Shift *</span>
+                  <SearchableSelect required value={assignForm.shift} onChange={(e) => setAssignForm({ ...assignForm, shift: e.target.value })} className="block w-full border rounded-lg px-3 py-2">
+                    <option value="">Select shift</option>
+                    {shifts.map((s) => <option key={s._id} value={s._id}>{s.name}{s.startTime && s.endTime ? ` (${to12h(s.startTime)}–${to12h(s.endTime)})` : ''}</option>)}
+                  </SearchableSelect>
+                </label>
+              </div>
+              <label className="block">
+                <span className="prm-label">Note</span>
+                <textarea rows={2} value={assignForm.note} onChange={(e) => setAssignForm({ ...assignForm, note: e.target.value })} className="prm-input" />
+              </label>
               {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowAssign(false)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingAssign} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">{savingAssign ? 'Saving…' : 'Save'}</button>
+                <button type="button" onClick={() => setShowAssign(false)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={savingAssign} className="trn-btn is-primary accent-bg text-white">{savingAssign ? 'Saving…' : 'Save'}</button>
               </div>
             </form>
           </div>
@@ -519,81 +700,62 @@ export default function AdminRoster() {
 
       {/* ===== Standing shift assignment modal ===== */}
       {assignShiftTo && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-[70] overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="card-title mb-1">Assign employees to {assignShiftTo.name}</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              {timeRange(assignShiftTo)}{assignShiftTo.crossesMidnight ? ' · ends the next morning' : ''}.
-              This becomes their standing shift from now on — days they have already
-              worked keep the hours they were recorded under.
-            </p>
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <h2 className="card-title truncate">Assign to {assignShiftTo.name}</h2>
+                <p className="text-xs opacity-60 mt-0.5">
+                  {timeRange(assignShiftTo)}{assignShiftTo.crossesMidnight ? ' · ends next day' : ''}
+                </p>
+              </div>
+              <button type="button" onClick={() => setAssignShiftTo(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
             <form onSubmit={saveShiftAssign} className="space-y-3">
               <div className="flex items-center gap-2">
-                <input
-                  type="search"
-                  value={shiftSearch}
-                  onChange={(e) => setShiftSearch(e.target.value)}
-                  placeholder="Search by name, code, department or designation"
-                  className="flex-1 border rounded-lg px-3 py-2 text-sm"
-                  aria-label="Search employees"
-                />
-                {/* The count is the point of the search on a long directory: it
-                    answers "did my filter actually match anyone?" without the
-                    person having to scroll the list to find out. */}
-                <span className="text-xs text-gray-500 whitespace-nowrap">
+                <label className="trn-search">
+                  <FiSearch size={15} className="opacity-50 shrink-0" />
+                  <input type="search" value={shiftSearch} onChange={(e) => setShiftSearch(e.target.value)}
+                    placeholder="Search name, code, department" aria-label="Search employees" />
+                </label>
+                {/* The count answers "did my filter match anyone?" without scrolling. */}
+                <span className="text-xs opacity-60 whitespace-nowrap">
                   {shiftProfileIds.length ? `${shiftProfileIds.length} selected` : `${visibleProfiles.length} shown`}
                 </span>
               </div>
-              {/* Selecting someone, searching again, and losing the earlier tick
-                  is the classic filtered-multi-select bug. Selections live in
-                  shiftProfileIds, which the filter never touches, so they
-                  survive — and this line says so, because a hidden selection is
-                  otherwise invisible right up until you press Assign. */}
-              {shiftProfileIds.length > 0 && visibleProfiles.length < shiftProfileIds.length && (
-                <p className="text-xs text-gray-500 -mt-1">
-                  Employees you ticked before searching are still selected.
-                </p>
-              )}
-              <div className="max-h-72 overflow-y-auto border rounded-lg divide-y divide-gray-100">
+              <div className="rst-pick">
                 {profiles.length === 0 ? (
-                  <p className="px-3 py-4 text-sm text-gray-500">Loading employees…</p>
+                  <div className="space-y-2 p-2">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-10 rounded-lg" />)}</div>
                 ) : visibleProfiles.length === 0 ? (
-                  <p className="px-3 py-4 text-sm text-gray-500">
-                    No employee matches &ldquo;{shiftSearch}&rdquo;.
-                  </p>
+                  <p className="px-3 py-4 text-sm opacity-60">No employee matches &ldquo;{shiftSearch}&rdquo;.</p>
                 ) : visibleProfiles.map((p) => {
                   const onThis = String(p.shiftRef?._id || p.shiftRef || '') === String(assignShiftTo._id);
                   const onOther = p.shiftRef && !onThis;
+                  const ticked = shiftProfileIds.includes(p._id);
                   return (
-                    <label key={p._id} className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
+                    <label key={p._id} className={`rst-pick-row${ticked ? ' is-on' : ''}`}>
                       <input
                         type="checkbox"
-                        checked={shiftProfileIds.includes(p._id)}
+                        checked={ticked}
                         onChange={(e) => setShiftProfileIds((prev) => (e.target.checked
                           ? [...prev, p._id]
                           : prev.filter((id) => id !== p._id)))}
                       />
+                      <PersonAvatar user={p.user} size="sm" />
                       <span className="flex-1 min-w-0">
-                        <span className="text-gray-900">
-                          {`${p.user?.firstName || ''} ${p.user?.lastName || ''}`.trim() || p.employeeCode}
-                        </span>
-                        {p.employeeCode && <span className="text-xs text-gray-500 ml-2 font-mono">{p.employeeCode}</span>}
+                        <span className="rst-entry-name block">{fullName(p.user) || p.employeeCode}</span>
+                        <span className="rst-entry-note block">{[p.employeeCode, p.department].filter(Boolean).join(' · ')}</span>
                       </span>
-                      {/* Says where they are moving FROM, so nobody is pulled off
-                          nights onto days without the person doing it noticing. */}
-                      {onThis && <span className="text-xs text-green-700">already here</span>}
-                      {onOther && (
-                        <span className="text-xs text-amber-700">
-                          on {p.shiftRef?.name || 'another shift'}
-                        </span>
-                      )}
+                      {/* Where they move FROM, so nobody is pulled off nights unnoticed. */}
+                      {onThis && <span className="rst-status is-on"><FiCheckCircle size={11} /> Here</span>}
+                      {onOther && <span className="rst-from">on {p.shiftRef?.name || 'another shift'}</span>}
                     </label>
                   );
                 })}
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setAssignShiftTo(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={savingShiftAssign} className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
+                <button type="button" onClick={() => setAssignShiftTo(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={savingShiftAssign} className="trn-btn is-primary accent-bg text-white">
                   {savingShiftAssign ? 'Saving…' : `Assign ${shiftProfileIds.length || ''}`.trim()}
                 </button>
               </div>

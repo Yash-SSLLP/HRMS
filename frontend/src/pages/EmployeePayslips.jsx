@@ -98,10 +98,6 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
         <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
           <div>
             <h2 className="card-title">Request a payslip</h2>
-            <p className="text-xs text-gray-500 mt-1">
-              Pick the month you need and say what it is for. HR is told, and prepares it —
-              including for months payroll has not been run for yet.
-            </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="topbar-icon-btn shrink-0">×</button>
         </div>
@@ -151,9 +147,6 @@ function MonthPickerModal({ open, months, busyKey, onPick, onClose }) {
               placeholder="Home loan, visa application…"
               className="mt-1 block w-full border rounded-lg px-3 py-2 text-sm"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Shown to HR, so they know what the slip is for and how urgent it is.
-            </p>
           </div>
         )}
 
@@ -363,8 +356,7 @@ function RequestPurposeModal({ slip, busy, onSubmit, onClose }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
         <h2 className="card-title mb-1">Request this payslip</h2>
         <p className="text-sm text-gray-500 mb-4">
-          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear} — tell HR what you need it for.
-          They work through requests in the order the reason calls for.
+          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}
         </p>
         <label className="block text-sm text-gray-700" htmlFor="payslip-row-purpose">
           Purpose <span className="text-red-600" aria-hidden="true">*</span>
@@ -398,8 +390,7 @@ function ChangeRequestModal({ slip, busy, onSubmit, onClose }) {
       <div className="bg-white rounded-xl shadow-lg w-full max-w-md p-6">
         <h2 className="card-title mb-1">Request a change</h2>
         <p className="text-sm text-gray-500 mb-4">
-          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear} — tell HR what looks wrong and they will
-          check the payslip again.
+          {MONTHS[slip.payPeriodMonth - 1]} {slip.payPeriodYear}
         </p>
         <textarea
           value={note} onChange={(e) => setNote(e.target.value)} rows={4} autoFocus
@@ -596,9 +587,6 @@ export default function EmployeePayslips() {
         <div className="bg-white shadow rounded-lg overflow-hidden mb-4">
           <div className="px-4 py-3 border-b border-gray-100">
             <h2 className="card-title">Waiting on HR</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              You will be told when each one is ready to download.
-            </p>
           </div>
           <ul className="divide-y divide-gray-100">
             {requests.map((r) => (
@@ -632,9 +620,6 @@ export default function EmployeePayslips() {
         <div className="bg-white shadow rounded-lg overflow-hidden mb-4">
           <div className="px-4 py-3 border-b border-gray-100">
             <h2 className="card-title">Ready to request</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Request a payslip to see it. HR checks it and releases it to you — it then shows below with its PDF.
-            </p>
           </div>
           <ul className="divide-y divide-gray-100">
             {ready.map((r) => (
@@ -669,7 +654,7 @@ export default function EmployeePayslips() {
               <tr><td colSpan={6} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
             ) : payslips.length === 0 ? (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">
-                No payslips released to you yet. Request one — it shows here once HR releases it.
+                No payslips released to you yet.
               </td></tr>
             ) : payslips.map((p) => (
               <tr key={p._id}>

@@ -862,6 +862,9 @@ function GlobalSearch({ navItems = [], user, isAdmin }) {
             icon: i.icon,
             group: i.label,          // shows as "Permissions › Leave approvals"
             parent: i.label,
+            // A tab may carry its own other names ("translation" → Permissions ›
+            // Organisation settings); the parent's would over-match every tab.
+            keywords: t.keywords,
           });
         });
       });

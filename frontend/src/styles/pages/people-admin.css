@@ -1,0 +1,168 @@
+/* ---------------------------------------------------------------------------
+   People admin (2026-10-03 premium redesign) — three admin pages:
+     pages/AdminDashboard.jsx    User Accounts   .usr-*
+     pages/AdminDepartments.jsx  Departments     .dep-*
+     pages/AdminOrgMasters.jsx   Org Masters     .om-*
+   Builds on the shared .trn- / .prm- / .pb- / .rst- primitives in index.css.
+   Every tint mixes into --surface, so dark mode follows without extra rules
+   except where a hue needs a lighter ink.
+--------------------------------------------------------------------------- */
+
+/* Shared: KPI strip spacing, red-on-hover delete, 40px touch width. */
+.usr-kpis, .dep-kpis { margin-bottom: 1rem; }
+.usr-del:hover, .dep-del:hover, .om-del:hover { color: #dc2626; }
+html.dark .usr-del:hover, html.dark .dep-del:hover, html.dark .om-del:hover { color: #f87171; }
+@media (max-width: 640px), (pointer: coarse) {
+  .usr-actions .trn-icon-btn, .dep-tools .trn-icon-btn, .om-actions .trn-icon-btn { min-width: 40px; }
+}
+.usr-count, .dep-count, .om-count { font-size: 0.75rem; opacity: 0.6; white-space: nowrap; }
+
+/* ===== User Accounts ===================================================== */
+
+/* Role chips: a full-width second line inside the toolbar. */
+.usr-chips { flex-basis: 100%; padding-top: 0.6rem; border-top: 1px dashed var(--border); }
+
+/* The list: one grid whose rows share its columns (subgrid), so role, status
+   and actions line up down the page however wide each row's actions are. */
+.usr-list { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; column-gap: 1.25rem; }
+.usr-head, .usr-row {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center;
+  padding: 0.7rem 1rem; min-width: 0;
+}
+@supports not (grid-template-columns: subgrid) {
+  .usr-head, .usr-row { grid-template-columns: minmax(0, 1fr) 9.5rem 6rem 14rem; column-gap: 1.25rem; }
+}
+.usr-head {
+  padding-top: 0.5rem; padding-bottom: 0.5rem;
+  font-size: 0.64rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  background-color: var(--surface-2); border-bottom: 1px solid var(--border);
+}
+.usr-head > span { opacity: 0.6; }
+.usr-head > span:last-child { text-align: right; }
+.usr-row { transition: background-color 0.12s; }
+.usr-row + .usr-row { border-top: 1px solid var(--border); }
+.usr-row:hover { background-color: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.usr-row.is-gone .prm-avatar { filter: grayscale(1); opacity: 0.7; }
+
+.usr-name { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.usr-name .prm-who-name { min-width: 0; }
+.usr-you {
+  flex-shrink: 0; padding: 0.05rem 0.4rem; border-radius: 999px;
+  font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+}
+.usr-dash { opacity: 0.35; font-weight: 700; }
+
+.usr-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.2rem; }
+.usr-toggle { min-height: 2rem; padding: 0.3rem 0.65rem; font-size: 0.75rem; margin-right: 0.3rem; }
+.usr-toggle.is-off:hover:not(:disabled) {
+  color: color-mix(in srgb, #d97706 90%, currentColor);
+  border-color: color-mix(in srgb, #d97706 50%, var(--border));
+  background-color: color-mix(in srgb, #d97706 8%, var(--surface));
+}
+.usr-toggle.is-on:hover:not(:disabled) {
+  color: color-mix(in srgb, #16a34a 85%, currentColor);
+  border-color: color-mix(in srgb, #16a34a 45%, var(--border));
+  background-color: color-mix(in srgb, #16a34a 8%, var(--surface));
+}
+html.dark .usr-toggle.is-off:hover:not(:disabled) { color: #fcd34d; }
+html.dark .usr-toggle.is-on:hover:not(:disabled) { color: #4ade80; }
+.usr-restricted { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; font-weight: 600; opacity: 0.55; white-space: nowrap; }
+
+/* Account form + permissions dialog */
+.usr-sub {
+  padding: 0.75rem; border-radius: 0.85rem;
+  background-color: var(--surface-2); border: 1px solid var(--border);
+}
+.usr-sub-title { font-size: 0.8rem; font-weight: 800; margin-bottom: 0.6rem; }
+.usr-field-note { font-size: 0.72rem; margin-top: 0.3rem; opacity: 0.7; }
+.usr-field-note.is-warn { opacity: 1; color: color-mix(in srgb, #d97706 90%, currentColor); }
+html.dark .usr-field-note.is-warn { color: #fcd34d; }
+.usr-pw { position: relative; }
+.usr-pw .prm-input { padding-right: 3rem; }
+.usr-pw-eye {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 2.75rem;
+  display: inline-flex; align-items: center; justify-content: center; opacity: 0.5;
+}
+.usr-pw-eye:hover { opacity: 0.9; }
+.usr-check { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: 600; }
+.usr-perm-item {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; border-radius: 0.55rem;
+  font-size: 0.84rem; cursor: pointer;
+}
+.usr-perm-item:hover { background-color: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+
+@media (max-width: 767px) {
+  .usr-list { display: block; }
+  .usr-head { display: none; }
+  .usr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.5rem; }
+  .usr-row > .usr-who { flex: 1 1 100%; }
+  .usr-row > .usr-role { margin-left: 3.05rem; }
+  .usr-row > .usr-actions { margin-left: auto; }
+}
+
+/* ===== Departments ======================================================= */
+.dep-head-main { display: flex; align-items: flex-start; gap: 0.75rem; min-width: 0; }
+.dep-mark {
+  flex-shrink: 0; width: 2.6rem; height: 2.6rem; border-radius: 0.85rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.82rem; font-weight: 800; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--hue) 26%, var(--border));
+}
+.dep-figure { display: flex; align-items: baseline; gap: 0.4rem; margin-top: 0.2rem; }
+.dep-figure-n { font-size: 1.75rem; font-weight: 800; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.dep-figure-l { font-size: 0.78rem; font-weight: 600; opacity: 0.65; }
+.dep-figure-pct { margin-left: auto; font-size: 0.72rem; font-weight: 700; opacity: 0.6; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dep-bar { height: 0.45rem; border-radius: 999px; overflow: hidden; background-color: var(--surface-3); }
+.dep-bar-fill {
+  display: block; height: 100%; border-radius: 999px; transition: width 0.35s ease;
+  background: linear-gradient(90deg, var(--hue), color-mix(in srgb, var(--hue) 60%, var(--surface)));
+}
+.dep-card .rst-people:disabled { opacity: 0.5; cursor: default; }
+.dep-card .rst-people:disabled:hover { background-color: color-mix(in srgb, var(--hue) 9%, var(--surface)); }
+.dep-stack { display: inline-flex; align-items: center; flex-shrink: 0; }
+.dep-stack > * + * { margin-left: -0.5rem; }
+.dep-stack .prm-avatar { border: 2px solid var(--surface); }
+.dep-stack-more {
+  width: 1.75rem; height: 1.75rem; border-radius: 999px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.6rem; font-weight: 800; background-color: var(--surface-3); border: 2px solid var(--surface);
+}
+.dep-tools { display: flex; gap: 0.15rem; margin: -0.3rem -0.4rem 0 0; flex-shrink: 0; }
+.dep-drawer-mark { width: 2.4rem; height: 2.4rem; }
+.trn-drawer-head.dep-drawer-head {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--hue, var(--accent)) 10%, var(--surface)) 0%, var(--surface) 70%);
+}
+
+/* ===== Org Masters ======================================================= */
+.om-list { transition: opacity 0.15s; }
+.om-list.is-stale { opacity: 0.6; }
+.om-row { display: flex; align-items: center; gap: 0.85rem; padding: 0.75rem 1rem; min-width: 0; transition: background-color 0.12s; }
+.om-row + .om-row { border-top: 1px solid var(--border); }
+.om-row:hover { background-color: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.om-mark {
+  flex-shrink: 0; width: 2.35rem; height: 2.35rem; border-radius: 0.75rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--hue) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--hue) 13%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--hue) 24%, var(--border));
+}
+.om-main { flex: 1 1 0; min-width: 0; }
+.om-name-line { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.om-name { font-size: 0.88rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.om-name-line .rst-code { flex-shrink: 0; }
+.om-desc { font-size: 0.74rem; opacity: 0.62; margin-top: 0.12rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.om-desc.is-none { opacity: 0.35; }
+.om-side { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+.om-actions { display: flex; gap: 0.15rem; }
+.om-updating { font-size: 0.75rem; opacity: 0.55; }
+
+@media (max-width: 640px) {
+  .om-row { flex-wrap: wrap; row-gap: 0.4rem; }
+  .om-main { flex: 1 1 12rem; }
+  .om-side { margin-left: auto; }
+}

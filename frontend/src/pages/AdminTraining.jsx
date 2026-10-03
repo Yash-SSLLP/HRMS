@@ -273,7 +273,7 @@ export default function AdminTraining() {
 
   return (
     <div>
-      <PageHeader title="Training" subtitle="Book sessions, share the join link and files, and see how clear each one was.">
+      <PageHeader title="Training">
         <button type="button" className="trn-btn" onClick={() => setShowExport(true)}><FiDownload size={15} /> Export report</button>
         {writable && <button type="button" className="trn-btn" onClick={() => setShowCategories(true)}><FiTag size={15} /> Categories</button>}
         {writable && (
@@ -338,11 +338,9 @@ export default function AdminTraining() {
           ) : view === 'upcoming' ? (
             <EmptyState icon={FiCalendar} title="No upcoming trainings"
               action={writable ? <button type="button" className="trn-btn is-primary accent-bg on-accent" onClick={() => setFormFor({})}><FiPlus size={15} /> Book a training</button> : null}>
-              {writable ? 'Book one — everyone you add is told in the app and gets the join link on their own My Trainings page.' : 'Sessions appear here once they are booked.'}
             </EmptyState>
           ) : (
             <EmptyState icon={FiBookOpen} title={`No ${view === 'all' ? '' : `${view} `}trainings`}>
-              {view === 'completed' ? 'Finished sessions — with attendance and reviews — collect here.' : null}
             </EmptyState>
           )}
         </div>

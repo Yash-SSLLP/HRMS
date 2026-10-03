@@ -308,9 +308,6 @@ export default function ReportViewer() {
           <div className="rv-overlay">
             <div className="rv-spinner" aria-hidden="true" />
             <p className="text-sm font-medium text-gray-700">Building the report…</p>
-            <p className="text-xs text-gray-500 max-w-xs text-center">
-              A report with the bills attached can take a little while.
-            </p>
           </div>
         )}
 

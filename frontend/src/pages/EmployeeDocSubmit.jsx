@@ -149,9 +149,6 @@ export default function EmployeeDocSubmit() {
         <p className="docform-sub text-sm font-medium mt-1">
           {info.employee.name}{info.employee.employeeCode ? ` · ${info.employee.employeeCode}` : ''}
         </p>
-        <p className="text-sm text-gray-600 mt-3">
-          Attach each document below. You can preview every file before sending it.
-        </p>
       </div>
 
       {/* Wide screens get the bar above the grid; phones get the panel inside
@@ -252,9 +249,6 @@ export default function EmployeeDocSubmit() {
           <button type="submit" disabled={submitting} className="docform-submit w-full py-2.5 font-semibold">
             {submitting ? 'Submitting…' : 'Submit documents'}
           </button>
-          <p className="text-[11px] text-center text-gray-500 mt-1.5">
-            Sent straight to our HR team for verification.
-          </p>
         </div>
         </div>
       </form>

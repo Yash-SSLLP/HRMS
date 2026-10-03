@@ -13,10 +13,7 @@ import ApprovalsBoard from '../components/ApprovalsBoard';
 export default function EmployeeApprovals() {
   return (
     <div>
-      <PageHeader
-        title="Approvals"
-        subtitle="Requests from your team climbing the reporting hierarchy that are waiting on you."
-      />
+      <PageHeader title="Approvals" />
 
       <ApprovalsBoard />
     </div>

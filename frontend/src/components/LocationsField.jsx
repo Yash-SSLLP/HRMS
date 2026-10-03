@@ -13,7 +13,7 @@ import { useState } from 'react';
  * @param {(next: string[]) => void} props.onChange
  * @param {string} [props.hint] - replaces the default helper line under the box
  */
-export default function LocationsField({ value = [], onChange, hint }) {
+export default function LocationsField({ value = [], onChange }) {
   const [draft, setDraft] = useState('');
   const add = () => {
     const name = draft.trim();
@@ -50,11 +50,6 @@ export default function LocationsField({ value = [], onChange, hint }) {
         <button type="button" onClick={add} disabled={!draft.trim()}
           className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">Add</button>
       </div>
-      <p className="text-[11px] text-gray-500 mt-1">
-        {hint || (value.length > 1
-          ? 'Applicants choose one of these on the application form.'
-          : 'Add every place this role is open in — applicants then choose which one they are applying to.')}
-      </p>
     </div>
   );
 }

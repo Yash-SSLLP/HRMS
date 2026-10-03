@@ -39,7 +39,7 @@ const whenText = (d) => {
 // `showIntro`: the one-line explainer. The Recurring Tasks page (2026-09-28)
 // says it in its own header, so it switches this one off.
 export default function TaskRecurring({
-  viewOnly = false, isAdmin = false, onEdit, refreshKey = 0, showIntro = true,
+  viewOnly = false, isAdmin = false, onEdit, refreshKey = 0,
 }) {
   const me = useAuthStore((s) => s.user?._id);
   const [rows, setRows] = useState(null);
@@ -99,10 +99,7 @@ export default function TaskRecurring({
 
   return (
     <div className="space-y-4">
-      <div className={`flex flex-wrap items-center gap-3 ${!showIntro && !isAdmin ? 'hidden' : ''}`}>
-        <p className="min-w-0 flex-1 text-xs text-gray-500">
-          {showIntro ? 'Set it up once — each time it comes round it lands in their Tasks on its own. Daily ones are only marked done.' : ''}
-        </p>
+      <div className={`flex flex-wrap items-center justify-end gap-3 ${!isAdmin ? 'hidden' : ''}`}>
         {isAdmin && (
           <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1" role="tablist">
             {[['mine', 'Set by me'], ['all', 'Everyone’s']].map(([k, label]) => (
@@ -133,10 +130,6 @@ export default function TaskRecurring({
             <FiRepeat size={20} />
           </span>
           <p className="font-semibold text-gray-800">No recurring tasks yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-            The daily cash count, Friday’s report, the month-end stock take — set it up once, and each one lands in
-            their Tasks when it comes round.
-          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">

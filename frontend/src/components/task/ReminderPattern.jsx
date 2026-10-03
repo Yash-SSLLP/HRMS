@@ -198,7 +198,7 @@ export default function ReminderPattern({
           </div>
           {badWindow && (
             <p className="text-xs font-medium text-red-600">
-              “Until” has to be later than “From” — otherwise it goes between 9:00 AM and 9:00 PM.
+              “Until” has to be later than “From”.
             </p>
           )}
         </>
@@ -332,14 +332,13 @@ export default function ReminderPattern({
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900">{repeatingReminderText(value)}</p>
-            <p className="text-xs text-gray-500">
-              {pattern === 'HOURLY' && hourlyTimes(value, hints.firstBeatAfter) ? `At ${hourlyTimes(value, hints.firstBeatAfter)}. ` : ''}
-              Until it is done — it stops the moment they mark it done.
-            </p>
+            {pattern === 'HOURLY' && hourlyTimes(value, hints.firstBeatAfter) && (
+              <p className="text-xs text-gray-500">{`At ${hourlyTimes(value, hints.firstBeatAfter)}.`}</p>
+            )}
           </div>
         </div>
       ) : (
-        <p className="text-xs text-gray-500">No repeating reminder — nobody is chased on a timer.</p>
+        <p className="text-xs text-gray-500">No repeating reminder.</p>
       )}
     </div>
   );

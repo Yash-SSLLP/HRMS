@@ -4,10 +4,20 @@
  * via /employees, imports/exports via Excel/ZIP (/employees/import, /export*),
  * generates per-employee document-submission links (POST /employees/:id/doc-link),
  * and (SuperAdmin) activates accounts + toggles the include-executives org setting.
+ *
+ * 2026-10-03 premium pass (presentation only): KPI strip, one toolbar, and the
+ * directory as rich rows that re-flow by the list's own width. Styling: `.emp-*`
+ * in styles/pages/employees.css.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import {
+  FiSearch, FiX, FiPlus, FiDownload, FiArchive, FiFile, FiUpload, FiEdit2, FiTrash2, FiUserX, FiUserCheck,
+  FiLock, FiUsers, FiFileText, FiCreditCard, FiClock, FiAlertTriangle, FiFilter, FiArrowUp, FiArrowDown,
+  FiCheck, FiCopy, FiMail, FiUser, FiShield, FiEye, FiCheckCircle, FiAlertCircle, FiSkipForward,
+} from 'react-icons/fi';
+import '../styles/pages/employees.css';
 import api from '../api/client';
 import { downloadFile } from '../api/download';
 import { useAuthStore } from '../store/authStore';
@@ -19,6 +29,8 @@ import DepartmentSelect from '../components/DepartmentSelect';
 import { confirmDialog, promptDialog } from '../components/dialogs';
 import MailComposeModal from '../components/MailComposeModal';
 import SearchableSelect from '../components/SearchableSelect';
+import ToggleSwitch from '../components/ToggleSwitch';
+import { PersonAvatar } from '../components/permissions/permUi';
 import { peopleOptions, hasLeft, peopleOptionList } from '../utils/peopleOptions';
 import { ROLES, roleLabel } from '../config/roles';
 import { canAdministerEmployee, hasExplicitPermission, isEditingExec } from '../config/permissions';
@@ -204,33 +216,41 @@ const siteMatchesCompany = (loc, companyId) => {
 };
 
 /**
- * A column header you can click to sort by.
+ * A column label you can click to sort by (the list's header strip, wide
+ * screens only — narrower layouts sort from the toolbar's Sort select).
  *
  * The arrow shows only on the active column — an arrow on every header tells you
- * nothing about which one is in force. `aria-sort` carries the same fact to a
- * screen reader, which cannot see the glyph.
+ * nothing about which one is in force. `aria-sort` on the header cell (see
+ * `ariaSort` below) carries the same fact to a screen reader.
  */
-function SortHeader({ label, sortKey, sort, onSort, align = 'left' }) {
+function SortHeader({ label, sortKey, sort, onSort }) {
   const active = sort.key === sortKey;
   return (
-    <th
-      className={`px-4 py-3 text-${align} font-medium text-gray-700`}
-      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      title={`Sort by ${label.toLowerCase()}`}
+      className={`emp-sort${active ? ' is-on' : ''}`}
     >
-      <button
-        type="button"
-        onClick={() => onSort(sortKey)}
-        title={`Sort by ${label.toLowerCase()}`}
-        className={`inline-flex items-center gap-1 hover:text-gray-900 ${active ? 'text-gray-900' : ''}`}
-      >
-        {label}
-        <span className={`text-[10px] leading-none ${active ? 'accent-text' : 'text-gray-300'}`} aria-hidden="true">
-          {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
-        </span>
-      </button>
-    </th>
+      {label}
+      <span className="emp-sort-arrow" aria-hidden="true">
+        {active && sort.dir === 'asc' ? <FiArrowUp size={11} /> : <FiArrowDown size={11} />}
+      </span>
+    </button>
   );
 }
+
+/** `aria-sort` for a header cell holding one or more of the sort keys. */
+const ariaSort = (sort, ...keys) => (
+  keys.includes(sort.key) ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'
+);
+
+/** "03 Oct 2026, 2:15 PM" → ['03 Oct 2026', '2:15 PM'], so a cell can stack them. */
+const whenParts = (d) => {
+  const s = formatDateTime12(d);
+  const i = s.lastIndexOf(', ');
+  return i > 0 ? [s.slice(0, i), s.slice(i + 2)] : [s, ''];
+};
 
 export default function AdminEmployees() {
   // A view-only account reads the directory and edits nobody. Template and the
@@ -735,7 +755,7 @@ export default function AdminEmployees() {
         title: 'Email document submission link',
         link: data.link,
         sendLabel: 'Send link',
-        note: "Review and edit the message below · it's emailed from the company mailbox.",
+        note: "Review and edit the message before it is sent.",
         defaultSubject: data.subject,
         defaultBody: data.body,
         showCc: true,
@@ -985,6 +1005,14 @@ This cannot be undone.`,
     (u) => !PROFILE_INELIGIBLE_ROLES.includes(u.role) && !userHasProfile(u, profiles)
   ), [allUsers, profiles]);
 
+  // Profile photos for the directory's avatars. GET /employees populates the
+  // user without `photo`; the user directory loaded alongside it carries it, so
+  // the row's avatar is a lookup, not another request for data.
+  const photoOf = useMemo(
+    () => new Map(allUsers.map((u) => [String(u._id), u.photo || null])),
+    [allUsers]
+  );
+
   // The <option> lists the editor modal's people pickers hand to
   // SearchableSelect. They are built here, not inline in the JSX, for the same
   // reason: typing one character into any field of the modal used to rebuild
@@ -1136,6 +1164,23 @@ This cannot be undone.`,
     });
   }, [profiles, query, filters, docStatus, sort, tab]);
 
+  // KPI strip, counted over the tab on screen — so the number on a card is what
+  // its filter shows before any other filter narrows it. The tests are the same
+  // ones the Documents and Bank filters apply above.
+  const kpi = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 86400000;
+    let docs = 0;
+    let bank = 0;
+    let recent = 0;
+    for (const p of profiles) {
+      if (hasLeft(p) !== (tab === 'exited')) continue;
+      if (!docStatus[String(p._id)]?.complete) docs += 1;
+      if (bankState(p).rank !== 2) bank += 1;
+      if ((lastUpdatedAt(p)?.getTime() || 0) >= weekAgo) recent += 1;
+    }
+    return { docs, bank, recent };
+  }, [profiles, docStatus, tab]);
+
   // What the employee declared instead of filing, in words. An experience letter
   // that is absent because they said it is their first job is a different fact
   // from one nobody has chased, and the badge should not read the same for both.
@@ -1146,266 +1191,346 @@ This cannot be undone.`,
     return said.length ? `Declared: ${said.join('; ')}` : '';
   };
 
-  // `label` works as on bankBadge below: the phone cards show both chips side by
-  // side with no header over them, so each says which one it is.
-  const docBadge = (p, label = '') => {
+  // Each chip carries an `emp-k` word ("Docs ·", "Bank ·") that the stylesheet
+  // shows only where no column header says what the chip is about (the narrower
+  // card layouts), so it cannot be mistaken for the chip beside it.
+  const docBadge = (p) => {
     const s = docStatus[String(p._id)];
-    if (!s) return <span className="text-xs text-gray-400">-</span>;
+    if (!s) return <span className="emp-dash">-</span>;
     const declared = declaredNote(s);
-    const prefix = label ? `${label} · ` : '';
     if (s.complete) {
       return (
-        <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-green-100 text-green-800"
+        <span className="pb-tag is-in emp-tag"
           title={[s.verified ? 'Marked all-submitted by HR' : 'All required documents accounted for', declared].filter(Boolean).join(' · ')}>
-          {prefix}Complete{s.verified ? ' ✓' : ''}
+          <FiFileText size={11} aria-hidden="true" />
+          <span className="emp-k">Docs ·</span>
+          Complete
+          {s.verified && <FiCheck size={11} aria-label="verified" />}
         </span>
       );
     }
     return (
-      <span className="inline-block px-2 py-0.5 text-xs rounded-lg bg-red-100 text-red-800"
+      <span className="pb-tag is-absent emp-tag"
         title={[`Missing: ${s.missing.map((c) => docLabel(c)).join(', ')}`, declared].filter(Boolean).join(' · ')}>
-        {prefix}Incomplete ({s.missing.length})
+        <FiFileText size={11} aria-hidden="true" />
+        <span className="emp-k">Docs ·</span>
+        Incomplete
+        <span className="emp-n">{s.missing.length}</span>
       </span>
     );
   };
   // Green complete, amber partly filled, red nothing at all — the last is the one
-  // that stops a salary going out. `label` prefixes the chip where no column
-  // header says what it is about (the phone cards), so it cannot be mistaken for
-  // the Documents chip beside it.
-  const bankBadge = (p, label = '') => {
+  // that stops a salary going out.
+  const bankBadge = (p) => {
     const s = bankState(p);
-    const [cls, text, title] = s.rank === 2
-      ? ['bg-green-100 text-green-800', 'Complete', `Bank details complete${s.summary ? ` · ${s.summary}` : ''}`]
+    const [tone, text, title, n] = s.rank === 2
+      ? ['is-in', 'Complete', `Bank details complete${s.summary ? ` · ${s.summary}` : ''}`, 0]
       : s.rank === 1
-        ? ['bg-amber-100 text-amber-800', `Incomplete (${s.missing.length})`, `Missing: ${s.missing.join(', ')}`]
-        : ['bg-red-100 text-red-800', 'Not added', 'No bank details on record yet'];
+        ? ['is-late', 'Incomplete', `Missing: ${s.missing.join(', ')}`, s.missing.length]
+        : ['is-absent', 'Not added', 'No bank details on record yet', 0];
     return (
-      <span className={`inline-block px-2 py-0.5 text-xs rounded-lg whitespace-nowrap ${cls}`} title={title}>
-        {label ? `${label} · ` : ''}{text}
+      <span className={`pb-tag ${tone} emp-tag`} title={title}>
+        <FiCreditCard size={11} aria-hidden="true" />
+        <span className="emp-k">Bank ·</span>
+        {text}
+        {n > 0 && <span className="emp-n">{n}</span>}
       </span>
     );
   };
   const statusBadge = (p) =>
     String(p.user?._id || '') === myId ? (
-      <span className="text-xs text-gray-400">-</span>
+      <span className="emp-dash">-</span>
     ) : (
-      <span className={`inline-block px-2 py-0.5 text-xs rounded-lg ${p.user?.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-700'}`}>
+      <span className={`rst-status emp-status${p.user?.isActive ? ' is-on' : ''}`}>
         {p.user?.isActive ? 'Active' : 'Inactive'}
       </span>
     );
-  const rowActions = (p) => (
-    <>
-      <button onClick={() => downloadFile(`/employees/${p._id}/export.zip`, `${p.employeeCode || 'employee'}.zip`)}
-        className="text-gray-700 hover:underline" title="Download all documents + details as a ZIP">ZIP</button>
-      {isSuperAdmin && String(p.user?._id || '') !== myId && (
-        <button onClick={() => toggleActive(p)} className="text-amber-600 hover:underline">
-          {p.user?.isActive ? 'Deactivate' : 'Activate'}
+  // Edit leads (the everyday verb); ZIP, activate/deactivate and delete are icon
+  // buttons — same handlers and the same gates as the old text links. A Super
+  // Admin's OWN row has no activate button, so a same-width spacer stands in for
+  // it and the Edit buttons stay in one column down the list.
+  const rowActions = (p) => {
+    const own = String(p.user?._id || '') === myId;
+    const active = !!p.user?.isActive;
+    return (
+      <>
+        {canEditProfile(p) ? (
+          <button type="button" onClick={() => openEdit(p)} className="trn-btn emp-edit">
+            <FiEdit2 size={13} aria-hidden="true" /> Edit
+          </button>
+        ) : (
+          <span className="trn-btn emp-edit is-locked" title={noEditReason(p)} aria-disabled="true">
+            <FiLock size={12} aria-hidden="true" /> Edit
+          </span>
+        )}
+        <button type="button"
+          onClick={() => downloadFile(`/employees/${p._id}/export.zip`, `${p.employeeCode || 'employee'}.zip`)}
+          className="trn-icon-btn emp-ib is-zip" title="Download all documents + details as a ZIP" aria-label="Download ZIP">
+          <FiDownload size={15} />
         </button>
-      )}
-      {canEditProfile(p) ? (
-        <button onClick={() => openEdit(p)} className="text-blue-600 hover:underline">Edit</button>
-      ) : (
-        <span className="text-gray-400 cursor-not-allowed" title={noEditReason(p)}>Edit</span>
-      )}
-      {!viewOnly && <button onClick={() => onDelete(p)} className="text-red-600 hover:underline">Delete</button>}
-    </>
-  );
+        {isSuperAdmin && !own && (
+          <button type="button" onClick={() => toggleActive(p)}
+            className={`trn-icon-btn emp-ib ${active ? 'is-warn' : 'is-ok'}`}
+            title={active ? 'Deactivate' : 'Activate'} aria-label={active ? 'Deactivate' : 'Activate'}>
+            {active ? <FiUserX size={15} /> : <FiUserCheck size={15} />}
+          </button>
+        )}
+        {isSuperAdmin && own && <span className="emp-ib-ph" aria-hidden="true" />}
+        {!viewOnly && (
+          <button type="button" onClick={() => onDelete(p)} className="trn-icon-btn emp-ib is-danger"
+            title="Delete" aria-label="Delete">
+            <FiTrash2 size={15} />
+          </button>
+        )}
+      </>
+    );
+  };
+  // Icon buttons a row can hold — sizes the actions column so every row's
+  // grid lines up (see --emp-n in employees.css).
+  const actionSlots = 1 + (isSuperAdmin ? 1 : 0) + (viewOnly ? 0 : 1);
+
+  // KPI cards that double as filters: a second click clears them again.
+  const toggleKpiFilter = (key, value) => setFilter(key, filters[key] === value ? '' : value);
+
+  // Skeletons on the FIRST load only: a reload after a save or an import keeps
+  // the rows on screen rather than blanking the directory.
+  const firstLoad = loading && profiles.length === 0;
 
   return (
     <div>
       <PageHeader title="Employee Profiles" subtitle={`${profiles.length} profile(s)`}>
-        <button
-          onClick={() => downloadFile('/employees/export.xlsx', 'employees.xlsx')}
-          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-          title="Download all employees as an Excel file"
-        >
-          Export Excel
-        </button>
-        {isSuperAdmin && (
+        {/* The file actions as one joined group; Add Profile is the primary
+            action beside it. */}
+        <div className="emp-tools" role="group" aria-label="Excel and ZIP">
           <button
-            onClick={() => downloadFile('/employees/export-all.zip', 'all-employees.zip')}
-            className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-            title="Download a ZIP of every employee's documents + details"
+            type="button"
+            onClick={() => downloadFile('/employees/export.xlsx', 'employees.xlsx')}
+            className="emp-tool"
+            title="Download all employees as an Excel file"
           >
-            Download All (ZIP)
+            <FiDownload size={14} aria-hidden="true" /> Export Excel
           </button>
-        )}
-        <button
-          onClick={() => downloadFile('/employees/template.xlsx', 'employee-import-template.xlsx')}
-          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-          title="Download the blank import template"
-        >
-          Template
-        </button>
+          {isSuperAdmin && (
+            <button
+              type="button"
+              onClick={() => downloadFile('/employees/export-all.zip', 'all-employees.zip')}
+              className="emp-tool"
+              title="Download a ZIP of every employee's documents + details"
+            >
+              <FiArchive size={14} aria-hidden="true" /> Download All (ZIP)
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => downloadFile('/employees/template.xlsx', 'employee-import-template.xlsx')}
+            className="emp-tool"
+            title="Download the blank import template"
+          >
+            <FiFile size={14} aria-hidden="true" /> Template
+          </button>
+          {!viewOnly && (
+            <button type="button" onClick={() => setShowImportModal(true)} className="emp-tool">
+              <FiUpload size={14} aria-hidden="true" /> Import Excel
+            </button>
+          )}
+        </div>
         {!viewOnly && (
-        <button
-          onClick={() => setShowImportModal(true)}
-          className="px-3 py-2 border rounded-lg hover:bg-gray-50 text-sm"
-        >
-          Import Excel
-        </button>
-        )}
-        {!viewOnly && (
-        <button
-          onClick={openCreate}
-          className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-700 text-sm"
-        >
-          + Add Profile
-        </button>
+          <button type="button" onClick={openCreate} className="trn-btn is-primary accent-bg text-white">
+            <FiPlus size={15} aria-hidden="true" /> Add Profile
+          </button>
         )}
       </PageHeader>
 
-      {/* ── Working · Exited ──────────────────────────────────
-          The same tab shape the rest of the portal uses. Weight and the border
-          live on the BASE class, so picking one cannot re-measure the strip. */}
-      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-gray-200">
-        {[
-          ['working', 'Working', profiles.length - exitedCount],
-          ['exited', 'Exited', exitedCount],
-        ].map(([key, label, count]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className={`min-h-[40px] -mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 text-sm font-medium transition ${
-              tab === key
-                ? 'accent-border accent-text'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {label}
-            <span className="rounded-lg bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-600">
-              {count}
+      {/* ── KPI strip ─────────────────────────────────────────
+          Counted over the tab on screen. The two gaps HR chases (documents,
+          bank) are buttons that set the same filters as the selects in the
+          toolbar; a second click clears them. */}
+      <div className="trn-kpis emp-kpis">
+        <div className="trn-kpi" style={{ '--kpi-hue': tab === 'exited' ? '#64748b' : '#16a34a' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiUsers size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{firstLoad ? '—' : tabTotal}</span>
+            <span className="trn-kpi-label block">{tab === 'exited' ? 'Exited' : 'Working'}</span>
+            <span className="trn-kpi-sub block">
+              {firstLoad ? '' : tab === 'exited' ? `${profiles.length - exitedCount} working` : `${exitedCount} exited`}
             </span>
-          </button>
-        ))}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => toggleKpiFilter('documents', 'incomplete')}
+          aria-pressed={filters.documents === 'incomplete'}
+          className={`trn-kpi pb-kpi${filters.documents === 'incomplete' ? ' is-on' : ''}`}
+          style={{ '--kpi-hue': '#dc2626' }}
+          title="Show only incomplete documents"
+        >
+          <span className="trn-kpi-icon" aria-hidden="true"><FiFileText size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{firstLoad ? '—' : kpi.docs}</span>
+            <span className="trn-kpi-label block">Docs incomplete</span>
+            <span className="trn-kpi-sub block">{firstLoad ? '' : `${tabTotal - kpi.docs} complete`}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => toggleKpiFilter('bank', 'missing')}
+          aria-pressed={filters.bank === 'missing'}
+          className={`trn-kpi pb-kpi${filters.bank === 'missing' ? ' is-on' : ''}`}
+          style={{ '--kpi-hue': '#d97706' }}
+          title="Show only missing bank details"
+        >
+          <span className="trn-kpi-icon" aria-hidden="true"><FiCreditCard size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{firstLoad ? '—' : kpi.bank}</span>
+            <span className="trn-kpi-label block">Bank missing</span>
+            <span className="trn-kpi-sub block">{firstLoad ? '' : `${tabTotal - kpi.bank} complete`}</span>
+          </span>
+        </button>
+        <div className="trn-kpi" style={{ '--kpi-hue': '#6366f1' }}>
+          <span className="trn-kpi-icon" aria-hidden="true"><FiClock size={19} /></span>
+          <span className="min-w-0">
+            <span className="trn-kpi-value block">{firstLoad ? '—' : kpi.recent}</span>
+            <span className="trn-kpi-label block">Updated recently</span>
+            <span className="trn-kpi-sub block">Last 7 days</span>
+          </span>
+        </div>
       </div>
 
-      {/* An import never refuses a row for naming something new — it creates
-          what it safely can and says so here. Amber, not red: nothing is
-          broken, but somebody should look. */}
-      {flags.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-          <div className="text-sm min-w-0 grow basis-64">
-            <div className="font-medium text-amber-900">
-              {flags.length === 1
-                ? 'One imported value needs a check'
-                : `${flags.length} imported values need a check`}
+      {(flags.length > 0 || isSuperAdmin) && (
+        <div className="emp-strip">
+          {/* An import never refuses a row for naming something new — it
+              creates what it safely can and says so here. Amber, not red:
+              nothing is broken, but somebody should look. */}
+          {flags.length > 0 && (
+            <div className="emp-notice">
+              <span className="emp-ico" style={{ '--hue': '#d97706' }} aria-hidden="true"><FiAlertTriangle size={16} /></span>
+              <span className="emp-notice-text">
+                {flags.length === 1
+                  ? 'One imported value needs a check'
+                  : `${flags.length} imported values need a check`}
+              </span>
+              {!viewOnly && (
+                <button type="button" onClick={() => setShowFlags(true)} className="trn-btn emp-amber">
+                  Review
+                </button>
+              )}
             </div>
-            <div className="text-xs text-amber-800 mt-0.5">
-              The Excel import created these or could not match them. The employees were imported either way.
+          )}
+
+          {/* SuperAdmin-only org preference, as a setting row. */}
+          {isSuperAdmin && (
+            <div className="emp-setting">
+              <span className="emp-ico" aria-hidden="true"><FiEye size={16} /></span>
+              <span className="emp-setting-text" title="When off, CEO and MD are hidden from employee pick-lists.">
+                Include CEO &amp; MD in employee selection lists
+              </span>
+              <ToggleSwitch
+                checked={execIncluded}
+                onChange={toggleExecIncluded}
+                busy={execBusy}
+                label="Include CEO & MD in employee selection lists"
+                title={execIncluded ? 'CEO & MD are shown in employee lists' : 'CEO & MD are hidden from employee lists'}
+              />
             </div>
-          </div>
-          {!viewOnly && (
-          <button
-            type="button"
-            onClick={() => setShowFlags(true)}
-            className="ml-auto px-3 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 shrink-0"
-          >
-            Review
-          </button>
           )}
         </div>
       )}
 
-      {isSuperAdmin && (
-        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3">
-          <div className="text-sm">
-            <div className="font-medium text-gray-800">Include CEO &amp; MD in employee selection lists</div>
-            <div className="text-xs text-gray-500 mt-0.5">
-              When off, CEO and MD are hidden from the “select an employee” dropdowns (attendance, payroll, loans, onboarding, etc.).
-              They always remain in user management, the org chart, and manager selectors.
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={execIncluded}
-            disabled={execBusy}
-            onClick={toggleExecIncluded}
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-              execIncluded ? 'bg-indigo-600' : 'bg-gray-300'
-            } ${execBusy ? 'opacity-60 cursor-wait' : ''}`}
-            title={execIncluded ? 'CEO & MD are shown in employee lists' : 'CEO & MD are hidden from employee lists'}
-          >
-            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-              execIncluded ? 'translate-x-5' : 'translate-x-1'
-            }`} />
-          </button>
-        </div>
-      )}
-
       {error && (
-        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
+        <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2.5 rounded-xl">{error}</div>
       )}
 
-      {/* ---------------- Search + filters ---------------- */}
-      <div className="bg-white shadow rounded-lg px-4 py-3.5 mb-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* A real form, so Enter submits and the button is not decoration. */}
-          <form
-            onSubmit={(e) => { e.preventDefault(); setQuery(search); }}
-            className="flex items-center gap-2 flex-1 min-w-[16rem]"
-          >
-            <div className="relative flex-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  // Emptying the box restores the full list straight away —
-                  // making somebody press Search to see everything again is
-                  // the kind of small rudeness that makes a filter feel broken.
-                  if (!e.target.value) setQuery('');
-                }}
-                placeholder="Search name, code, email, designation, PAN…"
-                aria-label="Search employees"
-                className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm"
-              />
-            </div>
-            <button type="submit" className="px-4 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 shrink-0">
-              Search
+      {/* ── One toolbar: Working · Exited, search, then filters + sort ── */}
+      <div className="pb-toolbar emp-toolbar">
+        {/* Working vs Exited — paint-only selection, so picking one never
+            re-measures the strip. */}
+        <div className="trn-seg" role="tablist" aria-label="Show">
+          {[
+            ['working', 'Working', profiles.length - exitedCount],
+            ['exited', 'Exited', exitedCount],
+          ].map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`trn-seg-btn${tab === key ? ' is-on' : ''}`}
+            >
+              {label} <span className="trn-seg-count">{count}</span>
             </button>
-          </form>
+          ))}
+        </div>
 
+        {/* A real form, so Enter submits and the button is not decoration. */}
+        <form
+          onSubmit={(e) => { e.preventDefault(); setQuery(search); }}
+          className="pb-toolbar-end emp-search"
+        >
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" aria-hidden="true" />
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                // Emptying the box restores the full list straight away —
+                // making somebody press Search to see everything again is
+                // the kind of small rudeness that makes a filter feel broken.
+                if (!e.target.value) setQuery('');
+              }}
+              placeholder="Search name, code, email, designation, PAN…"
+              aria-label="Search employees"
+            />
+            {search && (
+              <button type="button" onClick={() => { setSearch(''); setQuery(''); }}
+                aria-label="Clear search" className="emp-clear">
+                <FiX size={14} />
+              </button>
+            )}
+          </label>
+          <button type="submit" className="trn-btn">Search</button>
+        </form>
+
+        <div className="emp-filters">
+          <FiFilter size={14} className="emp-filters-ico" aria-hidden="true" />
           <select value={filters.department} onChange={(e) => setFilter('department', e.target.value)}
-            aria-label="Filter by department" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            aria-label="Filter by department" className="trn-select">
             <option value="">All departments</option>
             {departmentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
 
           {companyOptions.length > 1 && (
             <select value={filters.company} onChange={(e) => setFilter('company', e.target.value)}
-              aria-label="Filter by company" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+              aria-label="Filter by company" className="trn-select">
               <option value="">All companies</option>
               {companyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           )}
 
           <select value={filters.status} onChange={(e) => setFilter('status', e.target.value)}
-            aria-label="Filter by status" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            aria-label="Filter by status" className="trn-select">
             <option value="">Any status</option>
             <option value="true">Active</option>
             <option value="false">Inactive</option>
           </select>
 
           <select value={filters.documents} onChange={(e) => setFilter('documents', e.target.value)}
-            aria-label="Filter by document completeness" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            aria-label="Filter by document completeness" className="trn-select">
             <option value="">Any documents</option>
             <option value="complete">Documents complete</option>
             <option value="incomplete">Documents incomplete</option>
           </select>
 
           <select value={filters.bank} onChange={(e) => setFilter('bank', e.target.value)}
-            aria-label="Filter by bank details" className="border rounded-lg px-3 py-2 text-sm text-gray-700">
+            aria-label="Filter by bank details" className="trn-select">
             <option value="">Any bank details</option>
             <option value="complete">Bank details complete</option>
             <option value="missing">Bank details missing</option>
           </select>
 
           {/* The same sort the column headers drive. It lives here as well
-              because the phone/tablet view is a card list with no headers to
-              click — without this, sorting would be desktop-only. */}
+              because the narrower layouts are cards with no headers to click
+              — without this, sorting would be wide-screen-only. */}
           <select
             value={sort.key ? `${sort.key}:${sort.dir}` : ''}
             onChange={(e) => {
@@ -1413,7 +1538,7 @@ This cannot be undone.`,
               setSort(key ? { key, dir } : { key: '', dir: 'asc' });
             }}
             aria-label="Sort by"
-            className="border rounded-lg px-3 py-2 text-sm text-gray-700"
+            className="trn-select"
           >
             <option value="">Sort: recently added</option>
             <option value="name:asc">Name A–Z</option>
@@ -1429,13 +1554,13 @@ This cannot be undone.`,
             <option value="status:asc">Status — inactive first</option>
           </select>
 
-          <div className="flex items-center gap-3 ml-auto shrink-0">
+          <div className="emp-filters-end">
             {activeFilterCount > 0 && (
-              <button type="button" onClick={clearFilters} className="text-xs text-gray-600 hover:underline">
+              <button type="button" onClick={clearFilters} className="emp-clear-btn">
                 Clear {activeFilterCount === 1 ? 'filter' : 'filters'}
               </button>
             )}
-            <span className="text-xs text-gray-500 whitespace-nowrap">
+            <span className="emp-count">
               {loading ? 'Loading…'
                 : visibleProfiles.length === tabTotal
                   ? `${tabTotal} ${tabTotal === 1 ? 'profile' : 'profiles'}`
@@ -1445,126 +1570,129 @@ This cannot be undone.`,
         </div>
       </div>
 
-      {/* Desktop: table */}
-      <div className="hidden lg:block bg-white shadow rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <SortHeader label="Code" sortKey="code" sort={sort} onSort={toggleSort} />
+      {/* ── The directory: one rich row per person ────────────
+          One markup, three layouts chosen by the list's OWN width (container
+          queries in employees.css): wide = aligned columns under a sortable
+          header strip; medium = who | chips | actions; narrow = a stacked
+          card. The whole row opens the employee; the actions cell stops the
+          click so Edit / ZIP / Delete still do their own thing. */}
+      <div className="emp-wrap" style={{ '--emp-n': actionSlots }}>
+        <div className="emp-list" role="table" aria-label="Employee profiles">
+          <div className="emp-head" role="row">
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'name', 'code')}>
               <SortHeader label="Name" sortKey="name" sort={sort} onSort={toggleSort} />
+              <SortHeader label="Code" sortKey="code" sort={sort} onSort={toggleSort} />
+            </div>
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'designation')}>
               <SortHeader label="Designation" sortKey="designation" sort={sort} onSort={toggleSort} />
-              {/* PAN is an identifier nobody scans in order — no sort. */}
-              <th className="px-4 py-3 text-left font-medium text-gray-700">PAN</th>
-              <SortHeader label="Bank" sortKey="bank" sort={sort} onSort={toggleSort} />
+            </div>
+            {/* PAN is an identifier nobody scans in order — no sort. */}
+            <div className="emp-h" role="columnheader"><span className="emp-h-plain">PAN</span></div>
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'documents')}>
               <SortHeader label="Documents" sortKey="documents" sort={sort} onSort={toggleSort} />
+            </div>
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'bank')}>
+              <SortHeader label="Bank" sortKey="bank" sort={sort} onSort={toggleSort} />
+            </div>
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'status')}>
               <SortHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+            </div>
+            <div className="emp-h" role="columnheader" aria-sort={ariaSort(sort, 'updated')}>
               <SortHeader label="Last update" sortKey="updated" sort={sort} onSort={toggleSort} />
-              <th className="px-4 py-3 text-right font-medium text-gray-700">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading ? (
-              <tr><td colSpan={9} className="px-4 py-4"><div className="space-y-2.5"><div className="skeleton h-4 rounded" /><div className="skeleton h-4 rounded w-5/6" /><div className="skeleton h-4 rounded w-2/3" /></div></td></tr>
-            ) : visibleProfiles.length === 0 ? (
-              // "No profiles yet" is wrong when a filter is what emptied the
-              // table — it reads as data loss rather than as a narrow search.
-              <tr><td colSpan={9} className="px-4 py-6 text-center text-gray-500">
-                {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
-              </td></tr>
-            ) : visibleProfiles.map((p) => (
-              // The whole row opens the employee — the record was previously
-              // only reachable through global search. The action buttons stop
-              // the click so Edit/Delete still do their own thing.
-              <tr key={p._id} onClick={() => navigate(`/admin/employees/${p._id}`)}
-                className="cursor-pointer hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 font-mono text-xs">{p.employeeCode}</td>
-                <td className="px-4 py-3">
-                  <span className="text-gray-900 hover:underline">{p.user?.firstName} {p.user?.lastName}</span>
-                  <div className="text-xs text-gray-500">{p.user?.email}</div>
-                </td>
-                <td className="px-4 py-3">{p.designation || '-'}<div className="text-xs text-gray-500">{p.department || ''}</div></td>
-                <td className="px-4 py-3 font-mono text-xs">{p.pan || '-'}</td>
-                <td className="px-4 py-3">
-                  {bankBadge(p)}
-                  {bankState(p).summary ? (
-                    <div className="text-xs text-gray-500 mt-1 max-w-[11rem] truncate" title={bankState(p).summary}>
-                      {bankState(p).summary}
-                    </div>
-                  ) : null}
-                </td>
-                <td className="px-4 py-3">{docBadge(p)}</td>
-                <td className="px-4 py-3">{statusBadge(p)}</td>
-                {/* Date AND time, 12-hour per the portal convention — "last
-                    updated" is only useful if you can tell two edits apart on
-                    the same day. */}
-                <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-600">
-                  {lastUpdatedAt(p) ? formatDateTime12(lastUpdatedAt(p)) : <span className="text-gray-400">-</span>}
-                </td>
-                {/* One line, always: as inline buttons the cell wrapped Delete
-                    onto a line of its own. The cell's 20rem cap is lifted —
-                    four buttons need about that much on their own — so the
-                    table gives this column its width and the free-text columns
-                    wrap instead. */}
-                <td className="px-4 py-3 !max-w-none" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">{rowActions(p)}</div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </div>
+            <div className="emp-h is-end" role="columnheader"><span className="sr-only">Actions</span></div>
+          </div>
 
-      {/* Phone + tablet: card list (a wide 7-column table only scrolls sideways here) */}
-      <div className="lg:hidden space-y-3">
-        {loading ? (
-          <div className="bg-white shadow rounded-lg p-4 space-y-2"><div className="skeleton h-4 rounded w-1/2" /><div className="skeleton h-4 rounded w-2/3" /></div>
-        ) : visibleProfiles.length === 0 ? (
-          <div className="bg-white shadow rounded-lg p-6 text-center text-gray-500">
-            {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
-          </div>
-        ) : visibleProfiles.map((p) => (
-          // rounded-lg, not -xl: these cards stack directly under the filter bar
-          // in one scroll column, and a 4px corner difference between two white
-          // `shadow` surfaces of the same width reads as a rendering glitch.
-          <div key={p._id} className="bg-white shadow rounded-lg p-4">
-            <div className="flex items-start justify-between gap-2">
-              {/* Same target as the desktop row: tapping the name opens the
-                  record; the action buttons below keep their own handlers. */}
-              <div className="min-w-0 cursor-pointer" onClick={() => navigate(`/admin/employees/${p._id}`)}>
-                <div className="font-semibold text-gray-900 truncate hover:underline">{p.user?.firstName} {p.user?.lastName}</div>
-                <div className="text-xs text-gray-500 truncate">{p.user?.email}</div>
+          {firstLoad ? (
+            [0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="emp-skel" aria-hidden="true">
+                <span className="skeleton emp-skel-av" />
+                <span className="emp-skel-lines">
+                  <span className="skeleton emp-skel-l1" />
+                  <span className="skeleton emp-skel-l2" />
+                </span>
+                <span className="skeleton emp-skel-chip" />
               </div>
-              <span className="shrink-0 font-mono text-[11px] text-gray-500 mt-0.5">{p.employeeCode}</span>
+            ))
+          ) : visibleProfiles.length === 0 ? (
+            // "No profiles yet" is wrong when a filter is what emptied the
+            // list — it reads as data loss rather than as a narrow search.
+            <div className="trn-empty">
+              <span className="trn-empty-icon"><FiUsers size={24} /></span>
+              <p className="text-sm font-semibold">
+                {profiles.length === 0 ? 'No profiles yet' : 'Nobody matches these filters'}
+              </p>
             </div>
-            <div className="mt-2 text-sm text-gray-700">
-              {p.designation || '-'}{p.department ? <span className="text-gray-400"> · {p.department}</span> : null}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {docBadge(p, 'Docs')}
-              {bankBadge(p, 'Bank')}
-              {statusBadge(p)}
-              {p.pan ? <span className="font-mono text-[11px] text-gray-500">PAN {p.pan}</span> : null}
-            </div>
-            {lastUpdatedAt(p) && (
-              <div className="mt-2 text-[11px] text-gray-400">Updated {formatDateTime12(lastUpdatedAt(p))}</div>
-            )}
-            <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-2 text-sm">
-              {rowActions(p)}
-            </div>
-          </div>
-        ))}
+          ) : visibleProfiles.map((p) => {
+            // Date AND time, 12-hour per the portal convention — "last
+            // updated" is only useful if you can tell two edits apart on the
+            // same day.
+            const updated = lastUpdatedAt(p);
+            const [updDay, updTime] = updated ? whenParts(updated) : ['', ''];
+            const bank = bankState(p);
+            return (
+              <div key={p._id} role="row" className="emp-row" onClick={() => navigate(`/admin/employees/${p._id}`)}>
+                <div className="emp-c emp-c-who" role="cell">
+                  <PersonAvatar user={{ ...p.user, photo: photoOf.get(String(p.user?._id || '')) }} />
+                  <div className="min-w-0">
+                    <div className="emp-name">
+                      <span className="emp-name-text">{p.user?.firstName} {p.user?.lastName}</span>
+                      {p.employeeCode && <span className="emp-code">{p.employeeCode}</span>}
+                    </div>
+                    <div className="emp-mail">{p.user?.email}</div>
+                  </div>
+                </div>
+                <div className="emp-c emp-c-role" role="cell">
+                  <span className="emp-desig">{p.designation || '-'}</span>
+                  {p.department && <span className="emp-dept">{p.department}</span>}
+                </div>
+                {/* PAN, documents, bank, status and last update: their own
+                    columns on a wide list, one wrapping chip row otherwise. */}
+                <div className="emp-recs">
+                  <div className={`emp-c emp-c-pan${p.pan ? '' : ' is-empty'}`} role="cell">
+                    {p.pan
+                      ? <span className="emp-pan"><span className="emp-k">PAN</span>{p.pan}</span>
+                      : <span className="emp-dash">-</span>}
+                  </div>
+                  <div className="emp-c emp-c-docs" role="cell">{docBadge(p)}</div>
+                  <div className="emp-c emp-c-bank" role="cell">
+                    {bankBadge(p)}
+                    {bank.summary ? <span className="emp-bank-sum" title={bank.summary}>{bank.summary}</span> : null}
+                  </div>
+                  <div className="emp-c emp-c-status" role="cell">{statusBadge(p)}</div>
+                  <div className={`emp-c emp-c-when${updated ? '' : ' is-empty'}`} role="cell">
+                    {updated ? (
+                      <>
+                        <span className="emp-k">Updated</span>
+                        <span className="emp-when-d">{updDay}</span>
+                        {updTime && <span className="emp-when-t">{updTime}</span>}
+                      </>
+                    ) : <span className="emp-dash">-</span>}
+                  </div>
+                </div>
+                <div className="emp-c emp-c-act" role="cell" onClick={(e) => e.stopPropagation()}>
+                  {rowActions(p)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-3xl p-6">
-            <h2 className="card-title mb-4">
-              {editingId ? 'Edit Employee Profile' : 'Create Employee Profile'}
-            </h2>
-            <form onSubmit={onSave} className="space-y-3">
+            <div className="emp-modal-head">
+              <h2 className="card-title">
+                {editingId ? 'Edit Employee Profile' : 'Create Employee Profile'}
+              </h2>
+              <button type="button" onClick={() => setShowModal(false)} aria-label="Close" title="Close"
+                className="topbar-icon-btn shrink-0">×</button>
+            </div>
+            <form onSubmit={onSave} className="space-y-3 emp-form">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">User account *</label>
+                  <label className="prm-label">User account *</label>
                   <SearchableSelect
                     required
                     disabled={!!editingId}
@@ -1575,7 +1703,7 @@ This cannot be undone.`,
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Employee Code *</label>
+                  <label className="prm-label">Employee Code *</label>
                   <input
                     required
                     value={form.employeeCode}
@@ -1595,7 +1723,7 @@ This cannot be undone.`,
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Date of Joining *</label>
+                  <label className="prm-label">Date of Joining *</label>
                   <input
                     type="date" required
                     value={form.dateOfJoining}
@@ -1604,7 +1732,7 @@ This cannot be undone.`,
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Employment Type</label>
+                  <label className="prm-label">Employment Type</label>
                   <select
                     value={form.employmentType}
                     onChange={(e) => setForm({ ...form, employmentType: e.target.value })}
@@ -1618,7 +1746,7 @@ This cannot be undone.`,
                     creating picks an existing account that already has one. */}
                 {editingId && (
                   <div>
-                    <label className="block text-sm text-gray-700">Role</label>
+                    <label className="prm-label">Role</label>
                     {canSetRole ? (
                       <>
                         <select
@@ -1634,12 +1762,9 @@ This cannot be undone.`,
                             : [roleAtOpen.current, ...ASSIGNABLE_ROLES]
                           ).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
                         </select>
-                        <p className="text-[11px] text-gray-400 mt-1">
-                          What they can reach in the app. Saved on the login account.
-                          {editRole !== 'Employee' && editRole !== roleAtOpen.current && (
-                            <span className="text-amber-700"> Grants admin access — set what they may do under Permissions.</span>
-                          )}
-                        </p>
+                        {editRole !== 'Employee' && editRole !== roleAtOpen.current && (
+                          <p className="text-[11px] text-amber-700 mt-1">Grants admin access.</p>
+                        )}
                       </>
                     ) : (
                       <>
@@ -1652,21 +1777,21 @@ This cannot be undone.`,
                   </div>
                 )}
                 <div>
-                  <label className="block text-sm text-gray-700">Designation</label>
+                  <label className="prm-label">Designation</label>
                   <DesignationSelect
                     value={form.designation || ''}
                     onChange={(v) => setForm({ ...form, designation: v })}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Department</label>
+                  <label className="prm-label">Department</label>
                   <DepartmentSelect
                     value={form.department || ''}
                     onChange={onDepartmentChange}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Work location <span className="text-gray-400 font-normal">(check-in geofence)</span></label>
+                  <label className="prm-label">Work location <span className="emp-label-note">(check-in geofence)</span></label>
                   <SearchableSelect value={form.workLocationRef || ''} onChange={(e) => setForm({ ...form, workLocationRef: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Default (office)</option>
@@ -1674,11 +1799,10 @@ This cannot be undone.`,
                       <option key={l._id} value={l._id}>{l.name}{l.company?.name ? ` · ${l.company.name}` : ''}</option>
                     ))}
                   </SearchableSelect>
-                  {form.company && <p className="text-xs text-gray-400 mt-1">Showing sites for the selected company, plus shared sites.</p>}
                 </div>
                 {canSetCompany && (
                 <div>
-                  <label className="block text-sm text-gray-700">Company</label>
+                  <label className="prm-label">Company</label>
                   <SearchableSelect value={form.company || ''} onChange={(e) => {
                     const company = e.target.value;
                     setForm((prev) => {
@@ -1695,11 +1819,10 @@ This cannot be undone.`,
                       <option key={c._id} value={c._id}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
                     ))}
                   </SearchableSelect>
-                  <p className="text-xs text-gray-500 mt-1">The company this employee belongs to. A CEO/MD limited to certain companies only sees people in them.</p>
                 </div>
                 )}
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-700">Reporting Manager</label>
+                  <label className="prm-label">Reporting Manager</label>
                   {canSetReportingManager ? (
                     <SearchableSelect
                       value={form.reportingManager || ''}
@@ -1756,13 +1879,12 @@ This cannot be undone.`,
                       })()}
                     </div>
                   )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    {canSetReportingManager && !form.department
-                      ? 'Pick a department first — managers are chosen from within it.'
-                      : canSetReportingManager
-                        ? 'Shows the selected department plus executives; type a name to reach anyone else (you will be asked to confirm a cross-department report). Sets the hierarchy shown on the Org Chart.'
-                        : 'Already set. Changing who someone reports to needs an HR Manager or a Super Admin.'}
-                  </p>
+                  {canSetReportingManager && !form.department && (
+                    <p className="text-xs text-gray-500 mt-1">Pick a department first.</p>
+                  )}
+                  {!canSetReportingManager && (
+                    <p className="text-xs text-gray-500 mt-1">Needs an HR Manager or Super Admin.</p>
+                  )}
                 </div>
                 {/* HR Partner: the HR Manager who owns this employee. With per-HR
                     scoping on, an HR Manager sees the employees they partner PLUS
@@ -1771,7 +1893,7 @@ This cannot be undone.`,
                     somebody needs the hierarchy grant - handing an employee over
                     is not an ordinary edit. */}
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-700">HR Partner</label>
+                  <label className="prm-label">HR Partner</label>
                   {canSetHrPartner ? (
                     <SearchableSelect
                       value={form.hrPartner || ''}
@@ -1793,12 +1915,9 @@ This cannot be undone.`,
                       })()}
                     </div>
                   )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    The HR Manager who sees and manages this employee.
-                    {canSetHrPartner
-                      ? ' Any change requests they are still waiting on move to the new partner.'
-                      : ' Changing it needs an HR Manager or a Super Admin.'}
-                  </p>
+                  {!canSetHrPartner && (
+                    <p className="text-xs text-gray-500 mt-1">Needs an HR Manager or Super Admin.</p>
+                  )}
                 </div>
                 {/* Attendance-regularization approval ladder: 1 or 2 named people,
                     in order. Deliberately separate from the reporting manager —
@@ -1806,7 +1925,7 @@ This cannot be undone.`,
                     only appears once step 1 is chosen, so the ladder can never be
                     configured with a gap. Behind the hierarchy grant, matching the backend. */}
                 <div className="sm:col-span-2">
-                  <label className="block text-sm text-gray-700">Regularization approval</label>
+                  <label className="prm-label">Regularization approval</label>
                   {canSetHierarchy ? (
                     <div className="mt-1 space-y-2">
                       {[0, 1].map((idx) => {
@@ -1842,11 +1961,6 @@ This cannot be undone.`,
                         .join(' → ') || '-'}
                     </div>
                   )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Who approves this employee&apos;s attendance regularizations, in order — step 1 decides
-                    first, step 2 confirms. Leave step 1 empty to keep the current behaviour, where any
-                    HR reviewer can decide. Approvers need no special permission.
-                  </p>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -1854,26 +1968,26 @@ This cannot be undone.`,
                       onChange={(e) => setForm({ ...form, documentsVerified: e.target.checked })} />
                     Documents verified · mark all documents as submitted
                   </label>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Overrides the document checklist and shows this employee as “Complete”.
-                  </p>
                 </div>
 
                 {/* Document submission link — send to the employee to collect any missing docs. */}
                 {editingId && (
-                  <div className="sm:col-span-2 border rounded-lg p-3 bg-gray-50">
+                  <div className="sm:col-span-2 emp-doclink">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-gray-700">Document submission link</span>
-                      <div className="flex gap-2">
+                      <span className="emp-doclink-title">
+                        <FiFileText size={14} aria-hidden="true" /> Document submission link
+                      </span>
+                      <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={copyDocLink} disabled={docBusy}
-                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
+                          className="trn-btn emp-btn-sm">
+                          <FiCopy size={13} aria-hidden="true" />
                           {docBusy ? 'Working…' : docCopied ? 'Copied!' : docToken ? 'Copy link' : 'Create & copy link'}
                         </button>
                         {editEmail && (
                           <button type="button" onClick={emailDocLink} disabled={docBusy}
                             title="Send the link from the company mailbox, with the outstanding documents listed"
-                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-60">
-                            Email link
+                            className="trn-btn emp-btn-sm">
+                            <FiMail size={13} aria-hidden="true" /> Email link
                           </button>
                         )}
                       </div>
@@ -1884,12 +1998,12 @@ This cannot be undone.`,
                       const declared = declaredNote(st);
                       return miss.length > 0 ? (
                         <p className="text-xs text-amber-700 mt-1.5">
-                          Missing: {miss.map((c) => docLabel(c)).join(', ')}. Share this link so they can upload the missing documents.
+                          Missing: {miss.map((c) => docLabel(c)).join(', ')}.
                           {declared ? ` (${declared}.)` : ''}
                         </p>
                       ) : (
                         <p className="text-xs text-gray-500 mt-1.5">
-                          All required documents are accounted for. You can still share this link for re-uploads.
+                          All required documents are in.
                           {declared ? ` (${declared}.)` : ''}
                         </p>
                       );
@@ -1902,29 +2016,28 @@ This cannot be undone.`,
                 )}
               </div>
 
-              <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Personal &amp; Contact</h3>
+              <h3 className="emp-sec"><FiUser size={14} aria-hidden="true" /> Personal &amp; Contact</h3>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">Phone</label>
+                  <label className="prm-label">Phone</label>
                   <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)}
                     placeholder="10 digits" className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-[11px] text-gray-400 mt-1">Saved on the login account.</p>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Email (login)</label>
+                  <label className="prm-label">Email (login)</label>
                   <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
                     placeholder="name@company.com" className="mt-1 block w-full border rounded-lg px-3 py-2" />
                   <p className="text-[11px] text-amber-700 mt-1">Changing this changes how they sign in.</p>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Date of Birth</label>
+                  <label className="prm-label">Date of Birth</label>
                   {/* max: a mistyped year like 2925 used to save without a word. */}
                   <input type="date" value={form.dateOfBirth || ''} max={toYMD(new Date())}
                     onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Gender</label>
+                  <label className="prm-label">Gender</label>
                   <select value={form.gender || ''} onChange={(e) => setForm({ ...form, gender: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Not set</option>
@@ -1932,7 +2045,7 @@ This cannot be undone.`,
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Marital Status</label>
+                  <label className="prm-label">Marital Status</label>
                   <select value={form.maritalStatus || ''} onChange={(e) => setForm({ ...form, maritalStatus: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2">
                     <option value="">Not set</option>
@@ -1940,11 +2053,10 @@ This cannot be undone.`,
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Marriage Anniversary</label>
+                  <label className="prm-label">Marriage Anniversary</label>
                   <input type="date" value={form.dateOfMarriage || ''} max={toYMD(new Date())}
                     onChange={(e) => setForm({ ...form, dateOfMarriage: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
-                  <p className="text-xs text-gray-500 mt-1">Optional — shows on the celebrations widget each year.</p>
                 </div>
               </div>
 
@@ -1982,77 +2094,77 @@ This cannot be undone.`,
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">Emergency Contact</label>
+                  <label className="prm-label">Emergency Contact</label>
                   <input value={form.emergencyContact?.name || ''} placeholder="Name"
                     onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, name: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Relation</label>
+                  <label className="prm-label">Relation</label>
                   <input value={form.emergencyContact?.relation || ''} placeholder="e.g. Father"
                     onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, relation: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Contact Phone</label>
+                  <label className="prm-label">Contact Phone</label>
                   <input value={form.emergencyContact?.phone || ''} placeholder="10 digits"
                     onChange={(e) => setForm({ ...form, emergencyContact: { ...form.emergencyContact, phone: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
 
-              <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Statutory IDs (India)</h3>
+              <h3 className="emp-sec"><FiShield size={14} aria-hidden="true" /> Statutory IDs (India)</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">PAN</label>
+                  <label className="prm-label">PAN</label>
                   <input value={form.pan}
                     onChange={(e) => setForm({ ...form, pan: e.target.value.toUpperCase() })}
                     placeholder="ABCDE1234F" maxLength={10}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 font-mono" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">UAN</label>
+                  <label className="prm-label">UAN</label>
                   <input value={form.uan}
                     onChange={(e) => setForm({ ...form, uan: e.target.value })}
                     placeholder="12 digits" maxLength={12}
                     className="mt-1 block w-full border rounded-lg px-3 py-2 font-mono" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">PF Number</label>
+                  <label className="prm-label">PF Number</label>
                   <input value={form.pfNumber}
                     onChange={(e) => setForm({ ...form, pfNumber: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">ESIC Number</label>
+                  <label className="prm-label">ESIC Number</label>
                   <input value={form.esicNumber}
                     onChange={(e) => setForm({ ...form, esicNumber: e.target.value })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
               </div>
 
-              <h3 className="text-sm font-semibold text-gray-700 pt-3 border-t">Bank Details</h3>
+              <h3 className="emp-sec"><FiCreditCard size={14} aria-hidden="true" /> Bank Details</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-gray-700">Account Holder</label>
+                  <label className="prm-label">Account Holder</label>
                   <input value={form.bankDetails.accountHolderName}
                     onChange={(e) => setForm({ ...form, bankDetails: { ...form.bankDetails, accountHolderName: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Bank Name</label>
+                  <label className="prm-label">Bank Name</label>
                   <input value={form.bankDetails.bankName}
                     onChange={(e) => setForm({ ...form, bankDetails: { ...form.bankDetails, bankName: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">Account Number</label>
+                  <label className="prm-label">Account Number</label>
                   <input value={form.bankDetails.accountNumber}
                     onChange={(e) => setForm({ ...form, bankDetails: { ...form.bankDetails, accountNumber: e.target.value } })}
                     className="mt-1 block w-full border rounded-lg px-3 py-2" />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-700">IFSC</label>
+                  <label className="prm-label">IFSC</label>
                   <input value={form.bankDetails.ifsc}
                     onChange={(e) => setForm({ ...form, bankDetails: { ...form.bankDetails, ifsc: e.target.value.toUpperCase() } })}
                     placeholder="HDFC0001234" maxLength={11}
@@ -2064,13 +2176,13 @@ This cannot be undone.`,
                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>
               )}
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="emp-modal-foot">
                 <button type="button" onClick={() => setShowModal(false)}
-                  className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                  className="trn-btn">Cancel</button>
                 <button type="submit" disabled={saving || codeState === 'taken'}
                   title={codeState === 'taken' ? 'That employee code already exists' : undefined}
-                  className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-                  {saving ? 'Saving…' : 'Save'}
+                  className="trn-btn is-primary accent-bg text-white">
+                  <FiCheck size={14} aria-hidden="true" /> {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
             </form>
@@ -2089,12 +2201,6 @@ This cannot be undone.`,
             <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-gray-100">
               <div>
                 <h2 className="card-title">Imported values to check</h2>
-                <p className="text-xs text-gray-500 mt-1 max-w-2xl leading-relaxed">
-                  An import never refuses a row for naming something new. Anything that is simply a name — a designation,
-                  department, grade, work location or company — was created. Anything that could not be invented — a role,
-                  a salary structure, a named person — was left at its safe default. Correct what is wrong; leave the box
-                  empty to say the import got it right.
-                </p>
               </div>
               <button type="button" onClick={() => setShowFlags(false)} aria-label="Close"
                 className="topbar-icon-btn shrink-0">×</button>
@@ -2147,8 +2253,7 @@ This cannot be undone.`,
 
                     {!canFixFlagField(f.field) && (
                       <p className="text-xs text-gray-500 mt-2">
-                        Only the Backend account can move someone to another company.
-                        {' '}Clearing this only marks it as seen.
+                        Only the Backend account can change this.
                       </p>
                     )}
 
@@ -2171,7 +2276,7 @@ This cannot be undone.`,
                         type="button"
                         disabled={flagBusy === f._id}
                         onClick={() => resolveFlag(f)}
-                        className="px-3.5 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 shrink-0"
+                        className="trn-btn is-primary accent-bg text-white shrink-0"
                       >
                         {flagBusy === f._id ? 'Saving…'
                           : !canFixFlagField(f.field) ? 'Mark as seen'
@@ -2185,7 +2290,7 @@ This cannot be undone.`,
 
             <div className="flex justify-end px-6 py-4 border-t border-gray-100">
               <button type="button" onClick={() => setShowFlags(false)}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">Close</button>
+                className="trn-btn">Close</button>
             </div>
           </div>
         </div>
@@ -2196,18 +2301,7 @@ This cannot be undone.`,
           <div className="bg-white rounded-xl shadow-lg w-full max-w-2xl p-6">
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h2 className="card-title">Import Employees from Excel</h2>
-                <p className="text-xs text-gray-500 mt-1">
-                  Use the <strong>Template</strong> button first to get a correctly-formatted file. Required columns: Employee Code, First Name, Last Name, Email, Date of Joining.
-                  The template also covers job, payroll (Salary Structure + Annual CTC), statutory, bank, address and emergency-contact details.
-                </p>
-                <p className="text-[11px] text-amber-700 mt-1">
-                  A row is never refused for naming something new. A new <strong>Designation</strong>, <strong>Department</strong>,{' '}
-                  <strong>Grade</strong>, <strong>Work Location</strong> or <strong>Company</strong> is created and flagged for review.
-                  A <strong>Role</strong> that is not a system role imports as Employee; an unmatched{' '}
-                  <strong>Salary Structure</strong>, <strong>Reporting Manager Email</strong> or <strong>HR Partner Email</strong>{' '}
-                  is left blank. All of them are flagged so you can correct them afterwards.
-                </p>
+                <h2 className="card-title" title="Use the Template button first. Required columns: Employee Code, First Name, Last Name, Email, Date of Joining.">Import Employees from Excel</h2>
               </div>
               <button onClick={closeImport} type="button" aria-label="Close" title="Close" className="topbar-icon-btn shrink-0">×</button>
             </div>
@@ -2221,15 +2315,14 @@ This cannot be undone.`,
                   className="block w-full text-sm border rounded-lg px-3 py-2"
                 />
                 <p className="text-xs text-gray-500">
-                  New users will be created with default password <code className="bg-gray-100 px-1 py-0.5 rounded">Welcome@123</code>.
-                  Rows with duplicate email or employee code will be skipped, not overwritten.
+                  Duplicate email or employee code rows are skipped, not overwritten.
                 </p>
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="emp-modal-foot">
                   <button type="button" onClick={closeImport}
-                    className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
+                    className="trn-btn">Cancel</button>
                   <button type="submit" disabled={importing}
-                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700 disabled:opacity-60">
-                    {importing ? 'Importing…' : 'Upload & Import'}
+                    className="trn-btn is-primary accent-bg text-white">
+                    <FiUpload size={14} aria-hidden="true" /> {importing ? 'Importing…' : 'Upload & Import'}
                   </button>
                 </div>
               </form>
@@ -2247,25 +2340,34 @@ This cannot be undone.`,
                         ~64px of text width at 360px, which breaks "Skipped
                         (duplicates)" mid-word. */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                        <div className="text-2xl font-semibold text-green-800">{importResult.createdCount}</div>
-                        <div className="text-xs text-green-700">Created</div>
+                      <div className="trn-kpi" style={{ '--kpi-hue': '#16a34a' }}>
+                        <span className="trn-kpi-icon" aria-hidden="true"><FiCheckCircle size={18} /></span>
+                        <span className="min-w-0">
+                          <span className="trn-kpi-value block">{importResult.createdCount}</span>
+                          <span className="trn-kpi-label block">Created</span>
+                        </span>
                       </div>
-                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                        <div className="text-2xl font-semibold text-amber-800">{importResult.skippedCount}</div>
-                        <div className="text-xs text-amber-700">Skipped (duplicates)</div>
+                      <div className="trn-kpi" style={{ '--kpi-hue': '#d97706' }}>
+                        <span className="trn-kpi-icon" aria-hidden="true"><FiSkipForward size={18} /></span>
+                        <span className="min-w-0">
+                          <span className="trn-kpi-value block">{importResult.skippedCount}</span>
+                          <span className="trn-kpi-label block">Skipped (duplicates)</span>
+                        </span>
                       </div>
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                        <div className="text-2xl font-semibold text-red-800">{importResult.errorCount}</div>
-                        <div className="text-xs text-red-700">Errors</div>
-                        {/* Kept as its own tile: an error is a row that did NOT
-                            import, which is a different thing from a flag. */}
+                      {/* Kept as its own tile: an error is a row that did NOT
+                          import, which is a different thing from a flag. */}
+                      <div className="trn-kpi" style={{ '--kpi-hue': '#dc2626' }}>
+                        <span className="trn-kpi-icon" aria-hidden="true"><FiAlertCircle size={18} /></span>
+                        <span className="min-w-0">
+                          <span className="trn-kpi-value block">{importResult.errorCount}</span>
+                          <span className="trn-kpi-label block">Errors</span>
+                        </span>
                       </div>
                     </div>
 
                     {importResult.createdCount > 0 && (
                       <p className="text-sm text-gray-700">
-                        Default password for newly-created accounts: <code className="bg-gray-100 px-1 py-0.5 rounded">{importResult.defaultPassword}</code> · communicate this to the employees so they can sign in and change it.
+                        Default password for new accounts: <code className="bg-gray-100 px-1 py-0.5 rounded">{importResult.defaultPassword}</code>
                       </p>
                     )}
 
@@ -2278,10 +2380,6 @@ This cannot be undone.`,
                             ? '1 value needs a check'
                             : `${importResult.flagCount} values need a check`}
                         </div>
-                        <p className="text-xs text-amber-800 mt-0.5">
-                          New designations, departments and companies were created; roles and people that could not be
-                          matched were left at their safe default. HR, the admins and the CEO/MD have been notified.
-                        </p>
                         <button
                           type="button"
                           onClick={() => { closeImport(); setShowFlags(true); }}
@@ -2345,8 +2443,8 @@ This cannot be undone.`,
                 )}
 
                 <div className="flex justify-end">
-                  <button onClick={closeImport}
-                    className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-700">
+                  <button type="button" onClick={closeImport}
+                    className="trn-btn is-primary accent-bg text-white">
                     Done
                   </button>
                 </div>

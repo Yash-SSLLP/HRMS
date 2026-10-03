@@ -350,7 +350,6 @@ export default function TaskDetailBody({
       return {
         key: 'submit', to,
         title: 'Handing this in',
-        hint: 'Say what you did. It goes to whoever reviews it.',
         verb: 'Submit', tone: 'send',
         needs: 'Say what you did before handing this in — a voice note counts.',
       };
@@ -359,7 +358,6 @@ export default function TaskDetailBody({
       return {
         key: 'approve', to,
         title: 'Approving this',
-        hint: 'A word about what you are signing off. Points are credited on approval.',
         verb: 'Approve', tone: 'go',
         needs: 'Say a word about what you are approving.',
       };
@@ -368,7 +366,6 @@ export default function TaskDetailBody({
       return {
         key: 'reject', to,
         title: 'Sending this back',
-        hint: 'Say what still needs doing — that is the whole point of sending it back.',
         verb: 'Send back', tone: 'warn',
         needs: 'Say what needs doing before sending this back.',
       };
@@ -387,7 +384,6 @@ export default function TaskDetailBody({
     return {
       key: 'status', to, verb,
       title: `${verb} — ${statusLabel(to, task?.kind).toLowerCase()}`,
-      hint: 'Nothing moves in this module without a word about why.',
       tone: to === STATUS.CANCELLED ? 'danger' : 'ghost',
       needs: 'Add a note (or a voice note) explaining this change.',
     };
@@ -969,23 +965,11 @@ export default function TaskDetailBody({
                 </button>
               ))}
             </div>
-            {can.canAccept && (
+            {can.canAccept && edits.length > 0 && (
               <p className="mt-2 text-xs text-gray-500">
-                {task.createdByName || 'Somebody'} is waiting to hear. Accepting starts the work.
-                {edits.length > 0 && (
-                  <strong className="text-gray-700">
-                    {' '}It was edited {edits.length === 1 ? 'once' : `${edits.length} times`} after it was sent — see the edit history.
-                  </strong>
-                )}
-              </p>
-            )}
-            {can.canEdit && (
-              <p className="mt-2 text-xs text-gray-500">
-                {/* Your own task has nobody else to tell. */}
-                {(task.assignees || []).length > 0
-                  && (task.assignees || []).every((a) => String(a.user?._id || a.user) === String(me))
-                  ? 'Not accepted yet — you can still edit it. Every change is kept as a trail.'
-                  : 'Not accepted yet — you can still edit it. Every change is kept as a trail, and they are told.'}
+                <strong className="text-gray-700">
+                  Edited {edits.length === 1 ? 'once' : `${edits.length} times`} since it was sent.
+                </strong>
               </p>
             )}
             {/* Edit went away the moment it was taken on — say why, where it was. */}
@@ -1358,7 +1342,7 @@ export default function TaskDetailBody({
                   </div>
                 ) : (
                   <p className="mt-2 text-xs text-amber-700">
-                    Waiting on {task.approverName || task.createdByName || 'whoever set it'}. The work carries on meanwhile.
+                    Waiting on {task.approverName || task.createdByName || 'whoever set it'}.
                   </p>
                 )}
               </div>
@@ -1405,9 +1389,6 @@ export default function TaskDetailBody({
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-[11px] text-gray-400">
-              A transfer takes the previous holder off the task completely — they stop hearing about it.
-            </p>
           </section>
         )}
 
@@ -1515,7 +1496,6 @@ export default function TaskDetailBody({
                   <span className="mt-0.5 shrink-0 accent-text"><FiSend size={13} /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-xs font-semibold text-gray-800">{answer.title}</span>
-                    <span className="block text-[11px] text-gray-500">{answer.hint}</span>
                   </span>
                   <button
                     type="button"
@@ -1969,12 +1949,6 @@ function ProgressPanel({ task, can, accent, onSaved }) {
           </button>
         ))}
       </div>
-
-      {saved === 0 && task.status === STATUS.PENDING && (
-        <p className="mt-2 text-[11px] text-gray-400">
-          Reporting anything above 0% starts this task.
-        </p>
-      )}
     </section>
   );
 }

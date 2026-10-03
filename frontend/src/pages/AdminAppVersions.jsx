@@ -26,18 +26,24 @@
  * Backend: GET /admin/app-versions.
  */
 import { useEffect, useState } from 'react';
-import { FiSmartphone, FiGlobe, FiHelpCircle, FiCheckCircle, FiAlertTriangle } from 'react-icons/fi';
+import {
+  FiSmartphone, FiGlobe, FiHelpCircle, FiCheckCircle, FiAlertTriangle, FiSearch, FiUsers,
+} from 'react-icons/fi';
+import '../styles/pages/org-help.css';
 import api from '../api/client';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
-import { roleLabel } from '../config/roles';
+import { PersonAvatar, RoleChip } from '../components/permissions/permUi';
 
-const ROLE_CHIP = {
-  SuperAdmin: 'bg-violet-50 text-violet-700 border-violet-200',
-  HRManager: 'bg-teal-50 text-teal-700 border-teal-200',
-  CEO: 'bg-amber-50 text-amber-800 border-amber-200',
-  MD: 'bg-amber-50 text-amber-800 border-amber-200',
-  Manager: 'bg-blue-50 text-blue-700 border-blue-200',
+// What "Web only" and "Unknown" mean, carried as tooltips (KPI, filter, chip)
+// rather than as paragraphs on the page.
+const WEB_TIP = 'No app registered right now: never installed, signed out of the app, or notifications declined — these look the same from the server.';
+const UNKNOWN_TIP = 'The app on this phone last checked in from a build that did not report its version. It means not known — not old.';
+
+/** PersonAvatar wants first/last names; this list carries one `name`. No photo here, so initials. */
+const avatarUser = (r) => {
+  const parts = (r.name || '').trim().split(/\s+/).filter(Boolean);
+  return { _id: r._id, firstName: parts[0] || '', lastName: parts.length > 1 ? parts[parts.length - 1] : '' };
 };
 
 /** "today" / "3 days ago" / "never" — coarse on purpose. */
@@ -52,49 +58,45 @@ function ago(iso) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
-function Tile({ icon, tint, value, label }) {
-  return (
-    <div className="bg-white shadow rounded-lg p-4 flex items-center gap-3">
-      <span className={`stat-icon ${tint}`}>{icon}</span>
-      <div className="min-w-0">
-        <div className="text-xl font-semibold text-gray-900 tabular-nums">{value}</div>
-        <div className="text-xs text-gray-500">{label}</div>
-      </div>
-    </div>
-  );
+/** How fresh "last opened" is, for the dot beside it. */
+function seenTone(iso) {
+  if (!iso) return 'is-old';
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days < 2) return 'is-fresh';
+  if (days < 30) return '';
+  return 'is-old';
 }
 
 /** The version cell — the one place the three states are told apart. */
 function VersionCell({ r, latest }) {
   if (r.state === 'web') {
     return (
-      <span
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500"
-        title="No app registered: never installed, signed out of the app, or notifications declined — these look the same from the server."
-      >
-        <FiGlobe size={13} /> Web only
+      <span className="av-ver is-web" title={WEB_TIP}>
+        <FiGlobe size={12} aria-hidden="true" /> Web only
       </span>
     );
   }
   if (r.state === 'unknown') {
     return (
-      <span
-        className="inline-flex items-center gap-1.5 text-sm text-gray-400"
-        title="The app on this phone last checked in from a build that did not report its version."
-      >
-        <FiHelpCircle size={13} /> Unknown
+      <span className="av-ver is-unknown" title={UNKNOWN_TIP}>
+        <FiHelpCircle size={12} aria-hidden="true" /> Unknown
       </span>
     );
   }
   const behind = latest && r.appVersionCode != null && r.appVersionCode < latest.versionCode;
+  const current = !behind && r.upToDate === true;
   // Wraps on a phone, where the cell is capped at 11rem: a nowrap row there
   // crushed "(code)" and "out of date" into slivers a letter wide.
   return (
-    <span className={`inline-flex flex-wrap sm:flex-nowrap items-center gap-1.5 text-sm font-medium tabular-nums ${behind ? 'text-amber-700' : 'text-gray-900'}`}>
-      <FiSmartphone size={13} />
-      {r.appVersion}
-      {r.appVersionCode != null && <span className="text-gray-400 font-normal">({r.appVersionCode})</span>}
-      {behind && <span className="text-[11px] font-semibold">· out of date</span>}
+    <span className="av-ver-wrap">
+      <span className={`av-ver${behind ? ' is-behind' : current ? ' is-ok' : ''}`}>
+        {behind ? <FiAlertTriangle size={12} aria-hidden="true" />
+          : current ? <FiCheckCircle size={12} aria-hidden="true" />
+            : <FiSmartphone size={12} aria-hidden="true" />}
+        {r.appVersion}
+        {r.appVersionCode != null && <span className="av-ver-code">({r.appVersionCode})</span>}
+      </span>
+      {behind && <span className="av-ver-note">Out of date</span>}
     </span>
   );
 }
@@ -136,7 +138,7 @@ export default function AdminAppVersions() {
   if (!isSuperAdmin) {
     return (
       <div>
-        <PageHeader title="App Versions" subtitle="Which app build each person is running" />
+        <PageHeader title="App Versions" />
         <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
           This tool isn&apos;t available for your account.
         </div>
@@ -153,73 +155,104 @@ export default function AdminAppVersions() {
     return `${r.name} ${r.email} ${r.employeeCode} ${r.appVersion || ''} ${r.deviceName}`.toLowerCase().includes(needle);
   });
 
+  // Per-filter counts for the segmented control — the same tests the filter
+  // above applies, over everything loaded.
+  const counts = {
+    all: rows.length,
+    behind: rows.filter((r) => r.upToDate === false).length,
+    web: rows.filter((r) => r.state === 'web').length,
+    unknown: rows.filter((r) => r.state === 'unknown').length,
+  };
+  const dash = (v) => (loading ? '—' : v ?? '-');
+  // The KPI cards double as the filter: the three that name a state switch to
+  // it. "On the latest build" has no filter of its own, so it is a plain card.
+  const KPIS = [
+    { key: 'latest', filter: null, icon: FiCheckCircle, hue: '#16a34a', value: dash(summary.onLatest), label: 'On the latest build',
+      sub: !loading && summary.total != null ? `of ${summary.total} people` : null },
+    { key: 'behind', filter: 'behind', icon: FiAlertTriangle, hue: '#d97706', value: dash(summary.behind), label: 'Out of date' },
+    { key: 'web', filter: 'web', icon: FiGlobe, hue: '#0ea5e9', value: dash(summary.webOnly), label: 'No app registered', tip: WEB_TIP },
+    { key: 'unknown', filter: 'unknown', icon: FiHelpCircle, hue: '#64748b', value: dash(summary.unknown), label: 'Version not reported', tip: UNKNOWN_TIP },
+  ];
+
   return (
     <div>
       <PageHeader
         title="App Versions"
         subtitle={latest
           ? `Latest published build: ${latest.versionName} (${latest.versionCode})`
-          : 'Which app build each person is running'}
+          : undefined}
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <Tile icon={<FiCheckCircle />} tint="bg-emerald-100 text-emerald-600" value={summary.onLatest ?? '-'} label="On the latest build" />
-        <Tile icon={<FiAlertTriangle />} tint="bg-amber-100 text-amber-600" value={summary.behind ?? '-'} label="Out of date" />
-        <Tile icon={<FiGlobe />} tint="bg-sky-100 text-sky-600" value={summary.webOnly ?? '-'} label="No app registered" />
-        <Tile icon={<FiHelpCircle />} tint="bg-gray-100 text-gray-500" value={summary.unknown ?? '-'} label="Version not reported" />
+      <div className="trn-kpis">
+        {KPIS.map((k) => {
+          const Icon = k.icon;
+          const on = k.filter && tab === k.filter;
+          const body = (
+            <>
+              <span className="trn-kpi-icon" aria-hidden="true"><Icon size={19} /></span>
+              <span className="min-w-0">
+                <span className="trn-kpi-value block tabular-nums">{k.value}</span>
+                <span className="trn-kpi-label block">{k.label}</span>
+                {k.sub && <span className="trn-kpi-sub block">{k.sub}</span>}
+              </span>
+            </>
+          );
+          return k.filter ? (
+            <button key={k.key} type="button" onClick={() => setTab(k.filter)} aria-pressed={on}
+              title={k.tip} className={`trn-kpi pb-kpi${on ? ' is-on' : ''}`} style={{ '--kpi-hue': k.hue }}>
+              {body}
+            </button>
+          ) : (
+            <div key={k.key} className="trn-kpi pb-kpi" style={{ '--kpi-hue': k.hue }}>{body}</div>
+          );
+        })}
       </div>
 
-      {/* Said up front, because on the day this ships every phone reads "Unknown"
-          and the page would otherwise look broken. */}
-      {(summary.unknown ?? 0) > 0 && (
-        <div className="bg-white shadow rounded-lg p-4 mb-4 text-sm text-gray-600">
-          <p>
-            <b>{summary.unknown}</b>{' '}
-            {summary.unknown === 1 ? 'phone has' : 'phones have'} not reported a version.
-            The app only started sending it recently, so a phone shows here until it is updated and
-            opened once. It means <i>not known</i> — not <i>old</i>.
-          </p>
+      {/* One bar: the state filter, then search. */}
+      <div className="pb-toolbar av-toolbar">
+        <div className="trn-seg" role="tablist" aria-label="Filter by state">
+          {FILTERS.map((f) => (
+            <button key={f.id} type="button" role="tab" onClick={() => setTab(f.id)}
+              aria-selected={tab === f.id}
+              title={f.id === 'web' ? WEB_TIP : f.id === 'unknown' ? UNKNOWN_TIP : undefined}
+              className={`trn-seg-btn${tab === f.id ? ' is-on' : ''}`}>
+              {f.label}
+              {!loading && <span className="trn-seg-count">{counts[f.id]}</span>}
+            </button>
+          ))}
         </div>
+        <div className="pb-toolbar-end">
+          <label className="trn-search">
+            <FiSearch size={15} className="opacity-50 shrink-0" aria-hidden="true" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, email, code, version or device…"
+              aria-label="Search accounts"
+            />
+          </label>
+        </div>
+      </div>
+
+      {error && (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg mb-3">{error}</div>
       )}
 
-      {/* Said in the open, because acting on this column without knowing it is
-          easy: chasing somebody to "install the app" when they signed out last
-          night would be the obvious mistake. */}
-      <p className="text-xs text-gray-500 mb-3">
-        <b>Web only</b> means no app is registered to that account right now — they never installed it,
-        they signed out of it, or they declined notifications. The three are indistinguishable from the server.
-      </p>
-
-      <div className="bg-white shadow rounded-lg p-5">
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search name, email, code, version or device…"
-            className="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[14rem]"
-          />
-          <nav className="seg-track" aria-label="Filter by state">
-            {FILTERS.map((f) => (
-              <button key={f.id} type="button" onClick={() => setTab(f.id)}
-                aria-pressed={tab === f.id}
-                className={`seg-btn${tab === f.id ? ' is-active' : ''}`}>
-                {f.label}
-              </button>
-            ))}
-          </nav>
+      {loading ? (
+        <div className="grid gap-2" aria-busy="true" aria-label="Loading app versions">
+          {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="skeleton h-14 rounded-2xl" />)}
         </div>
-
-        {error && (
-          <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg mb-3">{error}</div>
-        )}
-
-        {loading ? (
-          <p className="text-sm text-gray-400 italic py-6 text-center">Loading…</p>
-        ) : visible.length === 0 ? (
-          <p className="text-sm text-gray-400 italic py-6 text-center">Nobody matches that.</p>
-        ) : (
+      ) : visible.length === 0 ? (
+        <div className="prm-list">
+          <div className="trn-empty">
+            <span className="trn-empty-icon"><FiUsers size={24} /></span>
+            <p className="text-sm font-semibold">Nobody matches that.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-sm av-table">
               <thead>
                 <tr className="text-left text-gray-600">
                   <th className="px-4 py-3 font-semibold">Employee</th>
@@ -234,34 +267,42 @@ export default function AdminAppVersions() {
                 {visible.map((r) => (
                   <tr key={r._id}>
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{r.name || '-'}</div>
-                      <div className="text-xs text-gray-500">{r.email}</div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {r.employeeCode ? <span className="font-mono text-xs">{r.employeeCode}</span> : <span className="text-xs text-gray-400">—</span>}
+                      <div className="av-who">
+                        <PersonAvatar user={avatarUser(r)} />
+                        <div className="min-w-0">
+                          <div className="av-name">{r.name || '-'}</div>
+                          <div className="av-mail">{r.email}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-lg border ${ROLE_CHIP[r.role] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
-                        {roleLabel(r.role)}
-                      </span>
+                      {r.employeeCode ? <span className="av-code">{r.employeeCode}</span> : <span className="av-none">—</span>}
                     </td>
+                    <td className="px-4 py-3"><RoleChip role={r.role} /></td>
                     <td className="px-4 py-3"><VersionCell r={r} latest={latest} /></td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {r.deviceName || <span className="text-xs text-gray-400">—</span>}
+                    <td className="px-4 py-3">
+                      {r.deviceName ? (
+                        <span className="av-dev">
+                          <FiSmartphone size={13} aria-hidden="true" className="shrink-0 opacity-50" />
+                          <span className="min-w-0">{r.deviceName}</span>
+                        </span>
+                      ) : <span className="av-none">—</span>}
                       {r.deviceCount > 1 && (
-                        <span className="ml-1 text-[11px] text-gray-400">+{r.deviceCount - 1} more</span>
+                        <span className="av-more">+{r.deviceCount - 1} more</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {r.state === 'web' ? <span className="text-xs text-gray-400">—</span> : ago(r.deviceSeenAt)}
+                    <td className="px-4 py-3">
+                      {r.state === 'web' ? <span className="av-none">—</span> : (
+                        <span className={`av-seen ${seenTone(r.deviceSeenAt)}`}>{ago(r.deviceSeenAt)}</span>
+                      )}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

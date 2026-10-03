@@ -455,7 +455,7 @@ export default function ConsultancyCandidates() {
         {laterRounds.length > 0 && (
           <div className="mt-3">
             <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
-              {external ? 'Next rounds — scheduled by the company, you can join' : 'Next rounds'}
+              Next rounds
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {laterRounds.map((x) => {
@@ -602,10 +602,10 @@ export default function ConsultancyCandidates() {
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[11px] text-gray-500 max-w-xl">
                   {draft.status === 'Cleared'
-                    ? 'HR schedules the next rounds and you can join them from here. Your write-up travels with the candidate. This cannot be changed afterwards.'
+                    ? 'This cannot be changed afterwards.'
                     : draft.status === 'Rejected'
-                      ? 'They move to Rejected and cannot be put forward for this job again for 3 months. This cannot be changed afterwards.'
-                      : 'Saving without a result keeps the candidate under Ongoing Interview — you can come back to it.'}
+                      ? 'Held for 3 months · cannot be changed afterwards.'
+                      : ''}
                 </p>
                 <button type="button" onClick={() => saveRound(r)} disabled={savingId === r._id}
                   className="text-sm font-medium px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
@@ -621,7 +621,7 @@ export default function ConsultancyCandidates() {
 
   const emptyText = {
     ongoing: external
-      ? 'No candidates in interviews right now. Add a candidate to one of the open jobs to get started.'
+      ? 'No candidates in interviews right now.'
       : 'No consultancy candidates are in interviews right now.',
     selected: 'Nobody has been selected yet.',
     rejected: 'Nobody has been rejected.',
@@ -631,9 +631,6 @@ export default function ConsultancyCandidates() {
     <div>
       <PageHeader
         title={external ? 'My Candidates' : 'Consultancy Candidates'}
-        subtitle={external
-          ? 'Add candidates to our open jobs — each one goes straight to the company, which schedules the next rounds (you can join them) and decides who is selected'
-          : 'Candidates sent in by HR consultancies · they arrive with Round 1 done, ready for the rounds you schedule'}
       >
         {refreshing && <span className="text-xs text-gray-400">Updating…</span>}
         {external && (
@@ -716,7 +713,7 @@ export default function ConsultancyCandidates() {
             </div>
             {!editing && jobs.length === 0 ? (
               <div className="space-y-4">
-                <p className="text-sm text-gray-600">There are no open jobs to add candidates to right now. The company’s openings appear here as soon as they are posted.</p>
+                <p className="text-sm text-gray-600">No open jobs right now.</p>
                 <div className="flex justify-end">
                   <button type="button" onClick={() => setFormOpen(false)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Close</button>
                 </div>

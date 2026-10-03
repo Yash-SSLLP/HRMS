@@ -143,7 +143,7 @@ export default function RegularizationApprovalsInbox({ onCount }) {
       />
 
       {tab === 'pending' && (rows.length === 0 ? (
-        <ApprovalsEmpty message="No regularizations are waiting on you." hint="These are corrections to a missed or mistaken punch." />
+        <ApprovalsEmpty message="No regularizations are waiting on you." />
       ) : (
         <div className="space-y-3">
           {rows.map((r) => (

@@ -356,14 +356,12 @@ export default function EmployeeDashboard() {
                 {/* Inherits the callout's blue-800 ink, which the emoji could not. */}
                 <FiInfo className="shrink-0 mt-0.5" size={14} aria-hidden="true" />
                 <span>
-                  <strong>2 paid leave days per month.</strong> Any leave beyond 2 in a
-                  calendar month is counted as <strong>Loss of Pay (LOP)</strong>. The
-                  quota resets each month and does not carry forward.
+                  <strong>2 paid leave days per month.</strong> Extra leave is <strong>Loss of Pay (LOP)</strong>.
                   {(() => {
                     const ml = bucketStats(balance.balances?.ML);
                     return ml.total > 0 ? (
                       <span className="block mt-1 text-purple-700">
-                        Maternity leave: {ml.remaining} of {ml.total} days remaining (separate entitlement).
+                        Maternity leave: {ml.remaining} of {ml.total} days remaining.
                       </span>
                     ) : null;
                   })()}
@@ -412,10 +410,6 @@ export default function EmployeeDashboard() {
           {/* Stacked on a phone, where the link beside it squeezed the sentence
               into a 140px column. */}
           <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-0">
-            <p className="text-sm text-gray-500">
-              Salary details are kept off the dashboard — open My Payslips to view
-              and download them.
-            </p>
             <Link to="/employee/payslips" className="text-sm text-blue-600 hover:underline whitespace-nowrap sm:ml-4">
               View payslips →
             </Link>

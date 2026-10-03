@@ -341,7 +341,7 @@ function FeedbackCard({ courseId, existing, onSaved }) {
   return (
     <div>
       <div className="font-semibold text-gray-900">🎉 You finished this course!</div>
-      <p className="text-sm text-gray-500 mt-0.5 mb-3">How was it? Your feedback helps us improve.</p>
+      <p className="text-sm text-gray-500 mt-0.5 mb-3">How was it?</p>
       <div className="flex items-center gap-1 mb-3">
         {[1, 2, 3, 4, 5].map((n) => (
           <button key={n} type="button" onMouseEnter={() => setHover(n)} onMouseLeave={() => setHover(0)} onClick={() => setRating(n)}

@@ -594,8 +594,7 @@ export default function AdminSalaryStructures() {
               />
               {sharedCount > 0 && (
                 <p className="mt-1 text-xs text-amber-700">
-                  {sharedCount} other employee{sharedCount === 1 ? ' is' : 's are'} on this structure —
-                  renaming it renames it for them too.
+                  Renaming also renames it for {sharedCount} other employee{sharedCount === 1 ? '' : 's'}.
                 </p>
               )}
               <textarea
@@ -621,8 +620,7 @@ export default function AdminSalaryStructures() {
                 {/* Said up front: this structure is somebody's salary. */}
                 {editingId && approvalRequired && editHolders > 0 && (
                   <p className="mb-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {editHolders} {editHolders === 1 ? 'employee is' : 'employees are'} paid on this structure, so new
-                    percentages go to a CEO/MD for approval and apply only once approved. The name and description save now.
+                    {editHolders} {editHolders === 1 ? 'employee is' : 'employees are'} paid on this — new percentages need CEO/MD approval.
                   </p>
                 )}
                 {editingId && pendingStructures.has(String(editingId)) && (
@@ -692,11 +690,6 @@ export default function AdminSalaryStructures() {
                     />
                   </label>
                 </div>
-                {assign.employee && (
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    This sets the employee's salary structure{assign.annualCtc ? ' and annual CTC' : ' (CTC left unchanged — enter it to make payroll derivable)'}. You can also do this on the Hikes page.
-                  </p>
-                )}
               </div>
 
               {error && (
@@ -729,10 +722,7 @@ export default function AdminSalaryStructures() {
       {previewFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
           <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="card-title mb-1">Preview · {previewFor.name}</h2>
-            <p className="text-xs text-gray-500 mb-4">
-              Enter an annual CTC to see the monthly and annual breakdown.
-            </p>
+            <h2 className="card-title mb-4">Preview · {previewFor.name}</h2>
 
             {previewPeople.length > 1 && (
               <label className="block text-sm text-gray-700 mb-3">
@@ -771,7 +761,7 @@ export default function AdminSalaryStructures() {
               ) : (
                 // Never let a placeholder read as somebody's real salary.
                 <span className="block mt-1 text-xs text-amber-700">
-                  Nobody on this structure has a CTC set, so this is an example figure — not anyone&rsquo;s real salary.
+                  Example figure — no CTC is set on this structure.
                 </span>
               )}
             </label>
@@ -836,21 +826,6 @@ export default function AdminSalaryStructures() {
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h2 className="card-title">Import salary structures from Excel</h2>
-                <p className="text-xs text-gray-500 mt-1">
-                  One row per employee: <strong>Name</strong>, <strong>SSL Code</strong>, the monthly
-                  <strong> Basic, HRA, Special Allowance, Conveyance, Medical, LTA</strong>, and their
-                  annual <strong>CTC</strong>. Each row becomes a salary structure and the employee is
-                  put on it with that CTC.
-                </p>
-                <p className="text-[11px] text-gray-500 mt-1">
-                  Amounts are per <strong>month</strong>; CTC is per <strong>year</strong>. Leave the
-                  optional <strong>Salary Structure</strong> column blank and the structure is named
-                  after the person — fill it in to put several people on one shared template.
-                </p>
-                <p className="text-[11px] text-amber-700 mt-1">
-                  A row that cannot be matched to an employee is reported, never guessed at, and the
-                  rest of the sheet still imports. Re-uploading a corrected file is safe.
-                </p>
               </div>
               <button onClick={closeImport} type="button" aria-label="Close" title="Close"
                 className="topbar-icon-btn shrink-0">×</button>
@@ -860,10 +835,6 @@ export default function AdminSalaryStructures() {
               <form onSubmit={runImport} className="space-y-3">
                 <input ref={importFileRef} type="file" required accept=".xlsx"
                   className="block w-full text-sm border rounded-lg px-3 py-2" />
-                <p className="text-xs text-gray-500">
-                  Use <strong>Template</strong> for a correctly-formatted file, or{' '}
-                  <strong>Export Excel</strong> to start from what is already set up.
-                </p>
                 <div className="flex justify-end gap-2 pt-2">
                   <button type="button" onClick={closeImport}
                     className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
@@ -913,8 +884,6 @@ export default function AdminSalaryStructures() {
                         <p className="text-xs text-red-800 mt-0.5">
                           Everyone imported above is set to <strong>₹0</strong> for{' '}
                           {importResult.missingComponents.length === 1 ? 'that component' : 'those components'}.
-                          If that is wrong, add the column{importResult.missingComponents.length === 1 ? '' : 's'} and
-                          upload again — re-importing overwrites what just went in.
                         </p>
                       </div>
                     )}
@@ -962,8 +931,7 @@ export default function AdminSalaryStructures() {
                           Two columns read as the same thing
                         </div>
                         <p className="text-xs text-amber-800 mt-0.5">
-                          {importResult.ambiguousColumns.join('; ')} — only the first was used. Rename or
-                          remove one and upload again if that is not what you wanted.
+                          {importResult.ambiguousColumns.join('; ')} — only the first was used.
                         </p>
                       </div>
                     )}
@@ -1032,8 +1000,7 @@ export default function AdminSalaryStructures() {
                         <p className="text-xs text-gray-500 mt-1">
                           {importResult.errorCount > importResult.errors.length
                             && `Showing the first ${importResult.errors.length} of ${importResult.errorCount}. `}
-                          Fix those rows in the sheet and upload it again — the rows that worked are
-                          already in, and re-importing them changes nothing.
+                          Fix those rows and upload again.
                         </p>
                       </div>
                     )}
