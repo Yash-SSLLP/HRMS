@@ -297,9 +297,14 @@ const announceAward = asyncHandler(async (req, res) => {
   // Company wall: a walled admin's announcement fans out only to their own
   // company; an unrestricted admin still notifies the whole org.
   const users = await User.find(await scopeUserFilter(req, { isActive: true })).select('_id');
+  // 2026-10-05 (the user): CEO/MD and Admin get the R&R celebration too.
+  // audience 'all' so it shows in the Admin portal bell as well as My Portal
+  // (it was 'employee', which hid it from SuperAdmin/HR-in-admin and CEO/MD);
+  // `action: true` so notify.js's CEO/MD action-only gate lets it through.
   await notifyMany(users.map((u) => u._id), {
     type: 'recognition',
-    audience: 'employee',
+    audience: 'all',
+    action: true,
     title: `🏆 ${period} Rewards & Recognition`,
     body: eom
       ? `${eom.categoryName || 'Best Employee'}: ${eom.name}. Congratulations to all the winners!`
