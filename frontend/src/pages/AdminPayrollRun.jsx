@@ -18,7 +18,12 @@
  */
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
+import {
+  FiArrowDownRight, FiArrowRight, FiArrowUpRight, FiCalendar, FiCheck, FiClock, FiFileText,
+  FiLayers, FiRefreshCw, FiShield, FiSliders, FiTrendingUp, FiX,
+} from 'react-icons/fi';
 import api from '../api/client';
+import { openProtectedPdf } from '../api/download';
 import PageHeader from '../components/PageHeader';
 import { useAuthStore } from '../store/authStore';
 import { canAdministerEmployee, canApproveSalaryChanges, isReadOnlyExec } from '../config/permissions';
@@ -27,16 +32,17 @@ import { peopleOptions } from '../utils/peopleOptions';
 import SalaryChangeInbox from '../components/SalaryChangeInbox';
 import { promptDialog } from '../components/dialogs';
 import { useNavCountsStore } from '../store/navCountsStore';
+import { PersonAvatar } from '../components/permissions/permUi';
+import '../styles/pages/hikes.css';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-const PAYSLIP_STYLES = {
-  Draft: 'bg-gray-100 text-gray-700',
-  Approved: 'bg-blue-100 text-blue-800',
-  Paid: 'bg-green-100 text-green-700',
-  OnHold: 'bg-amber-100 text-amber-800',
-};
+// A salary structure's components, in payslip order, for the monthly split.
+const SPLIT_KEYS = [
+  ['basicPct', 'Basic'], ['hraPct', 'HRA'], ['specialAllowancePct', 'Special'],
+  ['conveyancePct', 'Conveyance'], ['medicalPct', 'Medical'], ['ltaPct', 'LTA'],
+];
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
 const fullName = (u) => `${u?.firstName || ''} ${u?.lastName || ''}`.trim();
@@ -60,6 +66,7 @@ export default function AdminPayrollRun() {
   const [error, setError] = useState('');
   const [setup, setSetup] = useState({ salaryStructure: '', annualCtc: '' });
   const [hike, setHike] = useState(null); // hike modal form, or null when closed
+  const [showAllRevisions, setShowAllRevisions] = useState(false);
   // Bumped after anything that can add, decide or withdraw a salary change, so
   // both approval lists on the page reload with it.
   const [changesKey, setChangesKey] = useState(0);
@@ -75,6 +82,7 @@ export default function AdminPayrollRun() {
 
   const load = async (emp = employee) => {
     if (!emp) return;
+    if (emp !== run?.employee?._id) setShowAllRevisions(false);
     setLoading(true); setError('');
     try {
       const [aRes, rRes] = await Promise.all([
@@ -222,30 +230,50 @@ export default function AdminPayrollRun() {
     (setup.salaryStructure !== savedStructure && !!savedStructure)
     || ((Number(setup.annualCtc) || 0) !== savedCtc && savedCtc > 0));
 
+  // The structure's percentages turned into this month's rupees — what the CTC
+  // actually pays out as, per component. Display only; payroll computes its own.
+  const structureObj = run?.employee?.salaryStructure && typeof run.employee.salaryStructure === 'object'
+    ? run.employee.salaryStructure : null;
+  const monthlySplit = structureObj?.components && savedCtc > 0
+    ? SPLIT_KEYS
+      .map(([key, label]) => ({ label, amount: Math.round((savedCtc * (Number(structureObj.components[key]) || 0)) / 100 / 12) }))
+      .filter((r) => r.amount > 0)
+    : [];
+  const revisions = run?.employee?.ctcHistory ? [...run.employee.ctcHistory].reverse() : [];
+  const shownRevisions = showAllRevisions ? revisions : revisions.slice(0, 5);
+  const periodLabel = att ? `${MONTHS[att.month - 1]} ${att.year || year}` : `${MONTHS[month - 1]} ${year}`;
+  const paidPct = c && c.daysInMonth ? Math.max(0, Math.min(100, Math.round((c.paidDays / c.daysInMonth) * 100))) : 0;
+
   return (
     <div>
-      <PageHeader title="Hikes" />
-
-      {/* Filters + OK */}
-      <div className="bg-white p-3 rounded-lg shadow-sm mb-4 flex gap-2 items-center flex-wrap">
-        <SearchableSelect value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }} className="border rounded-lg px-3 py-2 text-sm bg-white min-w-[210px]">
-          {peopleOptions(employees, (p) => `${fullName(p.user)} (${p.employeeCode || '-'})`, { keep: [employee] })}
-        </SearchableSelect>
-        <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
-          {Array.from({ length: 4 }, (_, i) => now.getFullYear() + 1 - i).map((y) => <option key={y}>{y}</option>)}
-        </select>
-        <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="border rounded-lg px-3 py-2 text-sm bg-white">
-          {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-        </select>
-        <button onClick={() => load()} disabled={loading || !employee}
-          className="px-5 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-60">
-          {loading ? 'Loading…' : 'OK'}
-        </button>
+      <PageHeader title="Hikes">
         {slip && (
-          <span className={`ml-auto text-xs px-2.5 py-1 rounded-full font-semibold ${PAYSLIP_STYLES[slip.status]}`}>
-            {MONTHS[att.month - 1]} payslip: {slip.status} · {inr(slip.netPay)}
+          <span className={`hk-slip is-${String(slip.status).toLowerCase()}`}>
+            <FiFileText size={13} /> {MONTHS[att.month - 1]} payslip · {slip.status} · {inr(slip.netPay)}
           </span>
         )}
+      </PageHeader>
+
+      {/* Who and which month */}
+      <div className="pb-toolbar hk-toolbar">
+        <div className="hk-pick">
+          <SearchableSelect value={employee} onChange={(e) => { setEmployee(e.target.value); load(e.target.value); }}
+            className="prm-input block w-full">
+            {peopleOptions(employees, (p) => `${fullName(p.user)} (${p.employeeCode || '-'})`, { keep: [employee] })}
+          </SearchableSelect>
+        </div>
+        <div className="hk-period">
+          <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="prm-input" aria-label="Month">
+            {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+          </select>
+          <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="prm-input" aria-label="Year">
+            {Array.from({ length: 4 }, (_, i) => now.getFullYear() + 1 - i).map((y) => <option key={y}>{y}</option>)}
+          </select>
+          <button type="button" onClick={() => load()} disabled={loading || !employee}
+            className="trn-btn is-primary accent-bg text-white hk-ok">
+            {loading ? <FiRefreshCw size={14} className="animate-spin" /> : <FiCheck size={15} />} OK
+          </button>
+        </div>
       </div>
 
       {error && <div className="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{error}</div>}
@@ -255,7 +283,7 @@ export default function AdminPayrollRun() {
           card below instead, so it is not listed twice. */}
       <SalaryChangeInbox
         hideWhenEmpty
-        className="mb-4 bg-white p-4 rounded-lg shadow-sm"
+        className="mb-4 hk-card"
         title="Salary changes waiting for approval"
         excludeEmployee={employee}
         reloadKey={changesKey}
@@ -266,240 +294,342 @@ export default function AdminPayrollRun() {
         onChanged={() => { changesMoved(); load(); }}
       />
 
-      {att && (
-        <>
-          {c && (
-            <div>
-              {/* Salary setup, CTC revisions + the attendance roll-up behind them */}
-              <div className="bg-white shadow rounded-xl p-5">
-                <h3 className="font-semibold text-gray-800 mb-3">Salary setup · {fullName(run.employee.user)}</h3>
-                {/* This employee's change waiting for a CEO/MD, with what the
-                    viewer may do about it (approve / turn down, or withdraw). */}
-                <SalaryChangeInbox
-                  employee={employee}
-                  hideWhenEmpty
-                  className="mb-4"
-                  reloadKey={`${changesKey}:${employee}`}
-                  onChanged={() => { changesMoved(); load(); }}
-                />
-                <div className="flex flex-wrap gap-2 items-center mb-4">
-                  <SearchableSelect value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
-                    className="border rounded-lg px-3 py-2 text-sm bg-white flex-1 min-w-[160px]">
-                    <option value="">Salary structure</option>
-                    {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
-                  </SearchableSelect>
-                  <input type="number" min="0" placeholder="Annual CTC (₹)" value={setup.annualCtc}
-                    onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
-                    className="border rounded-lg px-3 py-2 text-sm w-40" />
-                  <button onClick={saveSetup} disabled={busy || !canRevise || heldByPending}
+      {!att && loading && (
+        <div className="space-y-3">
+          <div className="skeleton h-32 rounded-2xl" />
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="skeleton h-72 rounded-2xl" />
+            <div className="skeleton h-72 rounded-2xl" />
+          </div>
+        </div>
+      )}
+
+      {att && c && (
+        <div className={loading ? 'hk-stale' : undefined}>
+          {/* The person and what they are paid now */}
+          <section className="hk-hero">
+            <div className="hk-who">
+              <PersonAvatar user={run.employee.user} size="lg" />
+              <div className="min-w-0">
+                <h2 className="hk-name">{fullName(run.employee.user)}</h2>
+                <div className="hk-meta">
+                  {[run.employee.employeeCode, run.employee.designation, run.employee.department].filter(Boolean).join(' · ') || '—'}
+                </div>
+                {structureObj?.name && <span className="hk-chip"><FiLayers size={12} /> {structureObj.name}</span>}
+              </div>
+            </div>
+            <div className="hk-ctc">
+              <span className="hk-ctc-label">Annual CTC</span>
+              <span className="hk-ctc-value">{savedCtc ? inr(savedCtc) : '—'}</span>
+              <span className="hk-ctc-sub">{savedCtc ? `${inr(Math.round(savedCtc / 12))} / month` : 'Not set up'}</span>
+            </div>
+            <div className="hk-hero-actions">
+              <button type="button" onClick={openHike} disabled={busy || !canRevise || heldByPending}
+                title={!canRevise ? NO_MANAGER_SALARY
+                  : heldByPending ? HELD
+                    : approvalRequired ? "Revise this employee's CTC — goes to a CEO/MD for approval" : "Revise this employee's CTC (increment)"}
+                className="trn-btn is-lg hk-revise">
+                <FiTrendingUp size={16} /> Revise salary
+              </button>
+              {approvalRequired && canRevise && salarySaved && !pendingChange && (
+                <span className="hk-approval"><FiShield size={12} /> Needs CEO/MD approval</span>
+              )}
+            </div>
+          </section>
+
+          {/* This employee's change waiting for a CEO/MD, with what the viewer
+              may do about it (approve / turn down, or withdraw). */}
+          <SalaryChangeInbox
+            employee={employee}
+            hideWhenEmpty
+            className="mb-4 hk-card hk-pending"
+            reloadKey={`${changesKey}:${employee}`}
+            onChanged={() => { changesMoved(); load(); }}
+          />
+
+          <div className="hk-grid">
+            <div className="hk-col">
+              {/* Structure + CTC */}
+              <section className="hk-card">
+                <header className="hk-card-head">
+                  <h3 className="hk-card-title"><FiSliders size={15} /> Salary setup</h3>
+                </header>
+                <div className="hk-setup">
+                  <label className="block min-w-0">
+                    <span className="prm-label">Salary structure</span>
+                    <SearchableSelect value={setup.salaryStructure} onChange={(e) => setSetup({ ...setup, salaryStructure: e.target.value })}
+                      className="prm-input block w-full">
+                      <option value="">Select…</option>
+                      {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
+                    </SearchableSelect>
+                  </label>
+                  <label className="block min-w-0">
+                    <span className="prm-label">Annual CTC (₹)</span>
+                    <input type="number" min="0" value={setup.annualCtc}
+                      onChange={(e) => setSetup({ ...setup, annualCtc: e.target.value })}
+                      className="prm-input hk-num" />
+                  </label>
+                  <button type="button" onClick={saveSetup} disabled={busy || !canRevise || heldByPending}
                     title={!canRevise ? NO_MANAGER_SALARY
                       : heldByPending ? HELD
                         : saveNeedsApproval ? 'This salary is saved — the change goes to a CEO/MD for approval' : undefined}
-                    className="px-3 py-2 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                    className="trn-btn hk-save">
                     {saveNeedsApproval ? 'Send for approval' : 'Save'}
                   </button>
-                  <button onClick={openHike} disabled={busy || !canRevise || heldByPending}
-                    title={!canRevise ? NO_MANAGER_SALARY
-                      : heldByPending ? HELD
-                        : approvalRequired ? "Revise this employee's CTC — goes to a CEO/MD for approval" : "Revise this employee's CTC (increment)"}
-                    className="px-3 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Revise salary</button>
                 </div>
-                {/* Say it before they press anything: a saved salary is HR's to
-                    propose changing, and a CEO/MD's to change. */}
-                {approvalRequired && canRevise && salarySaved && !pendingChange && (
-                  <p className="-mt-2 mb-4 text-[11px] text-gray-500">
-                    A change goes to a CEO/MD for approval first.
-                  </p>
-                )}
-
-                {run.employee?.ctcHistory?.length > 0 && (
-                  <div className="mb-4 text-xs">
-                    <div className="font-semibold text-gray-600 mb-1">CTC revisions</div>
-                    <ul className="space-y-0.5">
-                      {[...run.employee.ctcHistory].reverse().slice(0, 5).map((h, i) => (
-                        <li key={i} className="text-gray-500 flex justify-between gap-2">
-                          <span>
-                            {MONTHS[(h.effectiveMonth || 1) - 1]} {h.effectiveYear}: {inr(h.previousCtc)} → <span className="text-gray-700 font-medium">{inr(h.newCtc)}</span>
-                            {h.reason ? ` · ${h.reason}` : ''}
-                          </span>
-                          <span className="text-gray-400 shrink-0 text-right">
-                            {h.byName || ''}
-                            {/* Revisions that went through the CEO/MD step say who agreed. */}
-                            {h.approvedByName && <span className="block">approved by {h.approvedByName}</span>}
-                          </span>
-                        </li>
+                {monthlySplit.length > 0 && (
+                  <div className="hk-split">
+                    <div className="hk-split-head">
+                      <span>Monthly split</span>
+                      <span>{inr(Math.round(savedCtc / 12))}</span>
+                    </div>
+                    <div className="hk-split-grid">
+                      {monthlySplit.map((r) => (
+                        <div key={r.label} className="hk-split-cell">
+                          <span className="hk-split-label">{r.label}</span>
+                          <span className="hk-split-value">{inr(r.amount)}</span>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-                  <Stat label="Paid days" value={`${c.paidDays} / ${c.daysInMonth}`} />
-                  <Stat label="LOP days" value={c.lopDays} warn={c.lopDays > 0} />
-                  {c.notEmployedDays > 0 && (
-                    <Stat label="On payroll" value={`${c.eligibleDays} / ${c.daysInMonth} days`} warn />
-                  )}
-                  <Stat label="Present" value={c.counts.present} />
-                  <Stat label="Half days" value={c.counts.halfDay} />
-                  <Stat label={`Leave (of ${c.policy?.paidLeaveQuota ?? 2})`} value={c.counts.onLeave} warn={c.policy?.excessLeave > 0} />
-                  <Stat label="Absent" value={c.counts.absent} warn={c.counts.absent > 0} />
-                  <Stat label="No-punch (LOP)" value={c.counts.noPunchAbsent ?? 0} warn={(c.counts.noPunchAbsent ?? 0) > 0} />
+              </section>
+
+              {/* Revision timeline */}
+              <section className="hk-card">
+                <header className="hk-card-head">
+                  <h3 className="hk-card-title"><FiClock size={15} /> CTC revisions</h3>
+                  <span className="hk-count">{revisions.length}</span>
+                </header>
+                {revisions.length === 0 ? (
+                  <div className="hk-empty">No revisions yet</div>
+                ) : (
+                  <ol className="hk-timeline">
+                    {shownRevisions.map((h, i) => {
+                      const up = (h.newCtc || 0) >= (h.previousCtc || 0);
+                      const pct = h.previousCtc > 0 ? Math.round(((h.newCtc - h.previousCtc) / h.previousCtc) * 1000) / 10 : null;
+                      const hasLetter = h._id && h.previousCtc > 0 && h.newCtc > 0 && h.previousCtc !== h.newCtc;
+                      return (
+                        <li key={h._id || i} className={`hk-rev ${up ? 'is-up' : 'is-down'}`}>
+                          <span className="hk-rev-dot" aria-hidden="true">
+                            {up ? <FiArrowUpRight size={13} /> : <FiArrowDownRight size={13} />}
+                          </span>
+                          <div className="hk-rev-body">
+                            <div className="hk-rev-top">
+                              <span className="hk-rev-when">{MONTHS[(h.effectiveMonth || 1) - 1]} {h.effectiveYear}</span>
+                              {pct !== null && pct !== 0 && (
+                                <span className="hk-rev-pct">{pct > 0 ? '+' : ''}{pct}%</span>
+                              )}
+                            </div>
+                            <div className="hk-rev-amt">
+                              <span className="hk-rev-old">{inr(h.previousCtc)}</span>
+                              <FiArrowRight size={12} className="opacity-50" />
+                              <span className="hk-rev-new">{inr(h.newCtc)}</span>
+                            </div>
+                            {h.reason && <div className="hk-rev-reason" title={h.reason}>{h.reason}</div>}
+                            <div className="hk-rev-foot">
+                              <span className="hk-rev-by">
+                                {h.byName || ''}
+                                {/* Revisions that went through the CEO/MD step say who agreed. */}
+                                {h.approvedByName && <> · approved by {h.approvedByName}</>}
+                              </span>
+                              {/* The increment (or salary revision) letter the employee was mailed. */}
+                              {hasLetter && (
+                                <button type="button" className="hk-letter"
+                                  onClick={() => openProtectedPdf(`/payroll/employees/${run.employee._id}/ctc-history/${h._id}/letter.pdf`, 'Could not open the letter')
+                                    .catch((err) => toast.error(err.message))}
+                                  title={up ? 'Increment letter (PDF)' : 'Revision letter (PDF)'}>
+                                  <FiFileText size={12} /> Letter
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+                {revisions.length > 5 && (
+                  <button type="button" className="hk-more" onClick={() => setShowAllRevisions((v) => !v)}>
+                    {showAllRevisions ? 'Show fewer' : `Show all ${revisions.length}`}
+                  </button>
+                )}
+              </section>
+            </div>
+
+            {/* The month behind the decision — context, not an editing surface */}
+            <section className="hk-card hk-month">
+              <header className="hk-card-head">
+                <h3 className="hk-card-title"><FiCalendar size={15} /> {periodLabel}</h3>
+              </header>
+
+              <div className="hk-paid">
+                <div className="hk-paid-top">
+                  <span className="hk-paid-label">Paid days</span>
+                  <span className="hk-paid-value">{c.paidDays}<span> / {c.daysInMonth}</span></span>
                 </div>
-                {c.policy && (
-                  <>
-                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Attendance policy · {MONTHS[att.month - 1]}</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-                      <Stat label={`Late arrivals (of ${c.policy.lateAllowance})`} value={c.policy.lateDays} warn={c.policy.excessLate > 0} />
-                      <Stat label="Excess late" value={c.policy.excessLate} warn={c.policy.excessLate > 0} />
-                      <Stat label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
-                      <Stat label="No-punch days" value={c.policy.noPunchDays ?? 0} warn={(c.policy.noPunchDays ?? 0) > 0} />
-                      <Stat label="Duty days (2×)" value={c.policy.doublePayDays ?? 0} />
-                      {(c.policy.pendingDoublePayDays ?? 0) > 0 && (
-                        <Stat label="Duty awaiting approval" value={c.policy.pendingDoublePayDays} warn />
-                      )}
-                    </div>
-                  </>
-                )}
-                {c.hours && (
-                  <>
-                    <h4 className="font-semibold text-gray-700 mt-4 mb-2 text-sm">Working hours · {MONTHS[att.month - 1]}</h4>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-                      <Stat label="Days present" value={`${c.hours.daysPresent} days`} />
-                      <Stat label="Avg working hours" value={`${c.hours.avgHours} hrs`} />
-                      <Stat label="Comp-off earned" value={c.hours.compOff} warn={c.hours.compOff > 0} />
-                    </div>
-                  </>
-                )}
+                <div className="hk-bar" role="progressbar" aria-valuenow={paidPct} aria-valuemin={0} aria-valuemax={100}>
+                  <span style={{ width: `${paidPct}%` }} />
+                </div>
               </div>
 
-            </div>
-          )}
-        </>
+              <div className="hk-tiles">
+                <Stat label="LOP days" value={c.lopDays} warn={c.lopDays > 0} />
+                {c.notEmployedDays > 0 && (
+                  <Stat label="On payroll" value={`${c.eligibleDays} / ${c.daysInMonth}`} warn />
+                )}
+                <Stat label="Present" value={c.counts.present} />
+                <Stat label="Half days" value={c.counts.halfDay} />
+                <Stat label={`Leave (of ${c.policy?.paidLeaveQuota ?? 2})`} value={c.counts.onLeave} warn={c.policy?.excessLeave > 0} />
+                <Stat label="Absent" value={c.counts.absent} warn={c.counts.absent > 0} />
+                <Stat label="No-punch (LOP)" value={c.counts.noPunchAbsent ?? 0} warn={(c.counts.noPunchAbsent ?? 0) > 0} />
+              </div>
+
+              {c.policy && (
+                <>
+                  <h4 className="hk-sub">Attendance policy</h4>
+                  <dl className="hk-rows">
+                    <Row label={`Late arrivals (of ${c.policy.lateAllowance})`} value={c.policy.lateDays} warn={c.policy.excessLate > 0} />
+                    <Row label="Excess late" value={c.policy.excessLate} warn={c.policy.excessLate > 0} />
+                    <Row label="Excess leave" value={c.policy.excessLeave} warn={c.policy.excessLeave > 0} />
+                    <Row label="No-punch days" value={c.policy.noPunchDays ?? 0} warn={(c.policy.noPunchDays ?? 0) > 0} />
+                    <Row label="Duty days (2×)" value={c.policy.doublePayDays ?? 0} />
+                    {(c.policy.pendingDoublePayDays ?? 0) > 0 && (
+                      <Row label="Duty awaiting approval" value={c.policy.pendingDoublePayDays} warn />
+                    )}
+                  </dl>
+                </>
+              )}
+              {c.hours && (
+                <>
+                  <h4 className="hk-sub">Working hours</h4>
+                  <dl className="hk-rows">
+                    <Row label="Days present" value={`${c.hours.daysPresent} days`} />
+                    <Row label="Avg working hours" value={`${c.hours.avgHours} hrs`} />
+                    <Row label="Comp-off earned" value={c.hours.compOff} warn={c.hours.compOff > 0} />
+                  </dl>
+                </>
+              )}
+            </section>
+          </div>
+        </div>
       )}
 
-      {/* Hike / increment modal */}
+      {/* Revise salary */}
       {hike && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-50 overflow-y-auto py-8">
-          <div className="bg-white rounded-xl shadow-lg w-full max-w-lg p-6">
-            <h2 className="font-semibold text-gray-900 mb-1">Revise salary · {fullName(run?.employee?.user)}</h2>
-            <p className="text-xs text-gray-500 mb-4">Current CTC: {inr(setup.annualCtc)}/yr</p>
+          <div className="bg-white rounded-2xl shadow-lg w-full max-w-lg p-6">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <h2 className="card-title">Revise salary</h2>
+                <div className="text-xs text-gray-500 mt-0.5">{fullName(run?.employee?.user)} · now {inr(setup.annualCtc)}/yr</div>
+              </div>
+              <button type="button" onClick={() => setHike(null)} aria-label="Close" className="trn-icon-btn"><FiX size={16} /></button>
+            </div>
             {approvalRequired && (
-              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
-                Needs CEO/MD approval; payroll keeps the current CTC until then.
-              </p>
+              <div className="hk-approval is-block mb-4"><FiShield size={12} /> Needs CEO/MD approval</div>
             )}
-            <form onSubmit={submitHike} className="space-y-3">
+            <form onSubmit={submitHike} className="space-y-3.5">
               {/* Up or down. A separate toggle rather than expecting a minus
                   sign in the amount — typing "-5000" is easy to do by accident
                   and easy to misread on the way back out. */}
-              {hike.mode !== 'set' && (
+              <div className="grid gap-3.5 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Direction</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[['increase', 'Increase'], ['decrease', 'Decrease']].map(([v, label]) => (
-                      <button key={v} type="button"
-                        onClick={() => setHike({ ...hike, direction: v })}
-                        className={`px-3 py-2 rounded-lg border text-sm ${
-                          hike.direction === v
-                            ? (v === 'increase'
-                              ? 'border-emerald-600 bg-emerald-600 text-white'
-                              : 'border-rose-600 bg-rose-600 text-white')
-                            : 'border-gray-300 hover:bg-gray-50'}`}>
-                        {label}
-                      </button>
+                  <span className="prm-label">Revision type</span>
+                  <div className="trn-seg hk-seg" role="tablist" aria-label="Revision type">
+                    {[['percent', '%'], ['amount', '₹'], ['set', 'Set to']].map(([v, label]) => (
+                      <button key={v} type="button" role="tab" aria-selected={hike.mode === v}
+                        onClick={() => setHike({ ...hike, mode: v })}
+                        className={`trn-seg-btn${hike.mode === v ? ' is-on' : ''}`}>{label}</button>
                     ))}
                   </div>
                 </div>
-              )}
-
-              {/* Stacked on a phone: two columns in this modal leave the select
-                  ~78px of text room once its chevron padding is taken, and
-                  "Set new CTC to ₹" — the mode that replaces the CTC outright
-                  rather than nudging it — truncates to something unreadable. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Revision type</label>
-                  <select value={hike.mode} onChange={(e) => setHike({ ...hike, mode: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
-                    <option value="percent">Percentage (%)</option>
-                    <option value="amount">By ₹</option>
-                    <option value="set">Set new CTC to ₹</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    {hike.mode === 'percent' ? 'Percent (%)'
-                      : hike.mode === 'amount'
-                        ? `${hike.direction === 'decrease' ? 'Decrease' : 'Increase'} (₹/yr)`
-                        : 'New CTC (₹/yr)'}
-                  </label>
-                  <input type="number" min="0" required value={hike.value}
-                    onChange={(e) => setHike({ ...hike, value: e.target.value })}
-                    className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                </div>
+                {hike.mode !== 'set' && (
+                  <div>
+                    <span className="prm-label">Direction</span>
+                    <div className="trn-seg hk-seg" role="tablist" aria-label="Direction">
+                      {[['increase', 'Increase'], ['decrease', 'Decrease']].map(([v, label]) => (
+                        <button key={v} type="button" role="tab" aria-selected={hike.direction === v}
+                          onClick={() => setHike({ ...hike, direction: v })}
+                          className={`trn-seg-btn hk-dir-${v}${hike.direction === v ? ' is-on' : ''}`}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Stacked on a phone for the same reason as the pair above: a
-                  half-width select has no room left for "September" at the
-                  16px the phone forces on form controls. */}
+              <label className="block">
+                <span className="prm-label">
+                  {hike.mode === 'percent' ? 'Percent (%)'
+                    : hike.mode === 'amount'
+                      ? `${hike.direction === 'decrease' ? 'Decrease' : 'Increase'} (₹/yr)`
+                      : 'New CTC (₹/yr)'}
+                </span>
+                <input type="number" min="0" required value={hike.value} autoFocus
+                  onChange={(e) => setHike({ ...hike, value: e.target.value })}
+                  className="prm-input hk-num hk-big" />
+              </label>
+
+              {/* Stacked on a phone: a half-width select has no room left for
+                  "September" at the 16px the phone forces on form controls. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Effective month</label>
+                <label className="block">
+                  <span className="prm-label">Effective month</span>
                   <select value={hike.effectiveMonth} onChange={(e) => setHike({ ...hike, effectiveMonth: Number(e.target.value) })}
-                    className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                    className="prm-input">
                     {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                   </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Effective year</label>
+                </label>
+                <label className="block">
+                  <span className="prm-label">Effective year</span>
                   <input type="number" value={hike.effectiveYear}
                     onChange={(e) => setHike({ ...hike, effectiveYear: Number(e.target.value) })}
-                    className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                </div>
+                    className="prm-input" />
+                </label>
               </div>
 
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Switch salary structure (optional)</label>
+              <label className="block">
+                <span className="prm-label">Salary structure</span>
                 <SearchableSelect value={hike.newStructure} onChange={(e) => setHike({ ...hike, newStructure: e.target.value })}
-                  className="block w-full border rounded-lg px-3 py-2 text-sm bg-white">
+                  className="prm-input block w-full">
                   <option value="">Keep current structure</option>
                   {structures.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
                 </SearchableSelect>
-              </div>
+              </label>
 
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Reason</label>
+              <label className="block">
+                <span className="prm-label">Reason</span>
                 <input value={hike.reason} onChange={(e) => setHike({ ...hike, reason: e.target.value })}
-                  placeholder="e.g. Annual appraisal 2026, promotion" className="block w-full border rounded-lg px-3 py-2 text-sm" />
-              </div>
+                  placeholder="e.g. Annual appraisal 2026" className="prm-input" />
+              </label>
 
               {(() => {
                 const cur = Number(setup.annualCtc) || 0;
                 const down = hikePreviewCtc < cur;
-                const pct = cur > 0 ? Math.round((hikePreviewCtc / cur - 1) * 100) : 0;
-                // Wraps on a phone: a lakh-plus "₹12,00,000 → ₹13,20,000 (+10%)"
-                // beside the label is wider than the modal's ~267px row.
+                const pct = cur > 0 ? Math.round((hikePreviewCtc / cur - 1) * 1000) / 10 : 0;
                 return (
-                  <div className={`border rounded-lg px-3 py-2 text-sm flex flex-wrap sm:flex-nowrap justify-between gap-x-2 sm:gap-x-0 ${
-                    down ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'}`}>
-                    <span>New CTC</span>
-                    <span className="font-semibold">
-                      {inr(cur)} → {inr(hikePreviewCtc)}
-                      {cur > 0 && hikePreviewCtc !== cur && (
-                        <span className={`ml-1 ${down ? 'text-rose-600' : 'text-emerald-600'}`}>
-                          ({pct > 0 ? '+' : ''}{pct}%)
-                        </span>
-                      )}
-                    </span>
+                  <div className={`hk-preview ${down ? 'is-down' : 'is-up'}`}>
+                    <div className="min-w-0">
+                      <span className="hk-preview-label">New CTC</span>
+                      <span className="hk-preview-value">{inr(hikePreviewCtc)}</span>
+                      <span className="hk-preview-sub">{inr(Math.round(hikePreviewCtc / 12))} / month</span>
+                    </div>
+                    {cur > 0 && hikePreviewCtc !== cur && (
+                      <span className="hk-preview-pct">
+                        {down ? <FiArrowDownRight size={14} /> : <FiArrowUpRight size={14} />}
+                        {pct > 0 ? '+' : ''}{pct}%
+                      </span>
+                    )}
                   </div>
                 );
               })()}
 
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => setHike(null)} className="px-4 py-2 text-sm border rounded-lg hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={busy} className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-60">
+                <button type="button" onClick={() => setHike(null)} className="trn-btn">Cancel</button>
+                <button type="submit" disabled={busy} className="trn-btn is-primary accent-bg text-white">
                   {approvalRequired
                     ? (busy ? 'Sending…' : 'Send for approval')
-                    : (busy ? 'Applying…' : 'Apply hike')}
+                    : (busy ? 'Applying…' : 'Apply')}
                 </button>
               </div>
             </form>
@@ -510,12 +640,22 @@ export default function AdminPayrollRun() {
   );
 }
 
-// Small labelled stat tile (red value when `warn`) used across the run panels.
+// Small labelled tile (red value when `warn`) in the month card.
 function Stat({ label, value, warn }) {
   return (
-    <div className="bg-gray-50 rounded-lg px-3 py-2">
-      <div className="text-[11px] text-gray-500">{label}</div>
-      <div className={`font-semibold ${warn ? 'text-red-600' : 'text-gray-900'}`}>{value}</div>
+    <div className={`hk-tile${warn ? ' is-warn' : ''}`}>
+      <span className="hk-tile-value">{value}</span>
+      <span className="hk-tile-label">{label}</span>
+    </div>
+  );
+}
+
+// One label → value line in the month card's policy / hours lists.
+function Row({ label, value, warn }) {
+  return (
+    <div className={`hk-row${warn ? ' is-warn' : ''}`}>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   );
 }

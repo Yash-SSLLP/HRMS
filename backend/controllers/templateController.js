@@ -130,6 +130,22 @@ const previewTemplate = asyncHandler(async (req, res) => {
     newEmail: 'priya.sharma@sequencesurface.com',
     oldEmail: 'priya@old.example.com',
     lastWorkingDay: '31st August 2026',
+    hrName: 'HR Team',
+    previousCtc: '₹6,00,000',
+    newCtc: '₹6,60,000',
+    newMonthly: '₹55,000',
+    effectiveMonth: 'October 2026',
+    previousDesignation: 'Software Engineer',
+    newDesignation: 'Senior Software Engineer',
+    previousDepartment: 'Engineering',
+    newDepartment: 'Engineering',
+    effectiveDate: '1 October 2026',
+    changeTitle: 'Promotion',
+    fromClause: ' from Software Engineer',
+    newDepartmentClause: ' in the Engineering department',
+    designationChange: 'Senior Software Engineer (previously Software Engineer)',
+    departmentChange: 'Engineering',
+    headline: 'Congratulations! We are pleased to inform you that you have been promoted to Senior Software Engineer, effective 1 October 2026.',
   };
   const sample = Object.fromEntries((base.variables || []).map((v) => [v, SAMPLES[v] ?? `«${v}»`]));
 

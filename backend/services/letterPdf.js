@@ -752,6 +752,7 @@ function relievingBody(data = {}) {
 function letterBodyDefaults(kind, data = {}) {
   // The kind carries the exit type ('relieving.termination'), so a caller that
   // only passes the kind still gets that type's default text.
+  if (EMPLOYEE_LETTER_KINDS.includes(kind)) return employeeLetterBody(kind, data);
   if (kind === 'relieving' || String(kind).startsWith('relieving.')) {
     const exitType = kind === 'relieving.termination' ? 'Termination'
       : kind === 'relieving.retirement' ? 'Retirement' : 'Resignation';
@@ -846,7 +847,18 @@ async function resolveLetterBody(kind, data = {}) {
       sickLeaveDays: data.sickLeaveDays || 12,
       retirementAge: data.retirementAge || 60,
       employmentType: data.employmentType || 'Full-Time Employee',
+      // ----- promotion / transfer / increment / salary revision -----
+      previousDesignation: data.previousDesignation || '',
+      newDesignation: data.newDesignation || '__________',
+      previousDepartment: data.previousDepartment || '',
+      newDepartment: data.newDepartment || '__________',
+      fromClause: data.previousDesignation ? ` from ${data.previousDesignation}` : '',
+      newDepartmentClause: data.newDepartment ? ` in the ${data.newDepartment} department` : '',
+      effectiveDate: longDate(data.effectiveDate),
+      effectiveMonth: data.effectiveMonth || '__________',
     };
+    // These letters go to a serving employee of a named company.
+    if (data.companyName) vars.companyName = data.companyName;
     return await renderLetterBlocks(`${kind}.letter`, vars, fallback);
   } catch (err) {
     console.error(`Letter template lookup failed for ${kind}:`, err.message);
@@ -1616,9 +1628,173 @@ async function renderRelievingLetter(data = {}) {
   }
   return lastBuffer;
 }
+
+// ===========================================================================
+// PROMOTION / TRANSFER and SALARY INCREMENT / REVISION LETTERS (2026-10-05)
+//
+// Four short letters to a serving employee, in the offer/relieving letter's
+// layout: letterhead, date, addressee, a centred "Sub:", "Dear <name>,", the
+// editable body, then both signature columns. One sheet, shrinking a step at a
+// time if an edited body runs long. The salary letters print a figures table
+// after the first paragraph — the numbers are not part of the editable text,
+// so a template edit can never print a wrong amount.
+//
+// Kinds (each its own template, `<kind>.letter`, in services/templateRegistry.js
+// — keep the texts identical):
+//   promotion        a new designation (department may change too)
+//   transfer         same designation, new department
+//   increment        CTC revised UPWARDS
+//   salary.revision  CTC revised downwards — no "pleased to inform"
+// ===========================================================================
+
+const EMPLOYEE_LETTER_SUBJECTS = {
+  promotion: 'Letter of Promotion',
+  transfer: 'Inter-Department Transfer',
+  increment: 'Salary Increment',
+  'salary.revision': 'Salary Revision',
+};
+
+const EMPLOYEE_LETTER_KINDS = Object.keys(EMPLOYEE_LETTER_SUBJECTS);
+
+/**
+ * Default body blocks for one of the four employee letters.
+ * @param {'promotion'|'transfer'|'increment'|'salary.revision'} kind
+ * @param {Object} data - { companyName, previousDesignation, newDesignation,
+ *   newDepartment, effectiveDate, effectiveMonth (a label, "October 2026") }
+ * @returns {{type: 'para'|'term', text: string, bold?: boolean}[]}
+ */
+function employeeLetterBody(kind, data = {}) {
+  const company = data.companyName || COMPANY.name;
+  const from = data.previousDesignation ? ` from ${data.previousDesignation}` : '';
+  const dept = data.newDepartment ? ` in the ${data.newDepartment} department` : '';
+  const eff = data.effectiveDate ? longDate(data.effectiveDate) : '__________';
+  const month = data.effectiveMonth || '__________';
+  const unchanged = 'All other terms and conditions of your employment remain unchanged.';
+  if (kind === 'transfer') {
+    return [
+      { type: 'para', text: `This is to inform you that you have been transferred to the ${data.newDepartment || '__________'} department with effect from ${eff}, and will continue in your present designation of ${data.newDesignation || '__________'}.` },
+      { type: 'para', text: unchanged },
+      { type: 'para', bold: true, text: 'We wish you every success in your new department.' },
+    ];
+  }
+  if (kind === 'increment') {
+    return [
+      { type: 'para', text: `In recognition of your performance and contribution to ${company}, we are pleased to inform you that your annual Cost to Company (CTC) has been revised with effect from ${month}, as given below.` },
+      { type: 'para', text: `The revised salary will be reflected in your payslip from ${month}. ${unchanged}` },
+      { type: 'para', bold: true, text: 'We appreciate your efforts and look forward to your continued contribution.' },
+    ];
+  }
+  if (kind === 'salary.revision') {
+    return [
+      { type: 'para', text: `This is to inform you that your annual Cost to Company (CTC) has been revised with effect from ${month}, as given below.` },
+      { type: 'para', text: `The revised salary will be reflected in your payslip from ${month}. ${unchanged}` },
+    ];
+  }
+  return [
+    { type: 'para', text: `In recognition of your performance and contribution to ${company}, we are pleased to inform you that you have been promoted${from} to the position of ${data.newDesignation || '__________'}${dept}, with effect from ${eff}.` },
+    { type: 'para', text: `We are confident that you will discharge the responsibilities of your new role with the same commitment you have shown so far. ${unchanged}` },
+    { type: 'para', bold: true, text: 'Congratulations on your promotion, and we wish you continued success.' },
+  ];
+}
+
+// A bordered two-column table of figures — label | value — at the cursor.
+function figuresTable(doc, F, rows) {
+  const s = S(F);
+  const size = 10 * s;
+  const pad = 5 * s;
+  const labelW = CW * 0.55;
+  ensureRoom(doc, rows.length * (size + 2 * pad + 4) + 10);
+  let y = doc.y + 2 * s;
+  rows.forEach(([label, value, bold], i) => {
+    doc.font(F.regular).fontSize(size);
+    const h = Math.max(
+      doc.heightOfString(String(label), { width: labelW - 2 * pad }),
+      doc.heightOfString(String(value), { width: CW - labelW - 2 * pad })
+    ) + 2 * pad;
+    doc.save().rect(X0, y, labelW, h).fill(i % 2 ? '#ffffff' : '#f4f6f9').restore();
+    doc.save().lineWidth(0.6).strokeColor('#b9c2cf').rect(X0, y, CW, h).stroke().restore();
+    doc.save().lineWidth(0.6).strokeColor('#b9c2cf').moveTo(X0 + labelW, y).lineTo(X0 + labelW, y + h).stroke().restore();
+    doc.font(F.regular).fontSize(size).fillColor(MUTED)
+      .text(String(label), X0 + pad, y + pad, { width: labelW - 2 * pad });
+    doc.font(bold ? F.bold : F.regular).fontSize(size).fillColor(INK)
+      .text(String(value), X0 + labelW + pad, y + pad, { width: CW - labelW - 2 * pad });
+    y += h;
+  });
+  doc.x = X0;
+  doc.y = y + 12 * s;
+}
+
+function renderEmployeeLetterOnce(data, scale) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 0 });
+    const chunks = [];
+    let pages = 1;
+    doc.on('pageAdded', () => { pages += 1; });
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), pages }));
+    doc.on('error', reject);
+
+    const F = { ...setupFonts(doc), s: scale };
+    const R = F.rupee;
+    const brand = data.brand || {};
+    const y = drawLetterhead(doc, F, brand);
+    const who = data.employeeName || '';
+
+    para(doc, F, `Date: ${todayLong()}`, { y });
+    doc.moveDown(0.4 * scale);
+    para(doc, F, who, { bold: true, gap: 0.15 });
+    if (data.employeeCode) para(doc, F, `Employee Code: ${data.employeeCode}`, { gap: 1 });
+    else doc.moveDown(0.6 * scale);
+
+    para(doc, F, `Sub: ${EMPLOYEE_LETTER_SUBJECTS[data.kind] || 'Letter'}`, { bold: true, align: 'center', gap: 1 });
+    para(doc, F, `Dear ${who || 'Employee'},`, { gap: 0.8 });
+
+    const blocks = bodyOrDefault(data, employeeLetterBody(data.kind, data));
+    // Money is formatted here, with the font's own rupee glyph ("Rs " when the
+    // font has none), not by the caller.
+    const figures = (data.figures || []).map(([label, value, bold]) => [
+      label,
+      // number = an amount; { amount, prefix, suffix } = an amount with a sign
+      // or a note around it ("+₹60,000 (+25%)"); anything else prints as given.
+      typeof value === 'number' ? `${R}${formatINR(value)}`
+        : (value && typeof value === 'object')
+          ? `${value.prefix || ''}${R}${formatINR(value.amount)}${value.suffix || ''}` : value,
+      bold,
+    ]);
+    if (figures.length && blocks.length) {
+      drawBlocks(doc, F, blocks.slice(0, 1));
+      figuresTable(doc, F, figures);
+      drawBlocks(doc, F, blocks.slice(1));
+    } else {
+      drawBlocks(doc, F, blocks);
+      if (figures.length) figuresTable(doc, F, figures);
+    }
+
+    signatureBlock(doc, F, data.signatoryName, data.signatoryTitle, false, brand, { markInkH: LETTER_MARK_H });
+    doc.end();
+  });
+}
+
+/**
+ * A promotion, transfer, increment or salary-revision letter — one sheet.
+ * @param {Object} data - { kind, employeeName, employeeCode, companyName,
+ *   figures?: [label, number|string, bold?][], body?, brand, signatoryName?,
+ *   signatoryTitle? } plus the fields employeeLetterBody reads
+ * @returns {Promise<Buffer>}
+ */
+async function renderEmployeeLetter(data = {}) {
+  let lastBuffer = null;
+  for (const scale of OFFER_FIT_STEPS) {
+    const { buffer, pages } = await renderEmployeeLetterOnce(data, scale);
+    if (pages === 1) return buffer;
+    lastBuffer = buffer;
+  }
+  return lastBuffer;
+}
 
 module.exports = {
   renderOfferLetter, renderAppointmentLetter, renderRelievingLetter,
+  renderEmployeeLetter, employeeLetterBody, EMPLOYEE_LETTER_SUBJECTS, EMPLOYEE_LETTER_KINDS,
   letterBodyDefaults, resolveLetterBody, relievingKind,
   // The letter's own date format ('21st July 2025'). Exported so a covering
   // EMAIL can print the same dates as the PDF attached to it, rather than each

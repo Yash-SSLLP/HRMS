@@ -126,6 +126,9 @@ const EXEC_WRITE_PATHS = [
   // alerts read — opening one from the bell, "Mark all read". Nothing here
   // changes company data.
   /\/notifications(\/|$|\?)/,
+  // PROMOTIONS. A CEO/MD gives one in either mode — promotionController's
+  // requirePromoter names them outright, like Companies.
+  /\/promotions(\/|$|\?)/,
   // CALENDAR REMINDERS. /reminders runs on `protect` alone and the controller
   // names CEO/MD as broadcast roles, so a read-only exec adds, edits and
   // deletes reminders on the server. Missing here (until 2026-09-30), the

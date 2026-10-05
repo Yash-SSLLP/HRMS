@@ -31,10 +31,15 @@
  *  - `required` still participates in native form validation via a hidden input
  *    sized over the control (the react-select approach), so forms that rely on
  *    the browser's "please fill in this field" keep doing so.
+ *
+ * `onCreate(text)` (single mode only) adds a last row, ＋ Add "<typed text>",
+ * whenever the search box holds something no option is called — so a value
+ * that is not in the list yet can be added from where it was looked for.
+ * `createLabel(text)` words that row.
  */
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiChevronDown, FiSearch, FiCheck, FiX } from 'react-icons/fi';
+import { FiChevronDown, FiSearch, FiCheck, FiX, FiPlus } from 'react-icons/fi';
 
 // Below this many options a search box is more noise than help.
 const SEARCH_THRESHOLD = 7;
@@ -112,6 +117,8 @@ export default function SearchableSelect({
   id,
   placeholder = 'Select…',
   searchPlaceholder = 'Type to search…',
+  onCreate,
+  createLabel = (text) => `Add “${text}”`,
   ...rest
 }) {
   // `children` is JSX the parent rebuilds on every render, so its identity always
@@ -185,6 +192,17 @@ export default function SearchableSelect({
     });
   }, [options, terms]);
 
+  // The ＋ Add row: only for text no option already carries (case-insensitive),
+  // and always LAST, so Enter on a partial match still picks the match.
+  const createText = query.trim();
+  const canCreate = !!onCreate && !multiple && createText.length > 0
+    && !options.some((o) => o.label.trim().toLowerCase() === createText.toLowerCase());
+  const rows = useMemo(() => (canCreate
+    ? [...filtered, { value: '__ss_create__', label: createLabel(createText), group: '', create: true }]
+    : filtered
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [filtered, canCreate, createText]);
+
   // How many options the searchOnly groups are holding back right now — shown
   // as a hint so the list never looks like it is simply missing people.
   const hiddenCount = useMemo(
@@ -197,7 +215,7 @@ export default function SearchableSelect({
     if (!el) return;
     const r = el.getBoundingClientRect();
     const below = window.innerHeight - r.bottom;
-    const menuH = Math.min(360, Math.max(180, filtered.length * 40 + 56));
+    const menuH = Math.min(360, Math.max(180, rows.length * 40 + 56));
     // Flip above when the field sits too low to show a usable menu.
     const up = below < menuH && r.top > below;
     // The menu is NOT tied to the trigger's width. A compact filter control
@@ -214,7 +232,7 @@ export default function SearchableSelect({
       bottom: up ? window.innerHeight - r.top + 6 : undefined,
       maxHeight: Math.max(180, (up ? r.top : below) - 16),
     });
-  }, [filtered.length]);
+  }, [rows.length]);
 
   useLayoutEffect(() => { if (open) place(); }, [open, place]);
 
@@ -267,6 +285,12 @@ export default function SearchableSelect({
 
   const pick = (opt) => {
     if (!opt || opt.disabled) return;
+    if (opt.create) {
+      setOpen(false);
+      triggerRef.current?.focus();
+      onCreate(createText);
+      return;
+    }
     if (multiple) {
       // Toggle and stay open — picking several in a row is the whole point.
       emitMulti(isSelected(opt.value) ? selected.filter((v) => v !== opt.value) : [...selected, opt.value]);
@@ -284,11 +308,11 @@ export default function SearchableSelect({
       if (['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); setOpen(true); }
       return;
     }
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, filtered.length - 1)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, rows.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
     else if (e.key === 'Home') { e.preventDefault(); setActive(0); }
-    else if (e.key === 'End') { e.preventDefault(); setActive(filtered.length - 1); }
-    else if (e.key === 'Enter') { e.preventDefault(); pick(filtered[active]); }
+    else if (e.key === 'End') { e.preventDefault(); setActive(rows.length - 1); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(rows[active]); }
     else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
     else if (e.key === 'Tab') setOpen(false);
   };
@@ -296,7 +320,7 @@ export default function SearchableSelect({
   // The box must also appear whenever a searchOnly group is holding options
   // back: the footer hint says "type a name to search", and with a short
   // visible list the count threshold alone left nowhere to type.
-  const showSearch = options.length > SEARCH_THRESHOLD || options.some((o) => o.searchOnly);
+  const showSearch = options.length > SEARCH_THRESHOLD || options.some((o) => o.searchOnly) || !!onCreate;
 
   // A native <select> with no width class sizes to its content; a block-level
   // flex trigger would instead stretch across its parent. Match the original by
@@ -383,7 +407,7 @@ export default function SearchableSelect({
             </div>
           )}
           <div className="overflow-y-auto py-1 px-1">
-            {filtered.length === 0 ? (
+            {rows.length === 0 ? (
               <div className="ss-empty">
                 <FiSearch size={16} aria-hidden="true" />
                 {/* With nothing typed there is no term to quote — the list is
@@ -393,9 +417,24 @@ export default function SearchableSelect({
                   ? <span>No matches for <span className="ss-empty-q">“{query.trim()}”</span></span>
                   : <span>Nothing to choose from</span>}
               </div>
-            ) : filtered.map((o, i) => {
+            ) : rows.map((o, i) => {
+              if (o.create) {
+                return (
+                  <button
+                    key="__ss_create__"
+                    type="button"
+                    data-active={i === active}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => pick(o)}
+                    className={`ss-option ss-create w-full text-left px-3 py-2 text-sm flex items-center gap-2 rounded-lg accent-text font-semibold ${i === active ? 'is-active' : ''} ${filtered.length ? 'border-t border-gray-100 mt-1' : ''}`}
+                  >
+                    <FiPlus size={14} className="shrink-0" aria-hidden="true" />
+                    <span className="flex-1 break-words leading-snug">{o.label}</span>
+                  </button>
+                );
+              }
               const on = isSelected(o.value);
-              const prev = filtered[i - 1];
+              const prev = rows[i - 1];
               return (
                 <div key={`${o.group}|${o.value}|${o.label}`}>
                   {o.group && o.group !== prev?.group && (

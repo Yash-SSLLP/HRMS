@@ -183,6 +183,8 @@ const decideSalaryChange = (approve) => asyncHandler(async (req, res) => {
   }
 
   svc.notifyRequester(claimed, req.user);
+  // The employee hears of it only now, once it is final — never while it waits.
+  if (approve) svc.announceApproved(claimed, profile);
   res.json({ request: await reshaped(req, claimed._id) });
 });
 

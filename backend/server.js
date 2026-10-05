@@ -201,6 +201,7 @@ app.use('/api/guides', require('./routes/guideRoutes'));
 app.use('/api/org-masters', require('./routes/orgMasterRoutes'));
 app.use('/api/org', require('./routes/orgRoutes'));
 app.use('/api/lifecycle', require('./routes/lifecycleRoutes'));
+app.use('/api/promotions', require('./routes/promotionRoutes'));
 
 app.use('/api/shifts', require('./routes/shiftRoutes'));
 app.use('/api/regularizations', require('./routes/regularizationRoutes'));

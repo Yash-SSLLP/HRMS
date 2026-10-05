@@ -232,6 +232,108 @@ Regards,
     ['employeeName', 'employeeCode', 'period', 'companyName', 'link', 'hrName']
   ),
 
+  // The four letters to a serving employee (services/letterPdf.js
+  // employeeLetterBody — keep each text IDENTICAL to its coded default). The
+  // salary letters print their figures table after the first paragraph; the
+  // amounts are not part of the editable text.
+  letter(
+    'promotion.letter',
+    'Promotion letter',
+    'People',
+    'The body of the promotion letter PDF, attached to the promotion email and downloadable from Promotions. Page layout, letterhead and signature block stay fixed.',
+    `In recognition of your performance and contribution to {{companyName}}, we are pleased to inform you that you have been promoted{{fromClause}} to the position of {{newDesignation}}{{newDepartmentClause}}, with effect from {{effectiveDate}}.
+
+We are confident that you will discharge the responsibilities of your new role with the same commitment you have shown so far. All other terms and conditions of your employment remain unchanged.
+
+**Congratulations on your promotion, and we wish you continued success.**`,
+    ['employeeName', 'employeeCode', 'companyName', 'previousDesignation', 'fromClause', 'newDesignation',
+      'previousDepartment', 'newDepartment', 'newDepartmentClause', 'effectiveDate']
+  ),
+
+  letter(
+    'transfer.letter',
+    'Department transfer letter',
+    'People',
+    'The letter PDF for a move to another department with the same designation. Page layout, letterhead and signature block stay fixed.',
+    `This is to inform you that you have been transferred to the {{newDepartment}} department with effect from {{effectiveDate}}, and will continue in your present designation of {{newDesignation}}.
+
+All other terms and conditions of your employment remain unchanged.
+
+**We wish you every success in your new department.**`,
+    ['employeeName', 'employeeCode', 'companyName', 'previousDepartment', 'newDepartment', 'newDesignation', 'effectiveDate']
+  ),
+
+  letter(
+    'increment.letter',
+    'Salary increment (hike) letter',
+    'Payroll',
+    'The letter PDF for a CTC revised upwards, attached to the salary revision email. A table of the old and new figures prints after the first paragraph.',
+    `In recognition of your performance and contribution to {{companyName}}, we are pleased to inform you that your annual Cost to Company (CTC) has been revised with effect from {{effectiveMonth}}, as given below.
+
+The revised salary will be reflected in your payslip from {{effectiveMonth}}. All other terms and conditions of your employment remain unchanged.
+
+**We appreciate your efforts and look forward to your continued contribution.**`,
+    ['employeeName', 'employeeCode', 'companyName', 'effectiveMonth']
+  ),
+
+  letter(
+    'salary.revision.letter',
+    'Salary revision letter (reduction)',
+    'Payroll',
+    'The letter PDF for a CTC revised downwards. A table of the old and new figures prints after the first paragraph.',
+    `This is to inform you that your annual Cost to Company (CTC) has been revised with effect from {{effectiveMonth}}, as given below.
+
+The revised salary will be reflected in your payslip from {{effectiveMonth}}. All other terms and conditions of your employment remain unchanged.`,
+    ['employeeName', 'employeeCode', 'companyName', 'effectiveMonth']
+  ),
+
+  // Sent by promotionController.announcePromotion once a promotion is saved.
+  mail(
+    'promotion.mail',
+    'Promotion email',
+    'People',
+    'The email an employee receives when they are promoted or moved to another department.',
+    '{{changeTitle}} · {{newDesignation}}',
+    `Dear {{employeeName}},
+
+{{headline}}
+
+Designation: {{designationChange}}
+Department: {{departmentChange}}
+
+We wish you continued success in your new role. Your letter is attached.
+
+Regards,
+{{hrName}}
+{{companyName}}`,
+    ['employeeName', 'employeeCode', 'companyName', 'changeTitle', 'headline', 'designationChange',
+      'departmentChange', 'previousDesignation', 'newDesignation', 'previousDepartment', 'newDepartment',
+      'effectiveDate', 'hrName']
+  ),
+
+  // Sent by services/salaryChanges.announceCtcChange once a revised CTC is final
+  // — approved by a CEO/MD/Super Admin, or written by one of them directly.
+  mail(
+    'salary.revision.mail',
+    'Salary revision email',
+    'Payroll',
+    'The email an employee receives once a change to their annual CTC has been approved.',
+    'Salary revision · effective {{effectiveMonth}}',
+    `Dear {{employeeName}},
+
+Your salary has been revised with effect from {{effectiveMonth}}.
+
+Revised annual CTC: {{newCtc}} ({{newMonthly}} per month)
+Previous annual CTC: {{previousCtc}}
+
+The revised salary will reflect in your payslip from {{effectiveMonth}}. Your letter is attached.
+
+Regards,
+{{hrName}}
+{{companyName}}`,
+    ['employeeName', 'employeeCode', 'companyName', 'previousCtc', 'newCtc', 'newMonthly', 'effectiveMonth', 'hrName']
+  ),
+
   // One relieving letter per exit type (2026-09-23): a terminated employee was
   // being issued the resignation wording. The key of the resignation one is
   // unchanged so any wording HR had already saved keeps applying to it. Keep

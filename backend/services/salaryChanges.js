@@ -575,6 +575,145 @@ async function notifyRequester(request, actor) {
   }
 }
 
+/**
+ * The increment (hike) letter — or, for a reduction, the salary revision
+ * letter — for one CTC change, as PDF bytes. Shared by the email attachment
+ * and GET /payroll/employees/:id/ctc-history/:entryId/letter.pdf so the two
+ * can never differ.
+ * @param {Object} profile - EmployeeProfile (user, company, employeeCode, designation)
+ * @param {{previousCtc: number, newCtc: number, effectiveYear?: number, effectiveMonth?: number}} change
+ * @returns {Promise<{pdf: Buffer, fileName: string, kind: string}>}
+ */
+async function buildSalaryLetter(profile, change) {
+  const User = require('../models/User');
+  const Company = require('../models/Company');
+  const COMPANY = require('../config/company');
+  const { renderEmployeeLetter, resolveLetterBody } = require('./letterPdf');
+  const { getBranding } = require('./branding');
+
+  const prev = Math.round(Number(change.previousCtc) || 0);
+  const next = Math.round(Number(change.newCtc) || 0);
+  const user = profile.user && profile.user.firstName !== undefined
+    ? profile.user
+    : await User.findById(idOf(profile.user)).select('firstName lastName').lean();
+  const company = idOf(profile.company)
+    ? await Company.findById(idOf(profile.company)).select('name').lean() : null;
+  const now = thisMonthIST();
+  const effective = monthLabel(Number(change.effectiveYear) || now.year, Number(change.effectiveMonth) || now.month);
+  const kind = next >= prev ? 'increment' : 'salary.revision';
+  const diff = next - prev;
+  const pct = prev ? Math.round((diff / prev) * 1000) / 10 : 0;
+  const data = {
+    kind,
+    employeeName: `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Employee',
+    employeeCode: profile.employeeCode,
+    companyName: company?.name || COMPANY.name,
+    effectiveMonth: effective,
+    figures: [
+      ['Previous annual CTC', prev],
+      ['Revised annual CTC', next, true],
+      ['Revised monthly CTC', Math.round(next / 12)],
+      [diff >= 0 ? 'Increase' : 'Reduction', {
+        prefix: diff >= 0 ? '+' : '−',
+        amount: Math.abs(diff),
+        suffix: prev ? ` (${diff >= 0 ? '+' : '−'}${Math.abs(pct)}%)` : '',
+      }],
+      ['Effective from', effective],
+    ],
+    brand: await getBranding(),
+  };
+  data.body = await resolveLetterBody(kind, data);
+  const pdf = await renderEmployeeLetter(data);
+  const safe = data.employeeName.replace(/[^\w.-]+/g, '-').toLowerCase();
+  return { pdf, fileName: `${kind === 'increment' ? 'increment' : 'salary-revision'}-letter-${safe}.pdf`, kind };
+}
+
+/**
+ * Tell the EMPLOYEE their CTC has changed — a mail with the figures and a bell /
+ * push notification without them (pay never shows on a lock screen or a passing
+ * glance at the bell; the mail goes to their own inbox).
+ *
+ * Called only once the change is FINAL: on approval, or when a CEO/MD/Super
+ * Admin wrote it directly. A proposal still waiting tells the employee nothing,
+ * and neither does filling a blank CTC (setting a new joiner up is not a
+ * revision) nor a structure-only move that leaves the CTC where it was.
+ * Never throws — the salary is already saved; a failed mail must not undo it.
+ *
+ * @param {Object} profile - EmployeeProfile (user, company, employeeCode)
+ * @param {Object} change
+ * @param {number} change.previousCtc / change.newCtc
+ * @param {number} [change.effectiveYear] / [change.effectiveMonth] - default this month
+ * @param {Object} [opts]
+ * @param {*} [opts.hrUser] - whoever raised it: signs the mail, and a reply goes to them
+ * @param {string} [opts.hrName] - their name, when already to hand
+ */
+async function announceCtcChange(profile, change, { hrUser, hrName } = {}) {
+  try {
+    const prev = Math.round(Number(change.previousCtc) || 0);
+    const next = Math.round(Number(change.newCtc) || 0);
+    if (!prev || !next || prev === next) return;
+
+    const User = require('../models/User');
+    const Company = require('../models/Company');
+    const { enqueueMail } = require('./email');
+    const { renderMail } = require('./templates');
+    const COMPANY = require('../config/company');
+
+    const user = await User.findById(idOf(profile.user)).select('firstName lastName email isActive').lean();
+    if (!user || user.isActive === false) return;
+    const hr = idOf(hrUser) ? await User.findById(idOf(hrUser)).select('firstName lastName email').lean() : null;
+    const now = thisMonthIST();
+    const effective = monthLabel(Number(change.effectiveYear) || now.year, Number(change.effectiveMonth) || now.month);
+
+    await notify({
+      recipient: user._id,
+      type: 'payroll',
+      audience: 'employee',
+      title: 'Your salary has been revised',
+      body: `Your salary has been revised with effect from ${effective}. The details have been sent to your email.`,
+      link: '/employee/payslips',
+    }).catch((err) => console.error('salary revision employee notify failed:', err.message));
+
+    if (!user.email) return;
+    const company = idOf(profile.company)
+      ? await Company.findById(idOf(profile.company)).select('name').lean() : null;
+    const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Employee';
+    const vars = {
+      employeeName: name,
+      employeeCode: profile.employeeCode || '',
+      companyName: company?.name || COMPANY.name,
+      previousCtc: inr(prev),
+      newCtc: inr(next),
+      newMonthly: inr(next / 12),
+      effectiveMonth: effective,
+      hrName: hrName || actorName(hr) || 'HR Team',
+    };
+    // The letter rides along; a letter that fails to render must not stop the mail.
+    let attachments;
+    try {
+      const { pdf, fileName } = await buildSalaryLetter(profile, change);
+      attachments = [{ filename: fileName, content: pdf.toString('base64'), contentType: 'application/pdf' }];
+    } catch (err) {
+      console.error('salary letter render failed:', err.message);
+    }
+    const rendered = await renderMail('salary.revision.mail', vars, {
+      subject: `Salary revision · effective ${effective}`,
+      body: `Dear ${vars.employeeName},\n\n`
+        + `Your salary has been revised with effect from ${effective}.\n\n`
+        + `Revised annual CTC: ${vars.newCtc} (${vars.newMonthly} per month)\n`
+        + `Previous annual CTC: ${vars.previousCtc}\n\n`
+        + `The revised salary will reflect in your payslip from ${effective}. Your letter is attached.\n\n`
+        + `Regards,\n${vars.hrName}\n${vars.companyName}`,
+    });
+    await enqueueMail(
+      { to: user.email, subject: rendered.subject, text: rendered.text, replyTo: hr?.email || undefined, attachments },
+      { type: 'salaryRevision', id: profile._id }
+    );
+  } catch (err) {
+    console.error('salary revision employee mail failed:', err.message);
+  }
+}
+
 // ------------------------------------------------------------ deciding ----
 
 /**
@@ -668,6 +807,23 @@ async function applyApproved(request, actor, { profile, structure }) {
   await profile.save();
 }
 
+/**
+ * Once an approved request is applied, tell the employee it touched — the CTC
+ * kinds only; a structure's new percentages are a template change, not anybody's
+ * revision. Fire-and-forget: the decision is already made and saved.
+ * @param {Object} request - the decided SalaryChangeRequest
+ * @param {Object|null} profile - the EmployeeProfile it was applied to
+ */
+function announceApproved(request, profile) {
+  if (!profile || request.kind === 'structure' || request.status !== 'Approved') return;
+  announceCtcChange(profile, {
+    previousCtc: request.previousCtc,
+    newCtc: request.newCtc,
+    effectiveYear: request.effectiveYear,
+    effectiveMonth: request.effectiveMonth,
+  }, { hrUser: request.requestedBy, hrName: request.requestedByName });
+}
+
 module.exports = {
   COMPONENT_KEYS,
   APPROVER_LINK,
@@ -694,5 +850,8 @@ module.exports = {
   notifyRequester,
   assertNotStale,
   applyApproved,
+  announceCtcChange,
+  announceApproved,
+  buildSalaryLetter,
   actorName,
 };

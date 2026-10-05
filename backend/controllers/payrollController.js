@@ -27,7 +27,8 @@ const SalaryChangeRequest = require('../models/SalaryChangeRequest');
 const SalaryStructure = require('../models/SalaryStructure');
 const {
   writesSalaryDirectly, classifySetup, applySetup, computeRevision, applyRevision,
-  raiseSetupChange, raiseRevision, shapeForViewer, populated: populatedSalaryChange, actorName,
+  raiseSetupChange, raiseRevision, shapeForViewer, populated: populatedSalaryChange, actorName, announceCtcChange,
+  buildSalaryLetter,
 } = require('../services/salaryChanges');
 const Attendance = require('../models/Attendance');
 const Loan = require('../models/Loan');
@@ -3061,6 +3062,7 @@ const giveHike = asyncHandler(async (req, res) => {
     byName: actorName(req.user),
   });
   await profile.save();
+  announceCtcChange(profile, applied, { hrUser: req.user._id, hrName: actorName(req.user) });
 
   // The paperwork a revision drags behind it is set from a saved task template
   // rather than raised automatically — the event hook went with the
@@ -3105,10 +3107,36 @@ const saveSalarySetup = asyncHandler(async (req, res) => {
   }
   applySetup(profile, cls, { by: req.user._id, byName: actorName(req.user), reason });
   await profile.save();
+  announceCtcChange(profile, { previousCtc: cls.curCtc, newCtc: cls.wantCtc }, { hrUser: req.user._id, hrName: actorName(req.user) });
   res.json({ applied: true, profile });
 });
 
+/**
+ * The increment / salary revision letter for one entry of an employee's CTC
+ * history — the same PDF the employee's email carried.
+ * @route GET /api/payroll/employees/:id/ctc-history/:entryId/letter.pdf  (payroll.manage)
+ */
+const salaryLetterPdf = asyncHandler(async (req, res) => {
+  const profile = await EmployeeProfile.findById(req.params.id)
+    .select('user company employeeCode ctcHistory')
+    .populate('user', 'firstName lastName');
+  if (!profile || cannotManageProfile(req, profile)) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const entry = (profile.ctcHistory || []).find((h) => String(h._id) === String(req.params.entryId));
+  if (!entry || !entry.previousCtc || !entry.newCtc || entry.previousCtc === entry.newCtc) {
+    res.status(404);
+    throw new Error('There is no letter for this revision.');
+  }
+  const { pdf, fileName } = await buildSalaryLetter(profile, entry);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+  res.send(pdf);
+});
+
 module.exports = {
+  salaryLetterPdf,
   listMyPayslips,
   requestMyPayslip,
   requestPayslipForMonth,

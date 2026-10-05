@@ -1,0 +1,215 @@
+/* ---------------------------------------------------------------------------
+   Hikes (pages/AdminPayrollRun.jsx) — .hk-*
+   Builds on the shared .trn- / .prm- / .pb- primitives in index.css. Every
+   tint mixes into --surface, so dark mode and the portal accent follow.
+--------------------------------------------------------------------------- */
+
+/* Toolbar: the person on the left, the month on the right. Wraps on a phone. */
+.hk-toolbar { gap: 0.6rem; }
+.hk-pick { flex: 1 1 18rem; min-width: 0; max-width: 28rem; }
+.hk-period { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-left: auto; }
+.hk-period select { width: auto; min-width: 7.5rem; }
+.hk-ok { min-width: 5.5rem; justify-content: center; }
+@media (max-width: 640px) {
+  .hk-pick { flex-basis: 100%; max-width: none; }
+  .hk-period { margin-left: 0; width: 100%; flex-wrap: nowrap; }
+  .hk-period select { flex: 1 1 0; min-width: 0; }
+  .hk-ok { min-width: 0; flex-shrink: 0; padding-inline: 0.9rem; }
+}
+
+/* Payslip chip beside the title */
+.hk-slip {
+  display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700; white-space: nowrap;
+  background-color: var(--surface-3); border: 1px solid var(--border);
+}
+.hk-slip.is-approved { color: #1d4ed8; background-color: color-mix(in srgb, #3b82f6 12%, var(--surface)); }
+.hk-slip.is-paid { color: #047857; background-color: color-mix(in srgb, #10b981 13%, var(--surface)); }
+.hk-slip.is-onhold { color: #b45309; background-color: color-mix(in srgb, #f59e0b 14%, var(--surface)); }
+html.dark .hk-slip.is-approved { color: #93c5fd; }
+html.dark .hk-slip.is-paid { color: #6ee7b7; }
+html.dark .hk-slip.is-onhold { color: #fcd34d; }
+
+/* Cards */
+.hk-card {
+  padding: 1.1rem 1.15rem; border-radius: 1.1rem; min-width: 0;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px -16px rgba(16, 24, 40, 0.14);
+}
+.hk-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; margin-bottom: 0.9rem; }
+.hk-card-title {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  font-size: 0.74rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.8;
+}
+.hk-card-title svg { color: var(--accent); opacity: 0.9; }
+.hk-count {
+  min-width: 1.5rem; padding: 0.05rem 0.45rem; border-radius: 999px; text-align: center;
+  font-size: 0.7rem; font-weight: 800; background-color: var(--surface-3);
+}
+.hk-pending { border-color: color-mix(in srgb, #f59e0b 45%, var(--border)); background-color: color-mix(in srgb, #f59e0b 6%, var(--surface)); }
+.hk-stale { opacity: 0.6; transition: opacity 0.15s; pointer-events: none; }
+
+/* Hero: who, what they earn, the one action */
+.hk-hero {
+  position: relative; overflow: hidden; margin-bottom: 1rem;
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: center; gap: 1.25rem;
+  padding: 1.25rem 1.4rem; border-radius: 1.25rem;
+  background:
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 7%, var(--surface)) 0%, var(--surface) 70%);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 16px 34px -22px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.hk-who { display: flex; align-items: center; gap: 0.9rem; min-width: 0; }
+.hk-name { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hk-meta { font-size: 0.8rem; opacity: 0.65; margin-top: 0.15rem; overflow-wrap: anywhere; }
+.hk-chip {
+  display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.45rem; padding: 0.15rem 0.55rem;
+  border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.hk-ctc {
+  display: flex; flex-direction: column; min-width: 0;
+  padding-left: 1.25rem; border-left: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.hk-ctc-label { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.hk-ctc-value { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.hk-ctc-sub { font-size: 0.8rem; opacity: 0.65; font-variant-numeric: tabular-nums; }
+.hk-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 0.45rem; }
+.hk-revise {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #059669, #10b981);
+  box-shadow: 0 10px 22px -12px rgba(5, 150, 105, 0.85);
+}
+.hk-revise:hover:not(:disabled) { filter: brightness(1.06); }
+.hk-approval {
+  display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; color: #b45309;
+  background-color: color-mix(in srgb, #f59e0b 13%, var(--surface));
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, var(--border));
+}
+.hk-approval.is-block { display: flex; width: fit-content; }
+html.dark .hk-approval { color: #fcd34d; }
+@media (max-width: 900px) {
+  .hk-hero { grid-template-columns: minmax(0, 1fr) auto; }
+  .hk-who { grid-column: 1 / -1; }
+  .hk-ctc { padding-left: 0; border-left: 0; }
+}
+@media (max-width: 480px) {
+  .hk-hero { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
+  .hk-hero-actions { align-items: stretch; }
+  .hk-revise { justify-content: center; }
+  .hk-ctc-value { font-size: 1.5rem; }
+}
+
+/* Two columns on a wide screen */
+.hk-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 1100px) { .hk-grid { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
+.hk-col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+
+/* Salary setup */
+.hk-setup { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; align-items: end; }
+@media (max-width: 640px) { .hk-setup { grid-template-columns: minmax(0, 1fr); } }
+.hk-num { font-variant-numeric: tabular-nums; }
+.hk-save { min-height: 2.45rem; justify-content: center; }
+.hk-split { margin-top: 1rem; border-radius: 0.9rem; border: 1px dashed var(--border); overflow: hidden; }
+.hk-split-head {
+  display: flex; justify-content: space-between; padding: 0.5rem 0.8rem;
+  font-size: 0.66rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  background-color: var(--surface-2);
+}
+.hk-split-head > span:last-child { letter-spacing: 0; font-variant-numeric: tabular-nums; opacity: 0.85; }
+.hk-split-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); }
+.hk-split-cell { display: flex; flex-direction: column; padding: 0.55rem 0.8rem; border-top: 1px solid var(--border); }
+.hk-split-label { font-size: 0.68rem; opacity: 0.6; }
+.hk-split-value { font-size: 0.88rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Revision timeline */
+.hk-empty { padding: 1.25rem 0; text-align: center; font-size: 0.82rem; opacity: 0.55; }
+.hk-timeline { position: relative; display: flex; flex-direction: column; }
+.hk-rev { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.75rem; padding-bottom: 0.9rem; }
+.hk-rev:last-child { padding-bottom: 0; }
+.hk-rev:not(:last-child)::before {
+  content: ''; position: absolute; left: 0.85rem; top: 1.9rem; bottom: 0.15rem; width: 1px; background-color: var(--border);
+}
+.hk-rev-dot {
+  width: 1.75rem; height: 1.75rem; border-radius: 0.6rem; display: inline-flex; align-items: center; justify-content: center;
+}
+.hk-rev.is-up .hk-rev-dot { color: #059669; background-color: color-mix(in srgb, #10b981 14%, var(--surface)); }
+.hk-rev.is-down .hk-rev-dot { color: #e11d48; background-color: color-mix(in srgb, #f43f5e 14%, var(--surface)); }
+.hk-rev-body { min-width: 0; }
+.hk-rev-top { display: flex; align-items: center; gap: 0.5rem; }
+.hk-rev-when { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; }
+.hk-rev-pct { font-size: 0.7rem; font-weight: 800; padding: 0.02rem 0.45rem; border-radius: 999px; }
+.hk-rev.is-up .hk-rev-pct { color: #047857; background-color: color-mix(in srgb, #10b981 13%, var(--surface)); }
+.hk-rev.is-down .hk-rev-pct { color: #be123c; background-color: color-mix(in srgb, #f43f5e 13%, var(--surface)); }
+html.dark .hk-rev.is-up .hk-rev-pct, html.dark .hk-rev.is-up .hk-rev-dot { color: #6ee7b7; }
+html.dark .hk-rev.is-down .hk-rev-pct, html.dark .hk-rev.is-down .hk-rev-dot { color: #fda4af; }
+.hk-rev-amt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
+.hk-rev-old { font-size: 0.85rem; opacity: 0.55; }
+.hk-rev-new { font-size: 0.98rem; font-weight: 800; }
+.hk-rev-reason { font-size: 0.78rem; opacity: 0.7; margin-top: 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hk-rev-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; margin-top: 0.3rem; }
+.hk-rev-by { font-size: 0.72rem; opacity: 0.55; min-width: 0; }
+.hk-letter {
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.6rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.hk-letter:hover { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+.hk-more { margin-top: 0.8rem; font-size: 0.78rem; font-weight: 700; color: var(--accent); }
+@media (pointer: coarse) { .hk-letter, .hk-more { min-height: 40px; padding-inline: 0.85rem; } }
+
+/* The month */
+.hk-paid { padding: 0.85rem 0.95rem; border-radius: 0.9rem; background-color: var(--surface-2); border: 1px solid var(--border); }
+.hk-paid-top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem; }
+.hk-paid-label { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.hk-paid-value { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.hk-paid-value > span { font-size: 0.95rem; font-weight: 700; opacity: 0.5; }
+.hk-bar { height: 0.45rem; border-radius: 999px; overflow: hidden; background-color: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.hk-bar > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #10b981)); }
+.hk-tiles { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); margin-top: 0.75rem; }
+.hk-tile {
+  display: flex; flex-direction: column; gap: 0.1rem; padding: 0.6rem 0.75rem; border-radius: 0.8rem; min-width: 0;
+  background-color: var(--surface); border: 1px solid var(--border);
+}
+.hk-tile-value { font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.hk-tile-label { font-size: 0.68rem; opacity: 0.6; line-height: 1.25; }
+.hk-tile.is-warn { border-color: color-mix(in srgb, #ef4444 35%, var(--border)); background-color: color-mix(in srgb, #ef4444 6%, var(--surface)); }
+.hk-tile.is-warn .hk-tile-value { color: #dc2626; }
+html.dark .hk-tile.is-warn .hk-tile-value { color: #f87171; }
+.hk-sub { margin: 1.1rem 0 0.4rem; font-size: 0.66rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.hk-rows { border-radius: 0.8rem; border: 1px solid var(--border); overflow: hidden; }
+.hk-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.5rem 0.8rem; font-size: 0.82rem; }
+.hk-row + .hk-row { border-top: 1px solid var(--border); }
+.hk-row dt { opacity: 0.72; min-width: 0; }
+.hk-row dd { font-weight: 800; font-variant-numeric: tabular-nums; }
+.hk-row.is-warn dd { color: #dc2626; }
+html.dark .hk-row.is-warn dd { color: #f87171; }
+
+/* Revise salary dialog */
+.hk-seg { display: flex; width: 100%; }
+.hk-seg .trn-seg-btn { flex: 1 1 0; justify-content: center; }
+.hk-seg .hk-dir-increase.is-on { color: #047857; border-color: color-mix(in srgb, #10b981 45%, var(--border)); }
+.hk-seg .hk-dir-decrease.is-on { color: #be123c; border-color: color-mix(in srgb, #f43f5e 45%, var(--border)); }
+html.dark .hk-seg .hk-dir-increase.is-on { color: #6ee7b7; }
+html.dark .hk-seg .hk-dir-decrease.is-on { color: #fda4af; }
+.hk-big { font-size: 1.1rem; font-weight: 700; padding: 0.7rem 0.85rem; }
+.hk-preview {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  padding: 0.85rem 1rem; border-radius: 0.95rem; border: 1px solid;
+}
+.hk-preview.is-up { background-color: color-mix(in srgb, #10b981 9%, var(--surface)); border-color: color-mix(in srgb, #10b981 35%, var(--border)); }
+.hk-preview.is-down { background-color: color-mix(in srgb, #f43f5e 8%, var(--surface)); border-color: color-mix(in srgb, #f43f5e 35%, var(--border)); }
+.hk-preview > div { display: flex; flex-direction: column; }
+.hk-preview-label { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.6; }
+.hk-preview-value { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.hk-preview-sub { font-size: 0.76rem; opacity: 0.65; font-variant-numeric: tabular-nums; }
+.hk-preview-pct { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.95rem; font-weight: 800; white-space: nowrap; }
+.hk-preview.is-up .hk-preview-pct { color: #047857; }
+.hk-preview.is-down .hk-preview-pct { color: #be123c; }
+html.dark .hk-preview.is-up .hk-preview-pct { color: #6ee7b7; }
+html.dark .hk-preview.is-down .hk-preview-pct { color: #fda4af; }

@@ -1,0 +1,92 @@
+/* ---------------------------------------------------------------------------
+   Promotions (pages/AdminPromotions.jsx) — .pro-*
+   Builds on the shared .trn- / .prm- / .pb- primitives in index.css. Tints mix
+   into --surface, so dark mode follows without extra rules.
+--------------------------------------------------------------------------- */
+
+.pro-kpis { margin-bottom: 1rem; }
+.pro-count { font-size: 0.75rem; opacity: 0.6; white-space: nowrap; padding-left: 0.4rem; }
+
+/* Month groups with a heading that stays under the top bar while scrolling. */
+.pro-group + .pro-group { margin-top: 1.1rem; }
+.pro-group-head {
+  position: sticky; top: 4.25rem; z-index: 5; display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.45rem 0.2rem; margin-bottom: 0.45rem;
+  font-size: 0.74rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
+  background: linear-gradient(180deg, var(--bg) 70%, transparent);
+}
+.pro-group-count {
+  margin-left: auto; font-size: 0.68rem; font-weight: 800; letter-spacing: 0;
+  padding: 0.05rem 0.45rem; border-radius: 999px; background-color: var(--surface-3);
+}
+
+.pro-list {
+  border-radius: 1rem; overflow: hidden;
+  background-color: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+.pro-row {
+  display: grid; grid-template-columns: auto minmax(9rem, 13rem) minmax(0, 1fr) auto;
+  align-items: center; column-gap: 0.9rem; padding: 0.8rem 1rem; min-width: 0;
+}
+.pro-row + .pro-row { border-top: 1px solid var(--border); }
+
+.pro-who { min-width: 0; }
+.pro-name { font-size: 0.88rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pro-code { font-size: 0.72rem; opacity: 0.55; font-variant-numeric: tabular-nums; }
+
+.pro-change { min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.pro-line { display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex-wrap: wrap; font-size: 0.86rem; }
+.pro-line.is-dept { font-size: 0.76rem; opacity: 0.75; }
+.pro-old { opacity: 0.6; text-decoration: line-through; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
+.pro-new { font-weight: 700; }
+.pro-line:not(.is-dept) .pro-new { color: color-mix(in srgb, var(--accent) 85%, currentColor); }
+.pro-arrow { opacity: 0.45; flex-shrink: 0; }
+.pro-remarks {
+  font-size: 0.74rem; opacity: 0.6; font-style: italic;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.pro-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 0.2rem; text-align: right; }
+.pro-tag {
+  font-size: 0.64rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 0.12rem 0.5rem; border-radius: 999px; background-color: var(--surface-3);
+}
+.pro-tag.is-promo {
+  color: #047857; background-color: color-mix(in srgb, #10b981 14%, var(--surface));
+}
+html.dark .pro-tag.is-promo { color: #6ee7b7; }
+.pro-date { font-size: 0.8rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pro-by { font-size: 0.7rem; opacity: 0.55; white-space: nowrap; }
+.pro-letter {
+  display: inline-flex; align-items: center; gap: 0.3rem; margin-top: 0.15rem;
+  padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+  color: color-mix(in srgb, var(--accent) 85%, currentColor);
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+.pro-letter:hover { background-color: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+@media (pointer: coarse) { .pro-letter { min-height: 40px; padding-inline: 0.85rem; } }
+
+/* The chosen employee's present role, inside the form. */
+.pro-current {
+  display: flex; align-items: center; gap: 0.65rem; padding: 0.6rem 0.75rem; border-radius: 0.8rem;
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.pro-current-label { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.55; }
+.pro-current-value { font-size: 0.84rem; font-weight: 600; }
+
+/* Phones wrap, never scroll sideways: avatar + name on top, change below,
+   meta along the bottom. */
+@media (max-width: 640px) {
+  .pro-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: 'av who' 'av change' 'av meta';
+    row-gap: 0.35rem;
+  }
+  .pro-row > :first-child { grid-area: av; align-self: start; }
+  .pro-who { grid-area: who; }
+  .pro-change { grid-area: change; }
+  .pro-meta { grid-area: meta; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0.5rem; text-align: left; }
+}

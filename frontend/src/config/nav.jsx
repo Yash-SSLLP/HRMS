@@ -272,6 +272,11 @@ export const adminNav = [
     // flags are the same rows.
     { to: '/admin/confirmations', label: 'Confirmations', icon: FiShield, perm: 'lifecycle.manage',
       badge: 'confirmation' },
+    // New designation / department for an employee, with the history of every
+    // one given. SuperAdmin, CEO/MD and employees.manage holders (the nav shows
+    // every page to SuperAdmin/CEO/MD already).
+    { to: '/admin/promotions', label: 'Promotions', icon: FiAward, perm: 'employees.manage',
+      keywords: ['promotion', 'promote', 'designation', 'department change', 'transfer', 'new role', 'elevate'] },
   ] },
   { group: 'Performance & Learning', icon: FiTrendingUp, items: [
     { to: '/admin/performance', label: 'Performance', icon: FiTrendingUp, perm: 'performance.manage',

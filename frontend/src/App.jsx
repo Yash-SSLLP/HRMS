@@ -114,6 +114,7 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy.jsx'));
 const AdminOrgMasters = lazy(() => import('./pages/AdminOrgMasters.jsx'));
 const AdminOrgChart = lazy(() => import('./pages/AdminOrgChart.jsx'));
 const AdminConfirmations = lazy(() => import('./pages/AdminConfirmations.jsx'));
+const AdminPromotions = lazy(() => import('./pages/AdminPromotions.jsx'));
 const AdminRoster = lazy(() => import('./pages/AdminRoster.jsx'));
 const EmployeeShifts = lazy(() => import('./pages/EmployeeShifts.jsx'));
 const AdminRegularizations = lazy(() => import('./pages/AdminRegularizations.jsx'));
@@ -279,6 +280,7 @@ export default function App() {
         <Route path="org-chart" element={<AdminOrgChart />} />
         <Route path="onboarding" element={<AdminOnboarding />} />
         <Route path="confirmations" element={<AdminConfirmations />} />
+        <Route path="promotions" element={<AdminPromotions />} />
         <Route path="attendance" element={<AdminAttendance />} />
         <Route path="presence" element={<AdminPresence />} />
         <Route path="attendance-report" element={<AdminAttendanceReport />} />

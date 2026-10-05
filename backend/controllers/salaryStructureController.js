@@ -268,6 +268,8 @@ const assignStructure = asyncHandler(async (req, res) => {
     reason: req.body.reason,
   });
   await profile.save();
+  salaryChanges.announceCtcChange(profile, { previousCtc: cls.curCtc, newCtc: cls.wantCtc },
+    { hrUser: req.user._id, hrName: salaryChanges.actorName(req.user) });
   res.json({ ok: true, employee: profile._id, annualCtc: profile.annualCtc });
 });
 

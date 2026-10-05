@@ -1138,6 +1138,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
   // there yet still applies here and now; sending back the values already on
   // record (a client round-tripping the whole profile) changes nothing.
   let salaryRequest = null;
+  let salaryApplied = null; // a CTC change written directly — the employee is told after the save
   if ('salaryStructure' in req.body || 'annualCtc' in req.body) {
     const salaryChanges = require('../services/salaryChanges');
     if (req.body.salaryStructure && !(await SalaryStructure.exists({ _id: req.body.salaryStructure }))) {
@@ -1155,12 +1156,17 @@ const updateEmployee = asyncHandler(async (req, res) => {
         salaryRequest = await salaryChanges.raiseSetupChange(req, profile, cls);
       } else {
         salaryChanges.applySetup(profile, cls, { by: req.user._id, byName: salaryChanges.actorName(req.user) });
+        salaryApplied = { previousCtc: cls.curCtc, newCtc: cls.wantCtc };
       }
     }
   }
 
   Object.assign(profile, req.body);
   await profile.save();
+  if (salaryApplied) {
+    const { announceCtcChange, actorName } = require('../services/salaryChanges');
+    announceCtcChange(profile, salaryApplied, { hrUser: req.user._id, hrName: actorName(req.user) });
+  }
 
   // A company change moves this person's wall — drop their cached scope so it
   // applies on their next request, not after the auth cache's TTL. The same

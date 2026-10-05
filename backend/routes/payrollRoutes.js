@@ -40,6 +40,7 @@ const {
   runEmployeePayroll,
   deriveSalaryForEditor,
   giveHike,
+  salaryLetterPdf,
   saveSalarySetup,
   salarySetupStatus,
 } = require('../controllers/payrollController');
@@ -136,6 +137,9 @@ router.get('/derive-salary', deriveSalaryForEditor);
 // POST /employees/:id/hike — revise an employee's CTC; requires 'payroll.manage'.
 // From an HR it becomes a request for a CEO/MD to approve (202).
 router.post('/employees/:id/hike', giveHike);
+// GET /employees/:id/ctc-history/:entryId/letter.pdf — the increment / salary
+// revision letter for one revision; requires 'payroll.manage'.
+router.get('/employees/:id/ctc-history/:entryId/letter.pdf', salaryLetterPdf);
 // PUT /employees/:id/salary-setup — set their salary structure + annual CTC.
 // Filling a blank applies at once; changing a saved salary is, from an HR, a
 // request for a CEO/MD to approve (202). Requires 'payroll.manage'.

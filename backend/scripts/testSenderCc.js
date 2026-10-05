@@ -97,6 +97,8 @@ const FEATURE = {
   emailRelievingLetter: 'Exit — relieving letter',
   resendExitEmail: 'Exit — re-send an exit mail',
   emailPayslip: 'Payroll — payslip',
+  announceCtcChange: 'Payroll — salary revised (after approval)',
+  announcePromotion: 'People — promotion / department change',
   mailAdmins: 'Password reset — request raised (PUBLIC: no sender)',
   notifyApprover: 'Leave — "your approval is needed"',
   emailLeaveToHr: 'Leave — no manager, so HR is asked',

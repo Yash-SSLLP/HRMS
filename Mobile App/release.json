@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.56",
-  "versionCode": 137,
-  "notes": "Calendar: the filters (Holidays, Festivals, Events, Birthdays and the rest) now sit in one row you swipe left and right, so the month shows straight away.\n\nTasks: swiping the cards at the top (Assigned to me, Assigned by me and the others) now moves two cards at a time.\n\nRewards & Recognition: CEO, MD and Admin now get the notification when the winners are announced."
+  "versionName": "2.8.57",
+  "versionCode": 138,
+  "notes": "Promotions: a new Promotions screen lets HR, CEO/MD and Super Admin give an employee a new designation and department. The employee gets a notification and an email with the promotion letter.\n\nSalary revisions: once a salary change is approved, the employee gets a notification and an email with the increment letter. Letters open from the Salary Revisions screen, which has a new look.\n\nDropdowns: a new designation or department can be added straight from the search box."
 }
