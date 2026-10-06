@@ -44,6 +44,9 @@ const mongoose = require('mongoose');
  */
 const DEFAULT_KHATA_NAME = 'General';
 
+// Tour (out of town) or City (local) — see `tripType` below.
+const TRIP_TYPES = ['tour', 'city'];
+
 // An invited colleague's standing on somebody else's book. Mirrors ChatGroup's
 // member lifecycle (models/ChatGroup.js) so the two invite flows behave alike.
 const MEMBER_STATUS = ['invited', 'accepted', 'declined'];
@@ -88,10 +91,19 @@ const employeeKhataSchema = new mongoose.Schema(
     // rather than a code.
     name: { type: String, required: true, trim: true, maxlength: 80, default: DEFAULT_KHATA_NAME },
 
-    // The one that self-service falls back to when no book is named — the
-    // employee's first. Exactly one per employee carries this; see
-    // khataLedger.getOrCreateDefaultKhata.
+    // The legacy "General" book. It used to be opened for everybody on first
+    // visit; since 2026-10-06 (user: "no need for general book") it is never
+    // created, an EMPTY one is hidden from every list, and one that already
+    // holds entries is an ordinary book its owner may close or delete. Kept so
+    // an old client posting with no book named still lands somewhere when one
+    // exists — see khataLedger.findDefaultKhata.
     isDefault: { type: Boolean, default: false },
+
+    // TOUR OR CITY (2026-10-06): whether the spending in this book was on a
+    // trip out of town or local. Picked when the book is opened; printed at the
+    // top of a report whose rows all share one, or on every row when they mix.
+    // Null on books opened before it existed.
+    tripType: { type: String, enum: [...TRIP_TYPES, null], default: null },
 
     // Total approved spend filed under this book. A running TOTAL, not a
     // balance: the money itself is in the wallet. Replayed from the ledger,
@@ -211,4 +223,5 @@ employeeKhataSchema.methods.canPost = function canPost(userId) {
 module.exports = mongoose.model('EmployeeKhata', employeeKhataSchema);
 module.exports.DEFAULT_KHATA_NAME = DEFAULT_KHATA_NAME;
 module.exports.MEMBER_STATUS = MEMBER_STATUS;
+module.exports.TRIP_TYPES = TRIP_TYPES;
 module.exports.MEMBER_ROLES = MEMBER_ROLES;

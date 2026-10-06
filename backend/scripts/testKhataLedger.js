@@ -265,6 +265,24 @@ console.log('\n--- report layouts (services/cashbookEntriesPdf.js) ---');
 // tables carry what each day went on. Both are decided by pure code here, so
 // they are pinned without drawing a page.
 const P = require('../services/cashbookEntriesPdf');
+// Tour / City (2026-10-06): once at the top when every book row shares one,
+// on each row when they mix; an advance (no book) never decides it.
+{
+  const adv = { khataName: '', trip: '' };
+  const tour = { khataName: 'A', trip: 'tour' };
+  const city = { khataName: 'B', trip: 'city' };
+  const none = { khataName: 'C', trip: '' };
+  check('Tour/City: one shared status goes to the top',
+    P.tripPlacement([adv, tour, tour], null), { top: 'tour', perRow: false });
+  check('Tour/City: mixed statuses go on each row',
+    P.tripPlacement([tour, city], null), { top: '', perRow: true });
+  check('Tour/City: a status beside an unset book is mixed, not the top',
+    P.tripPlacement([tour, none], null), { top: '', perRow: true });
+  check('Tour/City: nothing set prints nothing',
+    P.tripPlacement([adv, none], null), { top: '', perRow: false });
+  check('Tour/City: a one-book report takes the book\'s own',
+    P.tripPlacement([tour], { trip: 'city' }), { top: 'city', perRow: false });
+}
 check('four report types, one of them the new day-wise with categories',
   P.REPORT_KINDS, ['entries', 'daywise', 'daywise_category', 'category']);
 // The controller validates ?report= against its own copy of the list (it must

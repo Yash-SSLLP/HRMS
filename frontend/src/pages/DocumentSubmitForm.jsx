@@ -79,7 +79,20 @@ export default function DocumentSubmitForm() {
       await api.post(`/recruitment/documents/${token}`, fd);
       setDone(true);
     } catch (err) {
-      setError(err.response?.data?.message || 'Could not submit your documents.');
+      const message = err.response?.data?.message;
+      if (message) { setError(message); return; }
+      // No answer from the server: the connection dropped or a proxy gave up.
+      // The upload may still have landed (2026-10-06: it had, and the page said
+      // it failed), so look before calling it a failure.
+      try {
+        const { data } = await api.get(`/recruitment/documents/${token}`);
+        if ((data.candidate?.files || []).length > (info?.candidate?.files || []).length) {
+          setInfo(data);
+          setDone(true);
+          return;
+        }
+      } catch { /* still unreachable — say so below */ }
+      setError('The connection dropped before your documents were received. Check your internet and submit again.');
     } finally {
       setSubmitting(false);
     }

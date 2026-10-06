@@ -3022,33 +3022,26 @@ const submitDocuments = asyncHandler(async (req, res) => {
     ? req.body.labels
     : (req.body.labels != null ? [req.body.labels] : []);
 
-  const cloudFolder = `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/candidate-docs/${candidate._id}`;
-  const saved = [];
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+  // Stored side by side, then answered at once (2026-10-06). The Cloudinary
+  // backup used to run file by file BEFORE the reply: nine files took ~11 s of
+  // server time after the upload, the candidate's connection dropped in that
+  // window, and the page said "Could not submit your documents" while every
+  // file had in fact been saved. The backup now runs after the reply.
+  const saved = await Promise.all(files.map(async (file, i) => {
     const { storagePath, sizeBytes } = await storage.saveBuffer({
       buffer: file.buffer,
       ownerType: 'candidate-docs',
       ownerId: candidate._id,
       originalName: file.originalname || 'document',
     });
-    const entry = {
+    return {
       label: String(labels[i] || 'Document').slice(0, 80),
       name: file.originalname || 'document',
       storagePath,
       sizeBytes,
       uploadedAt: new Date(),
     };
-    // Best-effort durable backup to Cloudinary (never blocks the submission).
-    if (cloudinary.enabled()) {
-      try {
-        entry.cloud = await cloudinary.uploadFileBuffer(file.buffer, { folder: cloudFolder });
-      } catch (err) {
-        console.error('[recruitment] Cloudinary doc backup failed:', err.message);
-      }
-    }
-    saved.push(entry);
-  }
+  }));
 
   candidate.documents.files.push(...saved);
   candidate.documents.submittedAt = new Date();
@@ -3058,6 +3051,26 @@ const submitDocuments = asyncHandler(async (req, res) => {
   candidate.documents.confirmedByName = undefined;
   await candidate.save();
   res.status(201).json({ ok: true, count: saved.length });
+
+  // Best-effort durable backup to Cloudinary, after the reply — never blocks
+  // or fails the submission. Each finished backup is written onto its own row.
+  if (cloudinary.enabled()) {
+    const rows = candidate.documents.files.slice(-saved.length);
+    const cloudFolder = `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/candidate-docs/${candidate._id}`;
+    setImmediate(async () => {
+      for (let i = 0; i < files.length; i++) {
+        try {
+          const cloud = await cloudinary.uploadFileBuffer(files[i].buffer, { folder: cloudFolder });
+          await Candidate.updateOne(
+            { _id: candidate._id, 'documents.files._id': rows[i]._id },
+            { $set: { 'documents.files.$.cloud': cloud } },
+          );
+        } catch (err) {
+          console.error('[recruitment] Cloudinary doc backup failed:', err.message);
+        }
+      }
+    });
+  }
 });
 
 /**

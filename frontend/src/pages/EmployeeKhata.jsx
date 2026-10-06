@@ -112,9 +112,9 @@ const STATUS_LABELS = { AwaitingApproval: 'With CEO/MD' };
 const WALLET_STYLES = {
   // Positive is GREEN, negative is RED — the sign-colour rule used everywhere
   // in the money modules now (owed stays red: it is also the state to act on).
-  holding: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700', hint: 'Company cash you are carrying. Record what you spend it on, or return what is left.' },
-  owed: { card: 'bg-red-50 border-red-200', amount: 'text-red-700', hint: 'You have spent more than you were advanced, so the company owes you the difference.' },
-  settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700', hint: 'You are not carrying any company cash right now.' },
+  holding: { card: 'bg-emerald-50 border-emerald-200', amount: 'text-emerald-700' },
+  owed: { card: 'bg-red-50 border-red-200', amount: 'text-red-700' },
+  settled: { card: 'bg-gray-50 border-gray-200', amount: 'text-gray-700' },
 };
 
 // The status filter, in the order somebody scans for one. The values are the
@@ -157,11 +157,34 @@ const SORTS = {
   date: { label: 'Date', get: (e) => new Date(e.date).getTime() || 0 },
 };
 const DEFAULT_SORT = { key: 'date', dir: 'desc' };
+
+// TOUR OR CITY (2026-10-06): every book is one or the other, picked when it is
+// opened; the toggle over the books shows only that kind.
+const TRIPS = [{ value: 'tour', label: 'Tour' }, { value: 'city', label: 'City' }];
+const TRIP_BADGE = { tour: 'bg-sky-100 text-sky-800', city: 'bg-emerald-100 text-emerald-800' };
+
+/** Tour | City as a two-button switch. `full` stretches it across a form. */
+function TripToggle({ value, onChange, full = false }) {
+  return (
+    <div role="radiogroup" className={`${full ? 'flex' : 'inline-flex'} p-0.5 border border-gray-300 rounded-lg bg-white`}>
+      {TRIPS.map((t) => {
+        const on = value === t.value;
+        return (
+          <button key={t.value} type="button" role="radio" aria-checked={on}
+            onClick={() => onChange(t.value)}
+            className={`${full ? 'flex-1 py-2' : 'py-1'} px-3 rounded-md text-sm font-medium transition ${on ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`}>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 const BLANK_FILTERS = { khata: '', status: '', type: '', from: '', to: '' };
 
-// What each collaborator role actually lets somebody do, in plain words. Shown
-// under the picker rather than left to be guessed from "operator"/"viewer" —
-// the whole risk of sharing is somebody thinking they have handed over money.
+// What each collaborator role actually lets somebody do, in plain words. The
+// hint is the tooltip on the role picker (no explainer text on the page) — the
+// whole risk of sharing is somebody thinking they have handed over money.
 const ROLE_WORDS = {
   operator: {
     label: 'Can add entries',
@@ -182,8 +205,8 @@ const ROLE_PILLS = {
 // REPORT_KINDS. Every one of them ends with the full list of entries
 // (2026-09-26), so a summary can be checked against the rows behind it.
 const REPORT_KINDS = [
-  { value: 'daywise_category', label: 'Day-wise with category summary', hint: 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.' },
-  { value: 'entries', label: 'All entries', hint: 'Every row, oldest first — a book\'s spending with its total, or all your books with a running balance. The one to send when somebody asks what the advance went on.' },
+  { value: 'daywise_category', label: 'Day-wise with category summary' },
+  { value: 'entries', label: 'All entries' },
 ];
 
 // The Category dropdown's "Other" — the words typed under it are the category.
@@ -296,7 +319,8 @@ export default function EmployeeKhata() {
   // An entry with several bills opens them all in one window (BillGallery).
   const [gallery, setGallery] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [newKhata, setNewKhata] = useState(null); // { name, note }
+  const [newKhata, setNewKhata] = useState(null); // { name, note, tripType }
+  const [tripFilter, setTripFilter] = useState(''); // '' | 'tour' | 'city' — the books shown
   const [downloading, setDownloading] = useState(false);
   // The expense being corrected, if the modal is open to fix one rather than to
   // record a new one. Null for a new one.
@@ -332,7 +356,7 @@ export default function EmployeeKhata() {
 
   // ----- Sharing -----
   const [menuFor, setMenuFor] = useState('');        // book id whose ⋯ menu is open
-  const [renaming, setRenaming] = useState(null);    // { _id, name, note }
+  const [renaming, setRenaming] = useState(null);    // { _id, name, note, tripType }
   const [membersFor, setMembersFor] = useState(null);// the book whose members are open
   const [members, setMembers] = useState({ loading: false, rows: [], busy: false });
   const [colleagues, setColleagues] = useState([]);
@@ -354,6 +378,11 @@ export default function EmployeeKhata() {
   useEffect(() => { load(); }, []);
 
   const khatas = data?.khatas || [];
+  // The cards: the Tour / City toggle applied, NEWEST BOOK FIRST (2026-10-06).
+  // An ObjectId's leading bytes are its creation time, so the ids sort by it.
+  const shownBooks = khatas
+    .filter((k) => !tripFilter || k.tripType === tripFilter)
+    .sort((a, b) => String(b._id).localeCompare(String(a._id)));
   const invites = data?.invites || [];
   // May the reader choose the report type? A Super Admin switch
   // (Setting.khataReportChoice, 2026-09-30), off by default: the report is the
@@ -522,6 +551,7 @@ export default function EmployeeKhata() {
   const createKhata = async (e) => {
     e.preventDefault();
     if (!newKhata.name.trim()) { toast.error('Give the book a name'); return; }
+    if (!newKhata.tripType) { toast.error('Choose Tour or City'); return; }
     setSaving(true);
     try {
       const res = await api.post('/khata/me/khatas', newKhata);
@@ -666,6 +696,7 @@ export default function EmployeeKhata() {
     try {
       const res = await api.put(`/khata/me/khatas/${renaming._id}`, {
         name: renaming.name.trim(), note: renaming.note || '',
+        ...(renaming.tripType ? { tripType: renaming.tripType } : {}),
       });
       toast.success(res.data.message || 'Saved');
       setRenaming(null);
@@ -930,11 +961,10 @@ export default function EmployeeKhata() {
     {
       key: 'expense',
       label: 'Record an expense',
-      hint: 'What you spent the advance on, filed under a book.',
       disabled: postableKhatas.length === 0,
       why: 'You need an open book to file an expense under.',
     },
-    { key: 'settle', label: 'Return unspent cash', hint: 'Cash handed back to the company.' },
+    { key: 'settle', label: 'Return unspent cash' },
   ];
 
   return (
@@ -954,10 +984,11 @@ export default function EmployeeKhata() {
             <div className="font-medium text-amber-900">
               {`${iv.owner?.name || 'A colleague'} invited you to keep entries in "${iv.name}"`}
             </div>
-            <div className="text-xs text-amber-800 mt-0.5">
-              {iv.role === 'viewer'
+            <div className="text-xs text-amber-800 mt-0.5"
+              title={iv.role === 'viewer'
                 ? 'You would be able to read this book and download its reports.'
-                : 'You would be able to add your own spending to it. What you spend still comes out of your own advance, not theirs.'}
+                : 'You would be able to add your own spending to it. What you spend still comes out of your own advance, not theirs.'}>
+              {ROLE_WORDS[iv.role === 'viewer' ? 'viewer' : 'operator'].label}
             </div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
@@ -984,7 +1015,7 @@ export default function EmployeeKhata() {
           <p className={`text-4xl sm:text-5xl font-semibold mt-1 ${style.amount}`}>{money(display.signed ?? display.amount)}</p>
           {wallet.creditLimit > 0 && (
             <p className="text-xs text-gray-500 mt-1">
-              You may hold up to {money(wallet.creditLimit)} at a time.
+              Limit {money(wallet.creditLimit)}
             </p>
           )}
 
@@ -993,7 +1024,7 @@ export default function EmployeeKhata() {
               reason and it reads like a bug. */}
           {display.direction === 'owed' && !claimable && totals.pendingReimbursement > 0 && (
             <p className="text-xs text-red-700 mt-1">
-              You have claimed {money(totals.pendingReimbursement)} of this. The company will pay it out.
+              {money(totals.pendingReimbursement)} claimed
             </p>
           )}
 
@@ -1009,23 +1040,17 @@ export default function EmployeeKhata() {
               className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium">
               Ask for an advance
             </button>
+            {/* Why it is shut lives in the tooltip (no explainer text on the
+                page, 2026-10-06). Not said while they are owed money but have
+                already claimed it: the line above covers that. */}
             <button onClick={() => open('claim')} disabled={claimable <= 0}
+              title={claimable <= 0 && display.direction !== 'owed'
+                ? 'Opens once you spend more than you were advanced'
+                : undefined}
               className="px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600">
               Ask for reimbursement{claimable > 0 ? ` · ${money(claimable)}` : ''}
             </button>
           </div>
-          {/* A shut button needs its reason beside it — a tooltip does not show on
-              a disabled button in most browsers. Not said while they are owed
-              money but have already claimed it: the line above covers that. */}
-          {display.direction !== 'owed' && (
-            <p className="text-xs text-gray-500 mt-2">
-              {/* Said plainly when they are holding company cash (2026-09-29,
-                  as in the app: "it should say having advance in hand"). */}
-              {display.direction === 'holding'
-                ? `You have ${money(display.amount)} in hand — nothing to reimburse yet.`
-                : 'Reimbursement opens once you spend more than you were advanced.'}
-            </p>
-          )}
         </div>
       )}
 
@@ -1038,25 +1063,22 @@ export default function EmployeeKhata() {
             {/* gap-3 is for a phone, where the label wraps right up against the
                 figure; sm:gap-0 keeps wider screens exactly as they were. */}
             <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
-              <dt className="text-gray-600">
+              <dt className="text-gray-600" title="Money paid into your wallet, confirmed">
                 Advanced to you
-                <span className="block text-xs text-gray-400">Money paid into your wallet, confirmed</span>
               </dt>
               <dd className="font-medium text-emerald-700 whitespace-nowrap">+ {money(totals.advanced)}</dd>
             </div>
 
             <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
-              <dt className="text-gray-600">
+              <dt className="text-gray-600" title="Expenses the company has confirmed, less anything refunded">
                 Spent, across all books
-                <span className="block text-xs text-gray-400">Expenses the company has confirmed, less anything refunded</span>
               </dt>
               <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.spent)}</dd>
             </div>
 
             <div className="flex items-center justify-between gap-3 sm:gap-0 py-2">
-              <dt className="text-gray-600">
+              <dt className="text-gray-600" title="Unspent cash handed back, and payroll recoveries">
                 Returned
-                <span className="block text-xs text-gray-400">Unspent cash handed back, and payroll recoveries</span>
               </dt>
               <dd className="font-medium text-red-700 whitespace-nowrap">− {money(totals.returned)}</dd>
             </div>
@@ -1071,9 +1093,8 @@ export default function EmployeeKhata() {
 
           {waiting.length > 0 && (
             <p className="text-xs text-gray-500 mt-3">
-              Not counted above: {money(totals.awaitingAdvance + totals.pendingAdvance)} requested
-              and {money(totals.pendingSpend)} declared
-              across {waiting.length === 1 ? '1 entry' : `${waiting.length} entries`} still waiting.
+              Waiting: {money(totals.awaitingAdvance + totals.pendingAdvance)} requested
+              {' · '}{money(totals.pendingSpend)} declared
             </p>
           )}
         </div>
@@ -1084,10 +1105,13 @@ export default function EmployeeKhata() {
       {!loading && (
         <div className="mb-5">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-            <h2 className="text-sm font-semibold text-gray-700">Your Books</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-semibold text-gray-700">Your Books</h2>
+              <TripToggle value={tripFilter} onChange={(v) => setTripFilter((cur) => (cur === v ? '' : v))} />
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs text-gray-500">{money(totalSpent)} spent in your books</span>
-              <button onClick={() => setNewKhata({ name: '', note: '' })}
+              <button onClick={() => setNewKhata({ name: '', note: '', tripType: '' })}
                 className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
                 + Add new book
               </button>
@@ -1102,8 +1126,13 @@ export default function EmployeeKhata() {
               </button>
             </div>
           </div>
+          {khatas.length > 0 && shownBooks.length === 0 && (
+            <p className="text-sm text-gray-500 py-6 text-center border border-dashed border-gray-200 rounded-xl">
+              No {tripFilter === 'tour' ? 'Tour' : 'City'} books
+            </p>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {khatas.map((k) => {
+            {shownBooks.map((k) => {
               const active = filters.khata === k._id;
               const isOwner = k.myRole === 'owner';
               return (
@@ -1117,7 +1146,14 @@ export default function EmployeeKhata() {
                     className="w-full text-left p-4 pr-24">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-medium text-gray-900 truncate">{k.name}</p>
-                      {!k.isActive && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 shrink-0">Closed</span>}
+                      <span className="flex items-center gap-1 shrink-0">
+                        {TRIP_BADGE[k.tripType] && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${TRIP_BADGE[k.tripType]}`}>
+                            {k.tripType === 'tour' ? 'Tour' : 'City'}
+                          </span>
+                        )}
+                        {!k.isActive && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">Closed</span>}
+                      </span>
                     </div>
                     {/* Whose book, and who else is on it. Only ever drawn when
                         there is something to say — a private book of your own
@@ -1184,7 +1220,7 @@ export default function EmployeeKhata() {
                         <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 text-sm">
                           {isOwner && (
                             <button type="button"
-                              onClick={() => { setMenuFor(''); setRenaming({ _id: k._id, name: k.name, note: k.note || '' }); }}
+                              onClick={() => { setMenuFor(''); setRenaming({ _id: k._id, name: k.name, note: k.note || '', tripType: k.tripType || '' }); }}
                               className="block w-full text-left px-3 py-2 hover:bg-gray-50">
                               Rename
                             </button>
@@ -1197,11 +1233,10 @@ export default function EmployeeKhata() {
                             className="block w-full text-left px-3 py-2 hover:bg-gray-50">
                             Download report
                           </button>
-                          {/* The owner may close an open book of theirs — not the
-                              default one, which is where an expense lands when no
-                              book is chosen. Re-opening is not offered here: it
-                              is for the CEO, MD, an Admin or a cashbook manager. */}
-                          {isOwner && k.isActive && !k.isDefault && (
+                          {/* The owner may close an open book of theirs (a legacy
+                              "General" one too, since 2026-10-06). Re-opening is
+                              for the CEO, MD, an Admin or a cashbook manager. */}
+                          {isOwner && k.isActive && (
                             <button type="button" onClick={() => closeBook(k)}
                               className="block w-full text-left px-3 py-2 text-red-600 hover:bg-red-50">
                               Close book
@@ -1397,8 +1432,9 @@ export default function EmployeeKhata() {
                     {canEditMine(e, khatas) && (
                       <span className="flex flex-wrap items-center gap-x-3 mt-0.5">
                         <button onClick={() => openEdit(e)}
+                          title="Not yet confirmed by the company"
                           className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline">
-                          Edit — not yet confirmed by the company
+                          Edit
                         </button>
                         {/* Delete — the same window as Edit (2026-09-29). */}
                         <button onClick={() => deleteEntry(e)}
@@ -1450,6 +1486,11 @@ export default function EmployeeKhata() {
           <form onSubmit={createKhata} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Add a new book</h3>
 
+            <label className="block text-sm text-gray-700 mb-1">Tour or City<Req /></label>
+            <div className="mb-3">
+              <TripToggle full value={newKhata.tripType} onChange={(v) => setNewKhata({ ...newKhata, tripType: v })} />
+            </div>
+
             <label className="block text-sm text-gray-700 mb-1">What will you be spending on?<Req /></label>
             <input type="text" required autoFocus maxLength={80} value={newKhata.name}
               onChange={(e) => setNewKhata({ ...newKhata, name: e.target.value })}
@@ -1480,6 +1521,11 @@ export default function EmployeeKhata() {
           <form onSubmit={saveRename} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Rename this book</h3>
 
+            <label className="block text-sm text-gray-700 mb-1">Tour or City</label>
+            <div className="mb-3">
+              <TripToggle full value={renaming.tripType} onChange={(v) => setRenaming({ ...renaming, tripType: v })} />
+            </div>
+
             <label className="block text-sm text-gray-700 mb-1">Name<Req /></label>
             <input type="text" required autoFocus maxLength={80} value={renaming.name}
               onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
@@ -1506,10 +1552,7 @@ export default function EmployeeKhata() {
       {membersFor && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">Who is on “{membersFor.name}”</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              Sharing a book never shares the money.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Who is on “{membersFor.name}”</h3>
 
             {members.loading ? (
               <div className="space-y-2">
@@ -1582,16 +1625,17 @@ export default function EmployeeKhata() {
                   )}
                 </SearchableSelect>
 
+                {/* The capability spelled out in the tooltip, not left to be
+                    inferred from two words in a dropdown — the one thing
+                    somebody must not get wrong here is thinking they have
+                    handed over their advance. */}
                 <select value={invite.role} onChange={(ev) => setInvite({ ...invite, role: ev.target.value })}
                   aria-label="What they can do"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                  <option value="operator">{ROLE_WORDS.operator.label}</option>
-                  <option value="viewer">{ROLE_WORDS.viewer.label}</option>
+                  title={ROLE_WORDS[invite.role].hint}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3">
+                  <option value="operator" title={ROLE_WORDS.operator.hint}>{ROLE_WORDS.operator.label}</option>
+                  <option value="viewer" title={ROLE_WORDS.viewer.hint}>{ROLE_WORDS.viewer.label}</option>
                 </select>
-                {/* The capability spelled out, not left to be inferred from two
-                    words in a dropdown — the one thing somebody must not get
-                    wrong here is thinking they have handed over their advance. */}
-                <p className="text-xs text-gray-500 mt-1 mb-3">{ROLE_WORDS[invite.role].hint}</p>
 
                 <button type="button" onClick={sendInvite} disabled={members.busy || !invite.person}
                   className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-50">
@@ -1701,10 +1745,10 @@ export default function EmployeeKhata() {
             <div className="space-y-2">
               {cashOutOptions.map((o) => (
                 <button key={o.key} type="button" disabled={o.disabled}
+                  title={o.disabled ? o.why : undefined}
                   onClick={() => { setSheet(null); open(o.key); }}
                   className="w-full text-left border border-gray-200 rounded-lg p-3 hover:border-gray-400 disabled:opacity-50 disabled:hover:border-gray-200">
                   <span className="block text-sm text-gray-800">{o.label}</span>
-                  {o.disabled && <span className="block text-xs text-gray-500">{o.why}</span>}
                 </button>
               ))}
             </div>
@@ -1720,30 +1764,18 @@ export default function EmployeeKhata() {
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <form onSubmit={submit} className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 my-8">
-            <h3 className="text-lg font-semibold text-gray-900">
+            {/* No intro line under the title (2026-10-06: no explainer text). */}
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
               {editing
                 ? (modal === 'refund' ? 'Correct this refund' : 'Correct this expense')
                 : TITLES[modal]}
             </h3>
-            <p className="text-xs text-gray-500 mt-1 mb-4">
-              {editing && 'Not confirmed yet — changing the amount moves your wallet.'}
-              {!editing && modal === 'request' && (data?.approvalRequired
-                ? 'Goes to the CEO/MD, then to whoever handles company cash.'
-                : 'Goes to whoever handles company cash.')}
-              {!editing && modal === 'expense' && 'Comes off your wallet straight away — attach the bill.'}
-              {!editing && modal === 'refund' && 'Goes back onto your advance straight away — attach the credit note.'}
-              {modal === 'settle' && 'Your wallet updates once they confirm receiving it.'}
-              {modal === 'claim' && 'Asks the company to pay back what you are owed.'}
-            </p>
 
-            {/* Which fields cannot be left blank, said once rather than only
-                implied by the markers. Not on a claim: its amount is fixed and
-                everything else on it is optional, so there is no marker to explain. */}
+            {/* What is owed and what is already claimed — the figures only. */}
             {modal === 'claim' && (
               <div className="text-xs bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-2 mb-3">
-                The company owes you {money(display.amount)}
-                {totals.pendingReimbursement > 0 && <>, of which {money(totals.pendingReimbursement)} is already claimed</>}.
-                {' '}This asks for {totals.pendingReimbursement > 0 ? 'the rest' : 'all of it'}.
+                Owed to you {money(display.amount)}
+                {totals.pendingReimbursement > 0 && <> · already claimed {money(totals.pendingReimbursement)}</>}
               </div>
             )}
 
@@ -1898,10 +1930,11 @@ export default function EmployeeKhata() {
               </>
             )}
 
-            {/* Said plainly, where it happens, rather than left to be found out. */}
+            {/* Said where it happens rather than left to be found out — as a
+                short marker, the sentence in its tooltip. */}
             {BOOK_FORMS.includes(modal) && !editing && (
-              <p className="text-xs text-gray-500 mb-1">
-                📍 Your location is recorded with the entry.
+              <p className="text-xs text-gray-500 mb-1" title="Your location is recorded with the entry.">
+                📍 Location recorded
               </p>
             )}
 

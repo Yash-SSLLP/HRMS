@@ -1,5 +1,5 @@
 {
-  "versionName": "2.8.57",
-  "versionCode": 138,
-  "notes": "Promotions: a new Promotions screen lets HR, CEO/MD and Super Admin give an employee a new designation and department. The employee gets a notification and an email with the promotion letter.\n\nSalary revisions: once a salary change is approved, the employee gets a notification and an email with the increment letter. Letters open from the Salary Revisions screen, which has a new look.\n\nDropdowns: a new designation or department can be added straight from the search box."
+  "versionName": "2.8.58",
+  "versionCode": 139,
+  "notes": "Cashbook: every book is now Tour or City. Pick it when you add a book, switch between your Tour and City books at the top of the list, and see it on the book itself.\n\nPDF reports show Tour or City at the top when every entry shares it, or on each entry when a report has both.\n\nYour newest book is now at the top. The sort button and the General book are gone, and the cashbook screens are cleaner, with the explanation text removed."
 }

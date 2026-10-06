@@ -42,7 +42,7 @@ const kb = (n) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : `
  * @param {(i: number) => void} [props.onViewExisting]  open one already attached
  * @param {boolean} [props.required]
  * @param {string} [props.label]
- * @param {string} [props.hint]
+ * @param {string} [props.hint]              tooltip on "Upload files" (no hint text on the page)
  * @param {string} [props.cameraTitle]
  * @param {string} [props.fileName]            base name for photos taken here
  * @param {boolean} [props.disabled]
@@ -115,6 +115,7 @@ export default function BillPicker({
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={disabled || room <= 0}
+          title={hint || undefined}
           className="inline-flex items-center gap-1.5 rounded-lg border px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 min-h-[38px]"
         >
           <FiUpload size={15} /> Upload files
@@ -184,8 +185,6 @@ export default function BillPicker({
           ))}
         </div>
       )}
-
-      {hint && <p className="mt-1.5 text-xs text-gray-500">{hint}</p>}
 
       {camera && (
         <CameraCapture

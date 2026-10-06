@@ -2280,7 +2280,11 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
     ? req.body.labels
     : (req.body.labels != null ? [req.body.labels] : []);
 
-  let saved = 0;
+  // Stored and answered first; the Cloudinary backup runs after the reply
+  // (2026-10-06). Backing up file by file BEFORE answering kept a big
+  // submission waiting long enough for the uploader's connection to drop, and
+  // the page then said it had failed although every file was saved.
+  const docs = [];
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
     const category = SELF_UPLOAD_CATEGORIES.includes(labels[i]) ? labels[i] : 'Other';
@@ -2290,7 +2294,7 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
       ownerId: profile._id,
       originalName: file.originalname || 'document',
     });
-    const doc = await Document.create({
+    docs.push(await Document.create({
       employee: profile._id,
       category,
       fileName: file.originalname || 'document',
@@ -2300,21 +2304,25 @@ const submitPublicDocs = asyncHandler(async (req, res) => {
       sha256,
       isPii: PII_CATEGORIES.includes(category),
       status: 'Submitted',
-    });
-    // Best-effort durable backup to Cloudinary (never blocks the submission).
-    if (cloudinary.enabled()) {
-      try {
-        doc.cloud = await cloudinary.uploadFileBuffer(file.buffer, {
-          folder: `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/documents/${profile._id}`,
-        });
-        await doc.save();
-      } catch (err) {
-        console.error('[employees] Cloudinary doc backup failed:', err.message);
-      }
-    }
-    saved += 1;
+    }));
   }
-  res.status(201).json({ ok: true, count: saved });
+  res.status(201).json({ ok: true, count: docs.length });
+
+  // Best-effort durable backup to Cloudinary — never blocks or fails the submission.
+  if (cloudinary.enabled()) {
+    setImmediate(async () => {
+      for (let i = 0; i < docs.length; i += 1) {
+        try {
+          const cloud = await cloudinary.uploadFileBuffer(files[i].buffer, {
+            folder: `${process.env.CLOUDINARY_FOLDER || 'hrms-lms'}/documents/${profile._id}`,
+          });
+          await Document.updateOne({ _id: docs[i]._id }, { $set: { cloud } });
+        } catch (err) {
+          console.error('[employees] Cloudinary doc backup failed:', err.message);
+        }
+      }
+    });
+  }
 });
 
 module.exports = {

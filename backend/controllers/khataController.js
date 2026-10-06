@@ -390,6 +390,8 @@ const publicKhata = (k, viewerId) => {
     _id: k._id,
     name: k.name,
     isDefault: k.isDefault,
+    // 'tour' | 'city' | null (2026-10-06).
+    tripType: k.tripType || null,
     spent: ledger.round2(k.spent || 0),
     entryCount: k.entryCount || 0,
     lastEntryAt: k.lastEntryAt,
@@ -613,6 +615,23 @@ async function releaseAdvancesFromExecs() {
 }
 
 /**
+ * Tour or City from a request body (2026-10-06). `undefined` = not sent (leave
+ * it alone), null = cleared, otherwise 'tour' | 'city'. Anything else is refused.
+ * Optional on the server so an older app that never sends it can still open a
+ * book; the current clients ask for it.
+ * @param {*} raw
+ * @param {object} res
+ * @returns {'tour'|'city'|null|undefined}
+ */
+function parseTripType(raw, res) {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === '') return null;
+  const v = String(raw).trim().toLowerCase();
+  if (!EmployeeKhata.TRIP_TYPES.includes(v)) bad(res, 'Choose Tour or City.');
+  return v;
+}
+
+/**
  * Open a named expense book, shared by the operator and self-service routes.
  *
  * Both paths need identical validation and identical duplicate handling, and
@@ -625,21 +644,22 @@ async function releaseAdvancesFromExecs() {
  * @param {object} input.res - For setting the status before throwing.
  * @returns {Promise<object>} The new EmployeeKhata document.
  */
-async function openKhata({ employee, name: rawName, note, actor, res }) {
+async function openKhata({ employee, name: rawName, note, tripType, actor, res }) {
   const name = String(rawName || '').trim();
   if (!name) bad(res, 'Give the book a name — what will you be spending on?');
   if (name.length > 80) bad(res, 'That name is too long (80 characters max)');
+  const trip = parseTripType(tripType, res);
 
-  // Make sure their default exists first, so the FIRST book somebody opens by
-  // hand does not accidentally become the fallback for self-service. This also
-  // runs the one-time integrity repair (see khataLedger.ensureKhataIntegrity).
-  await ledger.getOrCreateDefaultKhata(employee, actor);
+  // No "General" book is opened first any more (2026-10-06). The one-time
+  // integrity repair still runs before the first book is written.
+  await ledger.ensureKhataIntegrity();
 
   try {
     return await EmployeeKhata.create({
       employee,
       name,
       note: note ? String(note).slice(0, 300) : undefined,
+      tripType: trip || null,
       createdBy: actor?._id,
     });
   } catch (err) {
@@ -1035,12 +1055,9 @@ function parseEntryFilters(query = {}) {
  * @returns {{wallet: object, khatas: Object[], invites: Object[], totals: object, entries: Object[]}}
  */
 const getMyKhata = asyncHandler(async (req, res) => {
-  // Opens their wallet and first book on first visit, so the screen is never
-  // empty-handed and the first expense has somewhere to land.
-  const [wallet] = await Promise.all([
-    ledger.getOrCreateWallet(req.user._id, req.user),
-    ledger.getOrCreateDefaultKhata(req.user._id, req.user),
-  ]);
+  // Opens their wallet on first visit. No book is opened for them any more
+  // (2026-10-06, user: "no need for general book") — they open their own.
+  const wallet = await ledger.getOrCreateWallet(req.user._id, req.user);
   // (2026-09-29, speed pass: everything below reads side by side in ONE
   // Promise.all — it used to be six waits in a row. Only the step above stays
   // first, because on a first visit it CREATES the default book the list must
@@ -2183,7 +2200,7 @@ const listKhatas = asyncHandler(async (req, res) => {
 
   const [profiles, khatas] = await Promise.all([
     profilesFor(ids),
-    EmployeeKhata.find({ employee: { $in: ids } }).sort({ isDefault: -1, name: 1 }).lean(),
+    EmployeeKhata.find({ employee: { $in: ids } }).sort({ createdAt: -1 }).lean().then(ledger.dropEmptyDefaults),
   ]);
 
   const booksByEmployee = new Map();
@@ -2267,12 +2284,9 @@ const getKhata = asyncHandler(async (req, res) => {
   // Company wall: another company's ledger reads as not-found.
   if (await cannotSeeUser(req, employeeId)) bad(res, 'Employee not found', 404);
 
-  // Opens the wallet and their first book on first view, so a person with
-  // nothing yet still has somewhere for the first advance to land.
-  const [wallet] = await Promise.all([
-    ledger.getOrCreateWallet(employeeId, req.user),
-    ledger.getOrCreateDefaultKhata(employeeId, req.user),
-  ]);
+  // Opens the wallet on first view (an advance needs no book). No "General"
+  // book is opened any more (2026-10-06).
+  const wallet = await ledger.getOrCreateWallet(employeeId, req.user);
   // BOOKS THIS PERSON OWNS, and deliberately not the ones shared WITH them.
   // ledger.listKhatasOf() widened to include accepted-member books so the
   // employee's own screen shows what they can file against — but this is the
@@ -2281,9 +2295,10 @@ const getKhata = asyncHandler(async (req, res) => {
   // expense, Statement), so an operator would have been editing somebody else's
   // book from the wrong person's page, and the statement route would 404
   // because the book does not belong to the employee it was asked for.
-  const khatas = await EmployeeKhata.find({ employee: employeeId })
-    .sort({ isDefault: -1, name: 1 })
-    .populate('members.user', 'firstName lastName email photo');
+  // Newest first (2026-10-06); an empty legacy "General" book is left out.
+  const khatas = await ledger.dropEmptyDefaults(await EmployeeKhata.find({ employee: employeeId })
+    .sort({ createdAt: -1 })
+    .populate('members.user', 'firstName lastName email photo'));
 
   const profile = await EmployeeProfile.findOne({ user: employeeId })
     .select('employeeCode designation department').lean();
@@ -2369,6 +2384,7 @@ const createKhata = asyncHandler(async (req, res) => {
     employee,
     name: req.body.name,
     note: req.body.note,
+    tripType: req.body.tripType,
     actor: req.user,
     res,
   });
@@ -2408,6 +2424,7 @@ const createMyKhata = asyncHandler(async (req, res) => {
     employee: req.user._id,
     name: req.body.name,
     note: req.body.note,
+    tripType: req.body.tripType,
     actor: req.user,
     res,
   });
@@ -2440,6 +2457,8 @@ const updateMyKhata = asyncHandler(async (req, res) => {
     khata.name = name;
   }
   if (req.body.note !== undefined) khata.note = String(req.body.note).slice(0, 300);
+  const trip = parseTripType(req.body.tripType, res);
+  if (trip !== undefined) khata.tripType = trip;
 
   try {
     await khata.save();
@@ -2519,8 +2538,8 @@ async function closingFigures(khata) {
  * the CEO, the MD and a cashbook manager (reopenKhata). The response says so,
  * because a person who closes the wrong book needs to know who to ask.
  *
- * The default book stays open, as it does for the company: it is where an
- * expense lands when no other book is chosen.
+ * Since 2026-10-06 a legacy "General" (default) book may be closed like any
+ * other — nothing depends on it.
  * @route POST /api/khata/me/khatas/:id/close   (the book's owner)
  * @returns {{khata: object, message: string}}
  */
@@ -2529,9 +2548,6 @@ const closeMyKhata = asyncHandler(async (req, res) => {
   // Owner only — a colleague the book was shared with cannot shut it on them.
   const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
   if (!khata.isActive) bad(res, 'This book is already closed.');
-  if (khata.isDefault) {
-    bad(res, 'This is your default book, so it stays open — it is where an expense is filed when no other book is chosen.');
-  }
 
   khata.isActive = false;
   khata.closedAt = new Date();
@@ -2578,9 +2594,6 @@ const deleteMyKhata = asyncHandler(async (req, res) => {
   if (!isId(req.params.id)) bad(res, 'That book no longer exists.', 404);
   const khata = await ledger.loadKhataForOwner(req.params.id, req.user._id);
   if (khata.deletedByOwnerAt) bad(res, 'That book is already deleted.', 404);
-  if (khata.isDefault) {
-    bad(res, 'This is your default book, so it cannot be deleted — it is where an expense is filed when no other book is chosen.');
-  }
   const wasOpen = khata.isActive;
   if (wasOpen) {
     khata.isActive = false;
@@ -3860,6 +3873,8 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     khata.name = name;
   }
   if (req.body.note !== undefined) khata.note = String(req.body.note).slice(0, 300);
+  const trip = parseTripType(req.body.tripType, res);
+  if (trip !== undefined) khata.tripType = trip;
 
   // Closing is how finance says "that job is done": the book stops taking
   // entries, the employee stops being able to correct what is in it, and the
@@ -3872,11 +3887,6 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
   let closureChanged = null;
   if (req.body.isActive !== undefined) {
     const nextActive = req.body.isActive === true || req.body.isActive === 'true';
-    // The fallback book has to stay open, or self-service has nowhere to file
-    // an expense from somebody with no other book.
-    if (!nextActive && khata.isDefault) {
-      bad(res, 'This is the default book and cannot be closed. Make another one the default first.');
-    }
     if (nextActive && !khata.isActive && !isCashbookAuthority(req.user)) bad(res, REOPEN_REFUSAL, 403);
     if (nextActive !== khata.isActive) {
       closureChanged = nextActive ? 'reopened' : 'closed';
@@ -3890,15 +3900,9 @@ const updateKhataSettings = asyncHandler(async (req, res) => {
     khata.isActive = nextActive;
   }
 
-  // Exactly one default per employee, so promoting one demotes the rest.
-  if (req.body.isDefault === true || req.body.isDefault === 'true') {
-    if (!khata.isActive) bad(res, 'A closed book cannot be the default.');
-    await EmployeeKhata.updateMany(
-      { employee: khata.employee, _id: { $ne: khata._id } },
-      { $set: { isDefault: false } }
-    );
-    khata.isDefault = true;
-  }
+  // (`isDefault: true` — "make this the default" — is ignored since
+  // 2026-10-06: the default book is retired, and an empty default is hidden
+  // from every list, so promoting a fresh book would make it vanish.)
 
   await khata.save();
 
@@ -4793,7 +4797,7 @@ async function gatherReport(req, res, employeeId, opts = {}) {
 
   const [entries, before, wallet, profile, branding, settings] = await Promise.all([
     KhataEntry.find(filter)
-      .populate('expenseBook', 'name')
+      .populate('expenseBook', 'name tripType')
       .populate('account', 'name')
       .populate('employee', 'firstName lastName')
       .sort({ date: 1, createdAt: 1 })
@@ -4820,6 +4824,8 @@ async function gatherReport(req, res, employeeId, opts = {}) {
     const row = {
       ...e,
       khataName: e.expenseBook?.name || '',
+      // Tour / City of the row's book (2026-10-06); '' on a row with no book.
+      trip: e.expenseBook?.tripType || '',
       cashAccountName: e.account?.name || '',
       byName: e.employee?.firstName ? `${e.employee.firstName} ${e.employee.lastName || ''}`.trim() : '',
       hasAttachment: bills.billCount(e) > 0,
@@ -4952,7 +4958,7 @@ async function streamStatement(req, res, employeeId, opts = {}) {
     logo: branding.logo || null,
     employee: employeeBlock,
     // A closed book's frozen figures — read in the Promise.all above.
-    book: khata ? { name: khata.name, note: khata.note, ownerName, closing } : null,
+    book: khata ? { name: khata.name, note: khata.note, ownerName, closing, trip: khata.tripType || '' } : null,
     range: { from, to },
     opening,
     entries: rows,

@@ -129,7 +129,7 @@ const SUB_ROW_H = 19;             // a category line under its day
 // A day's own line in the day-by-category table, tinted a shade lighter than
 // the header so the categories under it read as belonging to it.
 const DAY_BG = '#F8F9FD';
-const SECTION_HEAD_H = 32;        // a section's title and the line under it
+const SECTION_HEAD_H = 21;        // a section's title (no explainer line under it since 2026-10-06)
 
 // Where a continuation page's table starts, clear of the repeated masthead.
 const CONTINUE_TOP = 120;
@@ -261,12 +261,41 @@ const SUBTITLES = {
   category: 'Category-wise summary',
 };
 
+/** A book's Tour / City (EmployeeKhata.tripType), as printed. */
+const TRIP_LABELS = { tour: 'Tour', city: 'City' };
+const TRIP_TINT = {
+  tour: { bg: '#E8F0FE', fg: '#1F4FB3' },
+  city: { bg: '#E7F6EE', fg: '#0F6B43' },
+};
+
+/**
+ * WHERE TOUR / CITY IS PRINTED (2026-10-06, user: "if in a PDF all are in same
+ * status like tour/city then mention at the top of that pdf only … if mixed
+ * then show status in every transaction"). A one-book report takes the book's
+ * own. Otherwise every row filed under a book is looked at — an advance or a
+ * settlement belongs to no book and has no status — and one shared status goes
+ * to the top; anything else (two statuses, or a status beside a book that has
+ * none) goes on each row that has one.
+ * @param {Object[]} entries - rows carrying `trip` and `khataName`
+ * @param {Object|null} book
+ * @returns {{top: string, perRow: boolean}} top = 'tour' | 'city' | ''
+ */
+function tripPlacement(entries, book) {
+  if (book) return { top: TRIP_LABELS[book.trip] ? book.trip : '', perRow: false };
+  const seen = new Set(entries.filter((e) => e.khataName || e.trip).map((e) => e.trip || ''));
+  if (seen.size === 1) {
+    const [only] = seen;
+    return { top: TRIP_LABELS[only] ? only : '', perRow: false };
+  }
+  return { top: '', perRow: [...seen].some((t) => TRIP_LABELS[t]) };
+}
+
 /** The heading over each table, printed only when a document has more than one. */
 const SECTION_TITLES = {
-  days: ['Day by day', 'One line per calendar day, with what it cost.'],
-  dayCategories: ['Day by day, by category', 'Each day\'s total, then what that day went on, category by category.'],
-  categories: ['By category', 'Everything in this report, totalled under each category. Only money that moved is counted.'],
-  entries: ['All entries', 'Every entry behind the figures above, oldest first.'],
+  days: 'Day by day',
+  dayCategories: 'Day by day, by category',
+  categories: 'By category',
+  entries: 'All entries',
 };
 
 // A row whose money never moved. Grey, struck through, counted nowhere. Kept on
@@ -478,6 +507,7 @@ function renderCashbookReport(input, kind) {
   const titled = sections.length > 1;
 
   const scopeName = book ? book.name : `${employee.name || 'Employee'} — all books`;
+  const trips = tripPlacement(entries, book);
   const subtitle = SUBTITLES[kind] || SUBTITLES.entries;
 
   // "Added by" is the single most useful thing on a shared book and pure noise
@@ -786,7 +816,22 @@ function renderCashbookReport(input, kind) {
     // The left column stops short of them.
     const titleW = BLOCK_W - HEAD_W - 12;
 
-    write(scopeName, X0, y, { bold: true, size: 12.5, width: titleW });
+    const titleUsed = write(scopeName, X0, y, { bold: true, size: 12.5, width: titleW });
+    // Every row shares one Tour / City: said once, beside the title.
+    if (trips.top) {
+      const label = TRIP_LABELS[trips.top].toUpperCase();
+      const tint = TRIP_TINT[trips.top];
+      doc.font(F.bold).fontSize(7.6);
+      const pw = doc.widthOfString(label, { characterSpacing: 0.7 }) + 14;
+      const fits = titleUsed + 8 + pw <= titleW;
+      const px = fits ? X0 + titleUsed + 8 : X0;
+      const py = fits ? y + 1 : y + 19;
+      doc.roundedRect(px, py, pw, 13, 3.5).fill(tint.bg);
+      doc.fillColor(tint.fg).font(F.bold).fontSize(7.6)
+        .text(label, px, py + 3.2, { width: pw, align: 'center', lineBreak: false, characterSpacing: 0.7 });
+      doc.fillColor(INK);
+      if (!fits) y += 16;
+    }
     y += 19;
 
     const who = [employee.employeeCode, employee.designation, employee.department]
@@ -892,9 +937,7 @@ function renderCashbookReport(input, kind) {
         y = CONTINUE_TOP;
       }
       if (titled) {
-        const [title, note] = SECTION_TITLES[key];
-        write(title, X0, y, { bold: true, size: 11.5, width: BLOCK_W });
-        write(note, X0, y + 15, { size: 8, color: MUTED, width: BLOCK_W });
+        write(SECTION_TITLES[key], X0, y, { bold: true, size: 11.5, width: BLOCK_W });
         y += SECTION_HEAD_H;
       }
       y = drawTableHead(y);
@@ -1035,7 +1078,13 @@ function renderCashbookReport(input, kind) {
           // so the annotation can sit over exactly the glyphs it opens.
           target ? '' : billNote,
         ].filter(Boolean).join(' · ');
-        const metaW = dw - (statusW ? statusW + 6 : 0);
+        // Tour / City on the row itself, only when the document mixes them
+        // (otherwise it is beside the title). A chip at the start of line two.
+        const tripW = trips.perRow && TRIP_LABELS[e.trip]
+          ? chip(TRIP_LABELS[e.trip], dx, y + PAD_TOP + LINE_1 - 1, TRIP_TINT[e.trip]) + 4
+          : 0;
+        const mx = dx + tripW;
+        const metaW = dw - tripW - (statusW ? statusW + 6 : 0);
         // Room for the link is taken out of the meta line BEFORE it is drawn.
         // Measured first and subtracted, rather than fitted into whatever the
         // meta left over: a long remark would otherwise eat the whole line and
@@ -1047,14 +1096,14 @@ function renderCashbookReport(input, kind) {
         }
         let usedW = 0;
         if (meta) {
-          usedW = write(meta, dx, y + PAD_TOP + LINE_1,
+          usedW = write(meta, mx, y + PAD_TOP + LINE_1,
             { size: 6.8, color: FAINT, width: Math.max(0, metaW - noteW) });
         }
         if (noteW) {
           const sepW = usedW
-            ? write(' · ', dx + usedW, y + PAD_TOP + LINE_1, { size: 6.8, color: FAINT, width: 14 })
+            ? write(' · ', mx + usedW, y + PAD_TOP + LINE_1, { size: 6.8, color: FAINT, width: 14 })
             : 0;
-          linkRun(billNote, dx + usedW + sepW, y + PAD_TOP + LINE_1, target,
+          linkRun(billNote, mx + usedW + sepW, y + PAD_TOP + LINE_1, target,
             { size: 6.8, width: metaW - usedW - sepW });
         }
         if (bill) {
@@ -1144,35 +1193,23 @@ function renderCashbookReport(input, kind) {
     // Built BEFORE the tables so its height is known when the last Total row
     // asks for room — it grew a line when the bills moved into the document,
     // and a fixed allowance would let the last sentence run off the page.
+    // FACTS ONLY since 2026-10-06 (user: "remove the PDF section notes too"):
+    // the counting rules and the "Tap See bill…" how-to are gone; what stays is
+    // a figure the tables do not show and the warning about missing bills.
     const notes = [];
-    if (opening) notes.push(`Opening balance ${rs(opening)} carried in from before this period.`);
-    notes.push('Only money that moved is added up. A reversed entry counts beside the reversal that cancels it, so the'
-      + ' pair comes to nothing; a rejected entry is struck through and an entry still waiting for a decision is'
-      + ' marked, and neither is counted.');
-    // Only where there is something to click: on a document with no links the
-    // sentence is an instruction the reader cannot follow.
-    if (attached.length) {
-      notes.push(`The ${attached.length === 1 ? 'bill is' : `${attached.length} bills are`} attached at the end of this`
-        + ' report, one to a page. Tap "See bill" on a row to go to its bill, and "Back to the entry" on the bill to'
-        + ` come back.${billLinks && attached.some((b) => billLinkFor(billLinks, b.entry))
-          ? ' Tap a thumbnail to open the full-size bill online (on a computer, Ctrl+click it to keep this report open).' : ''}`);
-    } else if (sections.includes('entries') && billLinks && entries.some((e) => billLinkFor(billLinks, e))) {
-      notes.push('"View bill" on a row opens that bill online.');
-    }
+    if (opening) notes.push(`Opening balance ${rs(opening)}.`);
     // Bills asked for and not attached — left out against the size caps
     // (billsSkipped, counted by the caller) or in a format this report cannot
     // print (billsMissed). Said out loud, in red: a document that quietly drops
     // bills reads exactly like one that never had any.
     const unattached = billsSkipped + billsMissed;
     if (unattached) {
-      notes.push(`${unattached} bill${unattached === 1 ? ' is' : 's are'} not attached — open`
-        + ` ${unattached === 1 ? 'it' : 'them'} from "View bill" on the row`
-        + `${billsSkipped ? ', or narrow the filters and download again' : ''}.`);
+      notes.push(`${unattached} bill${unattached === 1 ? '' : 's'} not attached — see "View bill" on the row.`);
     }
     const noteText = notes.join(' ');
     const NOTE_SIZE = 7.4;
     doc.font(F.regular).fontSize(NOTE_SIZE);
-    const NOTE_H = Math.ceil(doc.heightOfString(noteText, { width: BLOCK_W })) + 4;
+    const NOTE_H = noteText ? Math.ceil(doc.heightOfString(noteText, { width: BLOCK_W })) + 4 : 0;
 
     const drawTotal = (key, last) => {
       ensureRoom(TOT_H + (last ? 10 + NOTE_H : 0));
@@ -1222,9 +1259,11 @@ function renderCashbookReport(input, kind) {
     y += 10;
 
     // ---- the small print ---------------------------------------------------
-    doc.font(F.regular).fontSize(NOTE_SIZE).fillColor(unattached ? OUT_INK : FAINT)
-      .text(noteText, X0, y, { width: BLOCK_W });
-    doc.fillColor(INK);
+    if (noteText) {
+      doc.font(F.regular).fontSize(NOTE_SIZE).fillColor(unattached ? OUT_INK : FAINT)
+        .text(noteText, X0, y, { width: BLOCK_W });
+      doc.fillColor(INK);
+    }
 
     // ===================== THE BILLS =====================
     // Every attached bill, in full, one page per picture and one per page of a
@@ -1369,7 +1408,8 @@ function renderCashbookReport(input, kind) {
  * @param {Object} input.company           - require('../config/company')
  * @param {Buffer|null} input.logo         - branding.getBranding().logo
  * @param {Object} input.employee          - { name, employeeCode, designation, department }
- * @param {Object|null} input.book         - { name, note, ownerName, closing }; null for the whole wallet.
+ * @param {Object|null} input.book         - { name, note, ownerName, closing, trip }; null for the whole wallet.
+ *   `trip` is the book's 'tour' | 'city' (or ''); rows carry their own as `trip`.
  *   `closing` is set only on a CLOSED book: { balance, spent, at } — the owner's
  *   wallet balance (+ advance in hand, − the company owes) and what the book had
  *   cost when it was closed; printed beside the title in place of the balance.
@@ -1412,5 +1452,5 @@ const renderEntriesReport = (input) => renderReport(input, 'entries');
 const renderDaywiseReport = (input) => renderReport(input, 'daywise');
 
 module.exports = {
-  renderReport, renderEntriesReport, renderDaywiseReport, groupByDay, REPORT_KINDS,
+  renderReport, renderEntriesReport, renderDaywiseReport, groupByDay, REPORT_KINDS, tripPlacement,
 };

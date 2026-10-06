@@ -222,7 +222,10 @@ async function run() {
   check('the closing balance is right', await walletOf(employee._id), 2500);
 
   console.log('\n--- one wallet, several expense books ---');
-  const general = await ledger.getOrCreateDefaultKhata(employee._id, boss);
+  // No General book is created by the ledger any more (2026-10-06); a legacy
+  // one is made by hand so the "unnamed expense" fallback is still exercised.
+  const general = await EmployeeKhata.create({ employee: employee._id, name: 'General', isDefault: true, createdBy: boss._id });
+  check('a legacy default book is found, never created', String((await ledger.findDefaultKhata(employee._id))._id), String(general._id));
   const siteA = await EmployeeKhata.create({ employee: employee._id, name: `${TAG} Site A`, createdBy: boss._id });
   const vehicle = await EmployeeKhata.create({ employee: employee._id, name: `${TAG} Vehicle`, createdBy: boss._id });
   check('a second and third book can be opened', await EmployeeKhata.countDocuments({ employee: employee._id }), 3);

@@ -236,12 +236,12 @@ const MOVEMENT_FILTERS = [
   ['other', 'Other'],
 ];
 
-// The shapes the statement PDF comes in, and what each is for — the server's
-// REPORT_KINDS, picked off `?report=`. Every one of them ends with the full
-// list of entries (2026-09-26), so a summary can be checked against its rows.
+// The shapes the statement PDF comes in — the server's REPORT_KINDS, picked off
+// `?report=`. Every one of them ends with the full list of entries
+// (2026-09-26), so a summary can be checked against its rows.
 const REPORT_TYPES = [
-  ['entries', 'All entries', 'Every row in date order — a book\'s spending with its total, or a whole wallet with its running balance — and the bills.'],
-  ['daywise_category', 'Day-wise with category summary', 'Each day and what it went on, category by category; then a category-wise summary, every entry and the bills — each on a page of its own.'],
+  ['entries', 'All entries'],
+  ['daywise_category', 'Day-wise with category summary'],
 ];
 
 const blankEntry = {
@@ -1091,12 +1091,14 @@ export default function AdminKhata() {
     e.preventDefault();
     if (!khataModal.employee) { toast.error('Choose an employee'); return; }
     if (!khataModal.name.trim()) { toast.error('Give the book a name'); return; }
+    if (!khataModal.tripType) { toast.error('Choose Tour or City'); return; }
     setSaving(true);
     try {
       const res = await api.post('/khata/khatas', {
         employee: khataModal.employee,
         name: khataModal.name,
         note: khataModal.note || undefined,
+        tripType: khataModal.tripType,
       });
       toast.success(res.data.message || 'Book opened');
       const created = res.data.khata;
@@ -1194,7 +1196,7 @@ export default function AdminKhata() {
         const body = { name: settingsModal.name, note: settingsModal.note };
         // Only send the switches the user actually touched, so saving a rename
         // never silently closes a book.
-        if (settingsModal.makeDefault) body.isDefault = true;
+        if (settingsModal.tripType) body.tripType = settingsModal.tripType;
         if (settingsModal.close) body.isActive = false;
         await api.put(`/khata/khatas/${settingsModal.khataId}`, body);
       }
@@ -1453,11 +1455,6 @@ export default function AdminKhata() {
                   <p className="text-sm font-semibold">
                     {peopleFilter.q ? 'Nobody matches that search' : 'Nobody has a balance right now'}
                   </p>
-                  <p className="text-xs text-gray-500 -mt-1">
-                    {peopleFilter.q
-                      ? 'Try a different name, employee code or book.'
-                      : 'Everyone is settled up.'}
-                  </p>
                   <button type="button"
                     onClick={() => { setPeopleSearch(''); setPeopleFilter({ q: '', filter: 'all' }); }}
                     className="trn-btn kh-mini">
@@ -1628,7 +1625,9 @@ export default function AdminKhata() {
                     <div className="min-w-0">
                       <p className="kh-book-name">{k.name}</p>
                       <div className="kh-tags">
-                        {k.isDefault && <span className="kh-pill is-accent">Default</span>}
+                        {(k.tripType === 'tour' || k.tripType === 'city') && (
+                          <span className="kh-pill is-accent">{k.tripType === 'tour' ? 'Tour' : 'City'}</span>
+                        )}
                         <span className={`kh-pill${k.isActive ? ' is-green' : ''}`}>
                           {k.isActive ? 'Open' : (k.closedByOwner ? 'Closed by the employee' : 'Closed')}
                         </span>
@@ -1661,8 +1660,8 @@ export default function AdminKhata() {
                     <button onClick={() => setSettingsModal({
                       khataId: k._id,
                       name: k.name,
-                      isDefault: k.isDefault,
                       isActive: k.isActive,
+                      tripType: k.tripType || '',
                       spent: k.spent,
                       note: k.note || '',
                     })}
@@ -1945,7 +1944,7 @@ export default function AdminKhata() {
             {expenses.length === 0 ? (
               <div className="trn-empty">
                 <span className="trn-empty-icon"><FiCheckCircle size={24} /></span>
-                <p className="text-sm font-semibold">Nothing waiting — every recorded expense has been confirmed.</p>
+                <p className="text-sm font-semibold">Nothing to confirm</p>
               </div>
             ) : (
               <>
@@ -2175,7 +2174,7 @@ export default function AdminKhata() {
                   </option>
                   {(entryModal.khatas || []).map((k) => (
                     <option key={k._id} value={k._id}>
-                      {k.name}{k.isDefault ? ' (default)' : ''}{k.spent ? ` — ${money(k.spent)} so far` : ''}
+                      {k.name}{k.tripType ? ` · ${k.tripType === 'tour' ? 'Tour' : 'City'}` : ''}{k.spent ? ` — ${money(k.spent)} so far` : ''}
                     </option>
                   ))}
                 </select>
@@ -2208,7 +2207,7 @@ export default function AdminKhata() {
               </div>
             </div>
 
-            {movesCash ? (
+            {movesCash && (
               <>
                 <label className="prm-label">Company account<Req /></label>
                 <select value={entryForm.cashAccount} required
@@ -2229,10 +2228,6 @@ export default function AdminKhata() {
                   <p className="text-xs text-gray-500 mb-3">This will post immediately and move the cash.</p>
                 )}
               </>
-            ) : (
-              <p className="kh-callout text-gray-500 mb-3">
-                No company account is involved.
-              </p>
             )}
 
             <label className="prm-label">What is it for?</label>
@@ -2370,6 +2365,17 @@ export default function AdminKhata() {
               </>
             )}
 
+            <label className="prm-label">Tour or City<Req /></label>
+            <div role="radiogroup" className="flex gap-2 mb-3">
+              {[['tour', 'Tour'], ['city', 'City']].map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={khataModal.tripType === v}
+                  onClick={() => setKhataModal({ ...khataModal, tripType: v })}
+                  className={`trn-btn kh-mini flex-1 justify-center${khataModal.tripType === v ? ' is-on' : ''}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <label className="prm-label">What is it for?<Req /></label>
             <input type="text" required maxLength={80} value={khataModal.name}
               onChange={(e) => setKhataModal({ ...khataModal, name: e.target.value })}
@@ -2486,8 +2492,7 @@ export default function AdminKhata() {
               </button>
             </div>
             <p className="text-xs text-gray-500 mb-4">
-              {expenseEdit.entry.employee?.name || 'The employee'} · {expenseEdit.entry.code}.
-              Saving a different amount moves their wallet straight away.
+              {expenseEdit.entry.employee?.name || 'The employee'} · {expenseEdit.entry.code}
             </p>
 
             <label className="prm-label">Book</label>
@@ -2588,34 +2593,26 @@ export default function AdminKhata() {
               className="prm-input mb-3"
               placeholder="e.g. Site A — materials" />
 
-            {/* The fallback book for self-service. Exactly one per person, so
-                promoting this one demotes whichever held it. */}
-            {!settingsModal.isDefault && settingsModal.isActive && (
-              <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
-                <input type="checkbox" className="mt-1"
-                  checked={!!settingsModal.makeDefault}
-                  onChange={(e) => setSettingsModal({ ...settingsModal, makeDefault: e.target.checked })} />
-                <span>Make this their default book</span>
-              </label>
-            )}
+            <label className="prm-label">Tour or City</label>
+            <div role="radiogroup" className="flex gap-2 mb-3">
+              {[['tour', 'Tour'], ['city', 'City']].map(([v, label]) => (
+                <button key={v} type="button" role="radio" aria-checked={settingsModal.tripType === v}
+                  onClick={() => setSettingsModal({ ...settingsModal, tripType: v })}
+                  className={`trn-btn kh-mini flex-1 justify-center${settingsModal.tripType === v ? ' is-on' : ''}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
 
             {/* A book carrying spend CAN be closed: `spent` is history, and the
                 money itself is on the wallet where closing a folder cannot hide
-                it. Only the fallback book has to stay open. */}
+                it. ("Make default" is retired since 2026-10-06.) */}
             {settingsModal.isActive ? (
               <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
                 <input type="checkbox" className="mt-1"
-                  disabled={settingsModal.isDefault}
                   checked={settingsModal.close === true}
                   onChange={(e) => setSettingsModal({ ...settingsModal, close: e.target.checked })} />
-                <span>
-                  Close this book
-                  <span className="block text-xs text-gray-500">
-                    {settingsModal.isDefault
-                      ? 'The default book cannot be closed. Make another one the default first.'
-                      : 'It stays readable, with its spending on the record, but takes no new entries.'}
-                  </span>
-                </span>
+                <span>Close this book</span>
               </label>
             ) : mayReopen ? (
               <label className="flex items-start gap-2 mb-3 text-sm text-gray-700">
@@ -2666,20 +2663,16 @@ export default function AdminKhata() {
             <label className="prm-label">Advance limit</label>
             <input type="number" min="0" step="100" value={walletModal.creditLimit}
               onChange={(e) => setWalletModal({ ...walletModal, creditLimit: e.target.value })}
-              className="prm-input mb-1" />
-            <p className="text-xs text-gray-500 mb-3">
-              0 means no limit.
-            </p>
+              title="0 means no limit"
+              className="prm-input mb-3" />
 
             {isSuperAdmin && (
               <>
                 <label className="prm-label">Opening balance</label>
                 <input type="number" step="0.01" value={walletModal.openingBalance}
                   onChange={(e) => setWalletModal({ ...walletModal, openingBalance: e.target.value })}
-                  className="prm-input mb-1" />
-                <p className="text-xs text-gray-500 mb-3">
-                  Moves the balance with no entry behind it.
-                </p>
+                  title="Moves the balance with no entry behind it"
+                  className="prm-input mb-3" />
               </>
             )}
 
@@ -2721,16 +2714,6 @@ export default function AdminKhata() {
                   {money(sanctionModal.entry.amount)} for {sanctionModal.entry.employee?.name}
                   {sanctionModal.entry.purpose ? ` — ${sanctionModal.entry.purpose}` : ''}.
                 </>}
-            </p>
-
-            <p className="kh-callout text-gray-500 mb-4">
-              {sanctionModal.entries
-                ? (sanctionModal.approve
-                  ? 'No money moves yet — the cashbook manager pays them out.'
-                  : 'Nothing moves. Each request is closed.')
-                : (sanctionModal.approve
-                  ? 'No money moves yet — the accounts team pays it out.'
-                  : 'Nothing moves. The request is closed.')}
             </p>
 
             <label className="prm-label">
@@ -2802,7 +2785,7 @@ export default function AdminKhata() {
                     <tr>
                       <th className="px-3 py-2 text-left font-medium text-gray-700">Person</th>
                       <th className="px-3 py-2 text-center font-medium text-gray-700">Can pay</th>
-                      <th className="px-3 py-2 text-right font-medium text-gray-700">Direct up to</th>
+                      <th className="px-3 py-2 text-right font-medium text-gray-700" title="0 = no limit">Direct up to</th>
                       <th className="px-3 py-2 text-center font-medium text-gray-700">Can approve</th>
                       <th className="px-3 py-2" />
                     </tr>
@@ -2831,8 +2814,8 @@ export default function AdminKhata() {
                           <td className="px-3 py-2 text-right">
                             <input type="number" min="0" step="100" value={o.maxPerTransaction}
                               onChange={(e) => patch({ maxPerTransaction: e.target.value })}
+                              title="0 = no limit"
                               className="prm-input kh-ops-input" />
-                            <p className="text-xs text-gray-400">0 = no limit</p>
                           </td>
                           <td className="px-3 py-2 text-center">
                             <input type="checkbox" checked={o.canApprove}

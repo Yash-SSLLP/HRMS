@@ -208,23 +208,9 @@ function ensureKhataIntegrity() {
       console.log(`khata: named ${unnamed.modifiedCount} khata(s) "${DEFAULT_KHATA_NAME}" — they predate the name field.`);
     }
 
-    // (c) Employees with no default book. Self-service falls back to their
-    // oldest when the flag is missing, so nothing is broken — but the flag is
-    // what the UI marks, and what stops the fallback book being closed.
-    const missing = await EmployeeKhata.aggregate([
-      { $group: { _id: '$employee', hasDefault: { $max: { $cond: ['$isDefault', 1, 0] } } } },
-      { $match: { hasDefault: 0 } },
-    ]);
-    for (const row of missing) {
-      const oldest = await EmployeeKhata.findOne({ employee: row._id }).sort({ createdAt: 1 });
-      if (oldest) {
-        oldest.isDefault = true;
-        await oldest.save();
-      }
-    }
-    if (missing.length) {
-      console.log(`khata: flagged a default khata for ${missing.length} employee(s).`);
-    }
+    // (There used to be a step (c) flagging a default book for anybody with
+    // none. Gone 2026-10-06 with the "General" book itself: it would have
+    // turned somebody's first hand-made book into an undeletable default.)
   })().catch((err) => {
     // Never block a khata operation over a repair. If this failed (no
     // permission, a racing process), the caller still works and the duplicate-key
@@ -235,41 +221,35 @@ function ensureKhataIntegrity() {
 }
 
 /**
- * Fetch the khata an employee's money falls to when none is named, opening it
- * on first use.
- *
- * An employee may hold several khatas, but self-service has to work before
- * anyone has organised anything — somebody asking for ₹500 should not first be
- * made to create a book. So the first khata is opened lazily, named "General",
- * and flagged `isDefault`.
- *
- * Lazily rather than one-per-employee up front, because most staff never hold
- * company cash and an empty ledger each would only clutter the outstanding list.
+ * The legacy "General" book an employee's money falls to when no book is named
+ * — or null. NEVER CREATES ONE any more (2026-10-06, user: "no need for general
+ * book"): every client now files into a book the person picked. It survives
+ * only for an old client posting with no book named, and only for people who
+ * already have a General book.
  * @param {string|import('mongoose').Types.ObjectId} employeeId
- * @param {object} [actor] - The acting user, recorded as creator on first open.
- * @returns {Promise<object>} The EmployeeKhata document.
+ * @returns {Promise<object|null>} The EmployeeKhata document, or null.
  */
-async function getOrCreateDefaultKhata(employeeId, actor) {
+async function findDefaultKhata(employeeId) {
   await ensureKhataIntegrity();
-  // Prefer the flagged default; fall back to their oldest, which covers khatas
-  // created before the flag existed and any where it was somehow cleared.
-  const existing = await EmployeeKhata.findOne({ employee: employeeId, isDefault: true })
-    || await EmployeeKhata.findOne({ employee: employeeId }).sort({ createdAt: 1 });
-  if (existing) return existing;
+  return EmployeeKhata.findOne({ employee: employeeId, isDefault: true, deletedByOwnerAt: null });
+}
 
-  try {
-    return await EmployeeKhata.create({
-      employee: employeeId,
-      name: DEFAULT_KHATA_NAME,
-      isDefault: true,
-      createdBy: actor?._id,
-    });
-  } catch (err) {
-    // Compound unique index on {employee, name} — two concurrent first entries
-    // raced. The other one won; use it.
-    if (err.code === 11000) return EmployeeKhata.findOne({ employee: employeeId, name: DEFAULT_KHATA_NAME });
-    throw err;
-  }
+/**
+ * Take the EMPTY legacy "General" books out of a list (2026-10-06). One that
+ * holds entries stays — it is real history, and its owner may close or delete
+ * it like any other book. "Empty" is asked of the ledger itself, not of the
+ * cached `entryCount`, which counts only approved spending: a General book
+ * holding nothing but a rejected expense still has a row to show.
+ * @param {object[]} khatas - documents or lean objects
+ * @returns {Promise<object[]>} the same list, minus empty defaults
+ */
+async function dropEmptyDefaults(khatas) {
+  const candidates = khatas.filter((k) => k.isDefault && !k.entryCount);
+  if (!candidates.length) return khatas;
+  const used = await KhataEntry.distinct('expenseBook', { expenseBook: { $in: candidates.map((k) => k._id) } });
+  const keep = new Set(used.map(String));
+  const drop = new Set(candidates.filter((k) => !keep.has(String(k._id))).map((k) => String(k._id)));
+  return drop.size ? khatas.filter((k) => !drop.has(String(k._id))) : khatas;
 }
 
 /**
@@ -277,7 +257,8 @@ async function getOrCreateDefaultKhata(employeeId, actor) {
  *
  * Every posting path goes through this so the rules are stated once: a named
  * book must exist, must be one this person is allowed to file into, and must
- * still be open. Naming nothing falls back to their default.
+ * still be open. Naming nothing falls back to a legacy "General" book if they
+ * have one, and is refused otherwise.
  *
  * THE STANDING CHECK IS THE IMPORTANT ONE — without it, a request naming
  * somebody else's khata id would file one person's spending under another
@@ -302,7 +283,12 @@ async function getOrCreateDefaultKhata(employeeId, actor) {
  */
 async function resolveKhata(employeeId, khataId, actor) {
   if (!khataId) {
-    const khata = await getOrCreateDefaultKhata(employeeId, actor);
+    const khata = await findDefaultKhata(employeeId);
+    if (!khata) {
+      const err = new Error('Choose a book to file this under.');
+      err.statusCode = 400;
+      throw err;
+    }
     if (!khata.isActive) {
       const err = new Error(`"${khata.name}" is closed and cannot take new entries.`);
       err.statusCode = 400;
@@ -383,7 +369,7 @@ async function listKhatasOf(employeeId, includeClosed = false) {
     .populate('members.user', 'firstName lastName email photo')
     .sort({ isDefault: -1, name: 1 });
 
-  return khatas.sort((a, b) => {
+  return (await dropEmptyDefaults(khatas)).sort((a, b) => {
     const mine = (k) => (k.isOwner(employeeId) ? 0 : 1);
     if (mine(a) !== mine(b)) return mine(a) - mine(b);
     if (Boolean(a.isDefault) !== Boolean(b.isDefault)) return a.isDefault ? -1 : 1;
@@ -1335,7 +1321,8 @@ module.exports = {
   nameOf,
   ensureKhataIntegrity,
   getOrCreateWallet,
-  getOrCreateDefaultKhata,
+  findDefaultKhata,
+  dropEmptyDefaults,
   resolveKhata,
   listKhatasOf,
   listVisibleKhatas,

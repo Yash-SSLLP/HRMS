@@ -342,7 +342,8 @@ li + li > .kh-person { border-top: 1px solid var(--border); }
 .kh-book-spent-value { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kh-book-count { font-size: 0.72rem; opacity: 0.55; margin-top: -0.4rem; }
 .kh-book-foot { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: auto; padding-top: 0.65rem; border-top: 1px dashed var(--border); }
-.kh-book-foot .kh-mini.is-on {
+.kh-book-foot .kh-mini.is-on,
+.kh-modal .kh-mini.is-on {
   color: color-mix(in srgb, var(--accent) 90%, currentColor);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
   background-color: color-mix(in srgb, var(--accent) 9%, var(--surface));

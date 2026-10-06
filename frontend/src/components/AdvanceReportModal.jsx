@@ -171,7 +171,7 @@ export default function AdvanceReportModal({ people, onClose }) {
               })}
             </ul>
             <p className="px-3 py-2 border-t border-gray-200 text-xs text-gray-600">
-              {picked.size === 0 ? 'Tick the people to include.' : `${picked.size} chosen`}
+              {picked.size} chosen
             </p>
           </div>
         )}
