@@ -37,6 +37,9 @@ import { confirmDialog } from '../components/dialogs';
 import { DecidedBy, DecisionHistory } from '../components/RestDayDecisionLog';
 import { QueueSwitch, useRestDayQueue } from '../components/RestDayQueue';
 import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
+import { punchState, changedPunches, dmy } from '../utils/attendancePunch';
+import PunchTimeFields from '../components/attendance/PunchTimeFields';
+import MarkAttendanceModal from '../components/attendance/MarkAttendanceModal';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
 import { useAuthStore } from '../store/authStore';
@@ -285,27 +288,6 @@ function DayBar({ ymd, counts, shown }) {
   );
 }
 
-/**
- * A stored punch as the local-datetime input wants it, and back again.
- *
- * `<input type="datetime-local">` speaks wall-clock time with no zone, so both
- * directions go through the browser's own local time — which for this portal is
- * IST, the same clock the punch was made on and the same one every other screen
- * prints. Building the string by hand rather than via toISOString(), because
- * that converts to UTC and would show a 5:30-earlier time in the box than the
- * row above it.
- */
-const toLocalInput = (v) => {
-  if (!v) return '';
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-/** '' → null (clear the punch); otherwise an ISO instant for the server. */
-const fromLocalInput = (v) => (v ? new Date(v).toISOString() : null);
-
 const blankEntry = {
   employee: '',
   date: toYMD(new Date()),
@@ -346,6 +328,8 @@ export default function AdminAttendance() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(blankEntry);
   const [saving, setSaving] = useState(false);
+  // Super Admin's "Mark attendance" for a day somebody forgot to punch.
+  const [markOpen, setMarkOpen] = useState(false);
   const [photoModal, setPhotoModal] = useState(null); // { url, label }
 
   const [exporting, setExporting] = useState(''); // '' | 'month' | 'day' | 'range'
@@ -600,13 +584,9 @@ export default function AdminAttendance() {
     setEditingId(r._id);
     setForm({
       employee: r.employee?._id || r.employee,
-      date: r.date ? r.date.slice(0, 10) : '',
       status: r.status,
       remarks: r.remarks || '',
-      // Only the Backend may change these, but they are prefilled for everyone
-      // so the modal shows what the day actually holds.
-      checkIn: toLocalInput(r.checkIn),
-      checkOut: toLocalInput(r.checkOut),
+      ...punchState(r),
     });
     setShowModal(true);
   };
@@ -617,16 +597,17 @@ export default function AdminAttendance() {
     setError('');
     try {
       if (editingId) {
-        // The times are the Backend's to change; nobody else's form even shows
-        // them, and the server drops them from anyone else in any case.
-        await api.put(`/attendance/${editingId}`, {
+        // The day and the times are the Backend's to change; nobody else's form
+        // offers them, and the server drops them from anyone else in any case.
+        // Only what was actually touched is sent: an untouched punch keeps its
+        // exact stored instant, and on a moved day the server carries it over.
+        const body = {
           status: form.status,
           remarks: form.remarks,
-          ...(isSuperAdmin ? {
-            checkIn: fromLocalInput(form.checkIn),
-            checkOut: fromLocalInput(form.checkOut),
-          } : {}),
-        });
+          ...(isSuperAdmin ? changedPunches(form) : {}),
+        };
+        await api.put(`/attendance/${editingId}`, body);
+        if (body.date) toast.success(`Moved to ${dmy(body.date)}`);
       } else {
         await api.post('/attendance', form);
       }
@@ -699,6 +680,14 @@ export default function AdminAttendance() {
         {!viewOnly && (
           <button type="button" onClick={openSettings} className="trn-btn">
             <FiSettings size={15} /> Office &amp; geofence
+          </button>
+        )}
+        {/* Super Admin only, and silent by design — HR and CEO/MD never see
+            the button, and a marked day carries no remark; the audit log is
+            its only trace (user, 2026-10-07). */}
+        {!viewOnly && isSuperAdmin && (
+          <button type="button" onClick={() => setMarkOpen(true)} className="trn-btn">
+            <FiClock size={15} /> Mark attendance
           </button>
         )}
         {!viewOnly && (
@@ -1380,7 +1369,7 @@ export default function AdminAttendance() {
               </div>
               <div>
                 <label className="block text-sm text-gray-700">Date *</label>
-                <input type="date" required disabled={!!editingId}
+                <input type="date" required disabled={!!editingId && !isSuperAdmin}
                   value={form.date}
                   onChange={(e) => setForm({ ...form, date: e.target.value })}
                   className="mt-1 block w-full border rounded-lg px-3 py-2 disabled:bg-gray-100" />
@@ -1395,31 +1384,11 @@ export default function AdminAttendance() {
               </div>
               {/* Correcting the punches themselves — Backend only, and only on an
                   existing record (a manual entry has no punches to correct).
-                  Everything downstream follows: hours are recomputed on save,
-                  and the late-arrival check reads the new check-in, so a
-                  corrected time fixes the day's pay as well as its display. */}
-              {editingId && isSuperAdmin && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
-                  <p className="text-sm font-medium text-gray-800">Punch times</p>
-                  <p className="text-xs text-gray-500 mt-0.5 mb-3">
-                    Changes recalculate the day&apos;s hours and late penalty.
-                  </p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Check-in</label>
-                      <input type="datetime-local" value={form.checkIn || ''}
-                        onChange={(e) => setForm({ ...form, checkIn: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2" />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Check-out</label>
-                      <input type="datetime-local" value={form.checkOut || ''}
-                        onChange={(e) => setForm({ ...form, checkOut: e.target.value })}
-                        className="block w-full border rounded-lg px-3 py-2" />
-                    </div>
-                  </div>
-                </div>
-              )}
+                  Times only: the day is the Date box above. Everything downstream
+                  follows: hours are recomputed on save, and the late-arrival
+                  check reads the new check-in, so a corrected time fixes the
+                  day's pay as well as its display. */}
+              {editingId && isSuperAdmin && <PunchTimeFields form={form} setForm={setForm} />}
 
               <div>
                 <label className="block text-sm text-gray-700">Remarks</label>
@@ -1443,6 +1412,10 @@ export default function AdminAttendance() {
             </form>
           </div>
         </div>
+      )}
+
+      {markOpen && isSuperAdmin && (
+        <MarkAttendanceModal employees={employees} onClose={() => setMarkOpen(false)} onSaved={load} />
       )}
     </div>
   );

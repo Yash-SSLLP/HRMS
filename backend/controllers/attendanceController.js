@@ -25,7 +25,7 @@ const {
   getLateAllowance, setLateAllowance, normalizeLateAllowance,
   getGraceOverrides, setGraceOverrides, normalizeGraceOverrides, graceMinutesFor,
 } = require('../utils/workday');
-const { resolveShiftDay, openShiftRecord } = require('../services/shiftResolver');
+const { resolveShiftDay, resolveShiftForDay, openShiftRecord } = require('../services/shiftResolver');
 const { shiftSnapshot, rollForwardIfInverted } = require('../utils/shiftWindow');
 // Sunday / org-wide Comp Off days worked → an approvable double-pay claim.
 const { COMP_OFF, compOffKeysFor, doublePayState, restDayCredit, isSundayKey } = require('../utils/restDay');
@@ -2268,10 +2268,12 @@ const createRecord = asyncHandler(async (req, res) => {
  * write must not turn a successful edit into an error.
  * @param {import('express').Request} req
  * @param {Object} record - the saved attendance record
- * @param {{checkIn: Date, checkOut: Date}} before - the times as they were
- * @param {string[]} changed - which of the two actually moved
+ * @param {{checkIn: Date, checkOut: Date, date: Date}} before - the record as it was
+ * @param {string[]} changed - which of checkIn / checkOut / date actually moved
+ * @param {{created?: boolean}} [opts] - the day was created by this write (a
+ *   Super Admin's mark), logged as one "marked" row ahead of the times
  */
-async function auditPunchEdit(req, record, before, changed) {
+async function auditPunchEdit(req, record, before, changed, { created = false } = {}) {
   try {
     const AuditLog = require('../models/AuditLog');
     const profile = await EmployeeProfile.findById(record.employee)
@@ -2283,14 +2285,14 @@ async function auditPunchEdit(req, record, before, changed) {
     // — the trap utils/istDate exists for. A wrong date on an audit row is
     // worse than none: it is evidence about the wrong day.
     const day = record.date ? ymdLocal(record.date) : '';
-    const t = (v) => (v ? fmtIstTime(v) : '—');
-    await AuditLog.insertMany(changed.map((field) => ({
+    const t = (field, v) => (!v ? '—' : field === 'date' ? ymdLocal(v) : fmtIstTime(v));
+    const rows = changed.map((field) => ({ field, fromStatus: t(field, before[field]), toStatus: t(field, record[field]) }));
+    if (created) rows.unshift({ field: '', fromStatus: '', toStatus: 'Created' });
+    await AuditLog.insertMany(rows.map((row) => ({
       entity: 'Attendance',
       entityId: record._id,
       entityLabel: `${who}${day ? ` · ${day}` : ''}`,
-      field,
-      fromStatus: t(before[field]),
-      toStatus: t(record[field]),
+      ...row,
       by: req.user._id,
       byName: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim(),
       byRole: req.user.role,
@@ -2301,7 +2303,7 @@ async function auditPunchEdit(req, record, before, changed) {
 }
 
 /**
- * Update an attendance record (employee/date immutable here).
+ * Update an attendance record (employee immutable; the date moves for a Super Admin only).
  *
  * THE PUNCH TIMES ARE THE BACKEND'S ALONE. Everyone with `attendance.manage`
  * may correct the status and the remark; only a Super Admin may move a check-in
@@ -2331,16 +2333,56 @@ const updateRecord = asyncHandler(async (req, res) => {
     res.status(403);
     throw new Error('You can only manage employees assigned to you');
   }
-  // Don't allow changing employee or date here
+  // The person is fixed; the day is the Backend's to move (below), nobody else's.
   delete req.body.employee;
+  const requestedDate = req.body.date;
   delete req.body.date;
 
   const isBackend = req.user.role === 'SuperAdmin';
-  const before = { checkIn: record.checkIn, checkOut: record.checkOut };
+  const before = { checkIn: record.checkIn, checkOut: record.checkOut, date: record.date };
   if (!isBackend) {
     delete req.body.checkIn;
     delete req.body.checkOut;
   } else {
+    // Moving the record to another day — a punch logged against the wrong date.
+    // The punches travel with it (same clock time, new day) unless new ones were
+    // sent, and the shift is re-frozen for the new day, since the roster for the
+    // 2nd is not the roster for the 1st. A decided rest-day or work-on-leave
+    // claim belongs to the day it was decided for, so such a day is not moved.
+    if (requestedDate) {
+      if (Number.isNaN(new Date(requestedDate).getTime())) {
+        res.status(400);
+        throw new Error('Date is not a valid date.');
+      }
+      const newDay = startOfDay(requestedDate);
+      const delta = newDay.getTime() - new Date(record.date).getTime();
+      if (delta !== 0) {
+        if (record.doublePay?.status || record.workOnLeave?.status) {
+          res.status(409);
+          throw new Error(record.doublePay?.status
+            ? 'This day has a decided rest-day duty claim, so it cannot be moved to another date.'
+            : 'This day has a work-on-leave claim, so it cannot be moved to another date.');
+        }
+        const clash = await Attendance.exists({ employee: record.employee, date: newDay, _id: { $ne: record._id } });
+        if (clash) {
+          res.status(409);
+          throw new Error(`There is already an attendance record on ${ymdLocal(newDay).split('-').reverse().join('-')}. Edit that one instead.`);
+        }
+        for (const key of ['checkIn', 'checkOut']) {
+          if (req.body[key] === undefined && record[key]) req.body[key] = new Date(new Date(record[key]).getTime() + delta);
+        }
+        record.date = newDay;
+        const shiftProfile = await EmployeeProfile.findById(record.employee).select('user shiftRef').lean();
+        const snap = shiftSnapshot(await resolveShiftForDay(shiftProfile, newDay));
+        if (snap) {
+          Object.assign(record, snap);
+        } else {
+          ['shiftName', 'shiftStart', 'shiftEnd', 'shiftDurationMin'].forEach((f) => { record[f] = undefined; });
+          record.shift = null;
+          record.shiftCrossesMidnight = false;
+        }
+      }
+    }
     // Blank clears a punch (a check-out entered by mistake, say); anything
     // unparseable is refused rather than quietly written as Invalid Date, which
     // would take the day's hours to zero without anyone noticing.
@@ -2385,13 +2427,137 @@ const updateRecord = asyncHandler(async (req, res) => {
   // hoursWorked is recomputed by the model's pre-save hook, and lateness is
   // derived from checkIn at read time (payroll calls lateMinutes on the
   // record), so both follow the corrected times with nothing else to update.
-  const changed = ['checkIn', 'checkOut'].filter(
-    (k) => String(before[k] ? new Date(before[k]).toISOString() : '')
-      !== String(record[k] ? new Date(record[k]).toISOString() : '')
-  );
+  // Compared as the clock time the audit row prints: a punch that only rode
+  // along with a moved date, or lost its seconds to a minute-precision input,
+  // has not been edited, and a "10:02 AM → 10:02 AM" row would say it had.
+  const shown = (v) => (v ? fmtIstTime(v) : '');
+  const changed = ['checkIn', 'checkOut'].filter((k) => shown(before[k]) !== shown(record[k]));
+  if (new Date(before.date).getTime() !== new Date(record.date).getTime()) changed.unshift('date');
   if (changed.length) await auditPunchEdit(req, record, before, changed);
 
   res.json({ record });
+});
+
+/**
+ * Mark a day's punches for an employee who forgot to punch — Super Admin only.
+ *
+ * User, 2026-10-07: "if any employee forgot to mark attendance of any previous
+ * day then by Super Admin we can mark their attendance … don't show this to HR
+ * and CEO/MD, just reflect it in audit logs". So, unlike an HR regularization:
+ * no Regularization document, no remark written onto the day, no notification
+ * to anyone — the day simply reads as punched. The one trace is the audit log,
+ * which only a Super Admin can open (routes/auditRoutes.js).
+ *
+ * Creates the day when it has no record (freezing that day's shift, as a punch
+ * would), or fills the times into the one it has — an auto-stamped absence, a
+ * forgotten punch-out. Only the times sent are written. Refused for a future
+ * day or time, a day before joining or after leaving, and a day covered by
+ * approved leave: turning a leave day into a worked one has to give the leave
+ * day back, which is the leave's business, not a silent mark's.
+ *
+ * @route POST /api/attendance/mark  (SuperAdmin only)
+ * @param {string} req.body.employee - EmployeeProfile id
+ * @param {string} req.body.date - 'YYYY-MM-DD' (IST day), today or earlier
+ * @param {string} [req.body.checkIn] - ISO instant
+ * @param {string} [req.body.checkOut] - ISO instant
+ * @returns {{record: Object, created: boolean}} (201 when the day was created)
+ */
+// POST /api/attendance/mark  (SuperAdmin only)
+const markAttendance = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'SuperAdmin') {
+    res.status(403);
+    throw new Error('Only a Super Admin can mark attendance.');
+  }
+  const { employee, date } = req.body;
+  if (!employee || !date || Number.isNaN(new Date(date).getTime())) {
+    res.status(400);
+    throw new Error('Pick an employee and a date.');
+  }
+  const day = startOfDay(date);
+  const now = new Date();
+  if (day.getTime() > startOfDay(now).getTime()) {
+    res.status(400);
+    throw new Error('Attendance can only be marked for today or an earlier day.');
+  }
+  const profile = await EmployeeProfile.findById(employee)
+    .select('user shiftRef dateOfJoining dateOfExit employeeCode')
+    .populate('user', 'firstName lastName');
+  if (!profile) {
+    res.status(404);
+    throw new Error('Employee not found');
+  }
+  const who = `${profile.user?.firstName || ''} ${profile.user?.lastName || ''}`.trim() || profile.employeeCode || 'This employee';
+  const dmy = (d) => ymdLocal(d).split('-').reverse().join('-');
+  if (profile.dateOfJoining && day < startOfDay(profile.dateOfJoining)) {
+    res.status(400);
+    throw new Error(`${who} joined on ${dmy(profile.dateOfJoining)}.`);
+  }
+  if (profile.dateOfExit && day > startOfDay(profile.dateOfExit)) {
+    res.status(400);
+    throw new Error(`${who} left on ${dmy(profile.dateOfExit)}.`);
+  }
+
+  const punch = (key, label) => {
+    const v = req.body[key];
+    if (v === undefined || v === null || v === '') return null;
+    const t = new Date(v);
+    if (Number.isNaN(t.getTime())) {
+      res.status(400);
+      throw new Error(`${label} is not a valid time.`);
+    }
+    if (t > now) {
+      res.status(400);
+      throw new Error(`${label} cannot be in the future.`);
+    }
+    return t;
+  };
+  const inAt = punch('checkIn', 'Check-in');
+  let outAt = punch('checkOut', 'Check-out');
+  if (!inAt && !outAt) {
+    res.status(400);
+    throw new Error('Enter the check-in time.');
+  }
+
+  const leave = await leaveCoveringDay(profile._id, day);
+  if (leave) {
+    res.status(409);
+    throw new Error(`${who} was on approved ${leaveLabel(leave.leaveType)} on ${dmy(day)}. Edit that day instead.`);
+  }
+
+  let record = await Attendance.findOne({ employee: profile._id, date: day });
+  const created = !record;
+  const before = { checkIn: record?.checkIn, checkOut: record?.checkOut, date: record?.date };
+  if (created) {
+    record = new Attendance({ employee: profile._id, date: day, status: 'Present' });
+  }
+  // The day is judged against ITS shift, as a punch on it would have been —
+  // the same rule regularization applies (applyToAttendance).
+  if (!record.shift && !record.shiftStart) {
+    Object.assign(record, shiftSnapshot(await resolveShiftForDay(profile, day)) || {});
+  }
+  if (inAt) record.checkIn = inAt;
+  if (!record.checkIn) {
+    res.status(400);
+    throw new Error('Enter the check-in time.');
+  }
+  // An overnight shift's close lands on the next morning; anyone else's
+  // inverted pair is a typo, refused exactly as the edit refuses it.
+  if (outAt && record.shiftCrossesMidnight) outAt = rollForwardIfInverted(new Date(record.checkIn), outAt);
+  if (outAt) record.checkOut = outAt;
+  if (record.checkOut && new Date(record.checkOut) <= new Date(record.checkIn)) {
+    res.status(400);
+    throw new Error('Check-out has to be after check-in.');
+  }
+  // A worked day climbs out of an absence, then the hours settle it.
+  if (record.status === 'Absent') record.status = 'Present';
+  record.status = settleStatus(record) || record.status;
+  await record.save();
+
+  const shown = (v) => (v ? fmtIstTime(v) : '');
+  const changed = ['checkIn', 'checkOut'].filter((k) => shown(before[k]) !== shown(record[k]));
+  await auditPunchEdit(req, record, before, changed, { created });
+
+  res.status(created ? 201 : 200).json({ record, created });
 });
 
 /**
@@ -2882,6 +3048,7 @@ module.exports = {
   presenceBoard,
   createRecord,
   updateRecord,
+  markAttendance,
   deleteRecord,
   listRestDayWork,
   decideRestDayWork,

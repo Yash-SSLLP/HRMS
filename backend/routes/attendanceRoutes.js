@@ -23,6 +23,7 @@ const {
   presenceBoard,
   createRecord,
   updateRecord,
+  markAttendance,
   deleteRecord,
   listRestDayWork,
   decideRestDayWork,
@@ -93,6 +94,10 @@ router.route('/settings')
 router.route('/')
   .get(listAll)
   .post(createRecord);
+
+// POST /mark — a Super Admin marks a forgotten day's punches (checked again in
+// the controller); before /:id so the path is never read as an id.
+router.post('/mark', markAttendance);
 
 // PUT /:id — update; DELETE /:id — delete an attendance record; protected, requires 'attendance.manage'.
 router.route('/:id')

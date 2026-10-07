@@ -40,7 +40,7 @@ const MODULES = {
     label: 'Employee cashbook', noun: 'cashbook entry', person: true, link: '/admin/khata', made: 'recorded', went: 'posted as',
     about: 'A line in one person’s own cash account with the company (Employee Cashbook) — the advances they hold and what they spend from them. An expense the person files counts the moment it is filed, so it starts as Approved; the company’s check comes later, as the separate “confirmed” step.',
   },
-  Attendance: { label: 'Attendance', noun: 'attendance record', person: true, link: '/admin/attendance' },
+  Attendance: { label: 'Attendance', noun: 'attendance record', person: true, link: '/admin/attendance', made: 'marked' },
   'Attendance.doublePay': {
     label: 'Rest-day duty pay', noun: 'rest-day duty claim', person: true, link: '/admin/attendance', model: 'Attendance',
     about: 'A decision on a day worked on a rest day (a Sunday or a company comp-off day) — an approved day is paid at double rate.',
@@ -121,7 +121,7 @@ const STATUS_VERBS = {
 
 /** Words for a field that changed, when it is not plain "status". */
 const FIELD_WORDS = {
-  role: 'role', checkIn: 'check-in time', checkOut: 'check-out time', mustChangePassword: 'password-change request',
+  role: 'role', checkIn: 'check-in time', checkOut: 'check-out time', date: 'attendance date', mustChangePassword: 'password-change request',
 };
 /** Fields that hold a status — a change to one is a decision or a step, not an edit. */
 const STATUS_FIELDS = new Set(['', 'status', 'stage', 'approvalStatus', 'doublePay']);

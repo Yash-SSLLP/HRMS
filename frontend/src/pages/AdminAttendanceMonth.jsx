@@ -14,6 +14,10 @@ import PageHeader from '../components/PageHeader';
 import { formatDuration, formatHours, formatTime12, toYMD } from '../utils/time';
 import SearchableSelect from '../components/SearchableSelect';
 import { peopleOptions } from '../utils/peopleOptions';
+import { useAuthStore } from '../store/authStore';
+import { punchState, changedPunches, dmy } from '../utils/attendancePunch';
+import PunchTimeFields from '../components/attendance/PunchTimeFields';
+import MarkAttendanceModal from '../components/attendance/MarkAttendanceModal';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -49,6 +53,10 @@ export default function AdminAttendanceMonth() {
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState('');
+  // The day and its punch times are the Backend's to change (the server drops
+  // them from anyone else), and only a Super Admin marks a forgotten day.
+  const isSuperAdmin = useAuthStore((st) => st.user)?.role === 'SuperAdmin';
+  const [markOpen, setMarkOpen] = useState(false);
 
   useEffect(() => {
     api.get('/employees?excludeExecutives=true').then(({ data }) => {
@@ -104,24 +112,20 @@ export default function AdminAttendanceMonth() {
   // ----- edit a day's record -----
   const openEdit = (r) => {
     setEdit(r);
-    setForm({ status: r.status, checkIn: toHM(r.checkIn), checkOut: toHM(r.checkOut), remarks: r.remarks || '' });
+    setForm({ status: r.status, remarks: r.remarks || '', ...punchState(r) });
   };
   const saveEdit = async (e) => {
     e.preventDefault(); setSaving(true);
     try {
-      const day = new Date(edit.date);
-      const at = (hm) => {
-        if (!hm) return null;
-        const [h, m] = hm.split(':').map(Number);
-        return new Date(day.getTime() + (h * 60 + m) * 60000).toISOString();
-      };
-      await api.put(`/attendance/${edit._id}`, {
+      // Only what was touched is sent (utils/attendancePunch): an untouched
+      // punch keeps its exact stored time, and a moved day carries it across.
+      const body = {
         status: form.status,
-        checkIn: at(form.checkIn),
-        checkOut: at(form.checkOut),
         remarks: form.remarks,
-      });
-      toast.success('Attendance updated');
+        ...(isSuperAdmin ? changedPunches(form) : {}),
+      };
+      await api.put(`/attendance/${edit._id}`, body);
+      toast.success(body.date ? `Moved to ${dmy(body.date)}` : 'Attendance updated');
       setEdit(null); await load();
     } catch (err) { toast.error(err.response?.data?.message || 'Update failed'); }
     finally { setSaving(false); }
@@ -242,13 +246,19 @@ export default function AdminAttendanceMonth() {
 
           {/* History */}
           <div className="bg-white shadow rounded-xl p-5">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               <h3 className="font-semibold text-gray-800">History</h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <DateSortButton dir={dateSort} onToggle={toggleDateSort} compact />
                 <button onClick={() => openReg(null)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
                   + Regularize a day
                 </button>
+                {/* Super Admin only and silent — see MarkAttendanceModal. */}
+                {isSuperAdmin && (
+                  <button onClick={() => setMarkOpen(true)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
+                    + Mark attendance
+                  </button>
+                )}
               </div>
             </div>
             {sortedRecords.length === 0 ? (
@@ -307,16 +317,20 @@ export default function AdminAttendanceMonth() {
                   {STATUS.map((x) => <option key={x}>{x}</option>)}
                 </select>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Check-in</label>
-                  <input type="time" value={form.checkIn} onChange={(e) => setForm({ ...form, checkIn: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">Check-out</label>
-                  <input type="time" value={form.checkOut} onChange={(e) => setForm({ ...form, checkOut: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" />
-                </div>
-              </div>
+              {/* Backend only: the day itself, then the punches as clock times
+                  on it, each removable. Everyone else's form never offered
+                  times the server would have dropped. */}
+              {isSuperAdmin && (
+                <>
+                  <div>
+                    <label htmlFor="month-edit-date" className="block text-xs text-gray-600 mb-1">Date</label>
+                    <input id="month-edit-date" type="date" required value={form.date}
+                      onChange={(e) => setForm({ ...form, date: e.target.value })}
+                      className="block w-full border rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <PunchTimeFields form={form} setForm={setForm} idPrefix="month-edit" />
+                </>
+              )}
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Remarks</label>
                 <input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className="block w-full border rounded-lg px-3 py-2 text-sm" placeholder="Why is this being changed?" />
@@ -328,6 +342,11 @@ export default function AdminAttendanceMonth() {
             </form>
           </div>
         </div>
+      )}
+
+      {markOpen && isSuperAdmin && data && (
+        <MarkAttendanceModal employees={employees} employee={employee}
+          onClose={() => setMarkOpen(false)} onSaved={() => load()} />
       )}
 
       {/* Regularize modal */}
